@@ -1,0 +1,17 @@
+{
+  "name": "stratum",
+  "version": "0.2.0",
+  "private": true,
+  "description": "A persistent shared-world game: one finite world, permanently marked. Two layers, two rules — the land never resets, the provisions always do.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node run-tests.js",
+    "probe": "node probe.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>STRATUM — one world, permanently marked</title>
+<style>
+  :root{
+    --ink:#e8e6df; --dim:#8b8578; --gold:#c9a55c; --bg:#0b0c10;
+    --panel:rgba(10,11,15,.82); --rule:rgba(201,165,92,.28);
+    --hp:#b6543f; --will:#8fae63;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  /* FIXED, not absolute. On mobile the visual viewport pans (keyboard opening, browser
+     chrome collapsing) and absolutely-positioned HUD slides off-screen with it. Fixed
+     elements are anchored to what the player actually sees. Plus safe-area insets so the
+     panels are not hidden under a notch or status bar. */
+  html,body{position:fixed;inset:0;height:100%;overflow:hidden;overscroll-behavior:none;
+    touch-action:none;background:var(--bg);color:var(--ink)}
+  body{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    -webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
+  canvas#c{display:block;position:fixed;inset:0;width:100%;height:100%;
+    image-rendering:pixelated;cursor:crosshair}
+  .panel{position:fixed;background:var(--panel);border:1px solid var(--rule);
+    padding:9px 11px;backdrop-filter:blur(7px)}
+  #hud-tl{top:calc(10px + env(safe-area-inset-top));left:calc(10px + env(safe-area-inset-left));min-width:246px}
+  #hud-tr{top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));text-align:right;min-width:190px}
+  #hud-bl{bottom:calc(10px + env(safe-area-inset-bottom));left:calc(10px + env(safe-area-inset-left))}
+  #hud-br{bottom:calc(10px + env(safe-area-inset-bottom));right:calc(10px + env(safe-area-inset-right));text-align:right;min-width:172px}
+  .k{color:var(--dim)}
+  .v{color:var(--ink)}
+  .gold{color:var(--gold)}
+  .big{font-size:15px;letter-spacing:.06em}
+  h1{font-size:15px;letter-spacing:.34em;color:var(--gold);font-weight:400}
+  .sub{color:var(--dim);font-size:10px;letter-spacing:.1em;margin-top:2px}
+  .bar{margin-top:7px;height:6px;background:rgba(255,255,255,.07);position:relative;overflow:hidden}
+  .bar>div{height:100%;width:100%;transition:width .1s linear}
+  #hpbar>div{background:linear-gradient(90deg,#8e2f22,#d0674a)}
+  #willbar>div{background:linear-gradient(90deg,#5f7f4a,#c9a55c)}
+  .barlab{font-size:10px;color:var(--dim);margin-top:2px;display:flex;justify-content:space-between}
+  #nodes{position:fixed;inset:0;z-index:15;background:rgba(5,6,9,.95);display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:10px}
+  #nodes.on{display:flex}
+  .disc{color:var(--dim);letter-spacing:.2em;font-size:11px;margin-bottom:6px}
+  .mcard{width:min(560px,86vw);border:1px solid var(--rule);padding:11px 14px;cursor:pointer;background:rgba(255,255,255,.02)}
+  .mcard:hover{border-color:var(--gold);background:rgba(201,165,92,.07)}
+  .mcard .nm{color:var(--gold);letter-spacing:.18em}
+  .mcard .tier{color:var(--dim);font-size:10px;letter-spacing:.14em}
+  .mcard .ds{color:var(--dim);font-size:11px;margin-top:4px}
+  #hotbar{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+  .slot{width:30px;height:30px;border:1px solid rgba(255,255,255,.16);position:relative;
+    display:flex;align-items:flex-end;justify-content:center;cursor:pointer}
+  .slot .n{font-size:8px;color:rgba(0,0,0,.62);background:rgba(255,255,255,.5);padding:0 2px;line-height:1.3}
+  .slot.on{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset}
+  .chip{display:inline-block;border:1px solid rgba(255,255,255,.14);padding:1px 6px;margin-left:5px;font-size:10px}
+  #toast{position:fixed;left:50%;top:16%;transform:translateX(-50%);background:rgba(120,30,20,.9);
+    border:1px solid rgba(255,120,100,.5);padding:7px 14px;letter-spacing:.09em;opacity:0;
+    transition:opacity .18s;pointer-events:none;font-size:11px;text-align:center;max-width:80vw}
+  #toast.on{opacity:1}
+  #toast.good{background:rgba(30,80,40,.92);border-color:rgba(120,220,140,.5)}
+  #gate{position:fixed;inset:0;background:radial-gradient(circle at 50% 42%,#14161d,#070810 72%);
+    display:flex;align-items:center;justify-content:center;z-index:20}
+  #gate .box{width:min(600px,92vw);text-align:center}
+  #gate h1{font-size:30px;letter-spacing:.5em;margin-left:.5em}
+  #gate p{color:var(--dim);margin-top:14px;line-height:1.9;font-size:11.5px}
+  #gate .rules{margin:18px auto 0;text-align:left;display:inline-block;color:var(--dim);font-size:11px;line-height:1.85}
+  #gate .rules b{color:var(--gold);font-weight:400}
+  #gate input{margin-top:20px;background:rgba(255,255,255,.05);border:1px solid var(--rule);
+    color:var(--ink);padding:10px 13px;font:inherit;letter-spacing:.14em;width:230px;text-align:center;outline:none}
+  #gate input:focus{border-color:var(--gold)}
+  #gate button{margin-top:12px;display:block;width:230px;margin-left:auto;margin-right:auto;
+    background:transparent;border:1px solid var(--gold);color:var(--gold);padding:11px;font:inherit;
+    letter-spacing:.24em;cursor:pointer}
+  #gate button:hover{background:var(--gold);color:#0b0c10}
+  #gate .err{color:#e08070;margin-top:10px;font-size:11px;min-height:16px}
+  #map{position:fixed;inset:0;z-index:15;background:rgba(5,6,9,.94);display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:12px}
+  #map.on{display:flex}
+  #map canvas{border:1px solid var(--rule);position:static;image-rendering:pixelated;
+    width:min(76vh,76vw);height:min(76vh,76vw)}
+  #map .cap{color:var(--dim);letter-spacing:.14em;font-size:11px;text-align:center}
+  #map .cap b{color:var(--gold);font-weight:400}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud-tl" class="panel">
+  <h1>STRATUM</h1>
+  <div class="sub" id="h-map">THE FIRST ACRE</div>
+  <div style="margin-top:8px">
+    <span class="k">you</span> <span class="v" id="h-name">—</span>
+    <span class="k" style="margin-left:8px">online</span> <span class="v" id="h-online">0</span>
+  </div>
+  <div><span class="k">at</span> <span class="v" id="h-pos">0, 0</span></div>
+  <div class="bar" id="hpbar"><div></div></div>
+  <div class="barlab"><span>life</span><span id="h-hp">100 / 100</span></div>
+  <div class="bar" id="willbar"><div></div></div>
+  <div class="barlab"><span>will</span><span id="h-energy">240</span></div>
+  <div id="hotbar"></div>
+  <div class="k" id="h-sel" style="margin-top:6px">—</div>
+</div>
+
+<div id="hud-tr" class="panel">
+  <div class="k">land claimed here</div>
+  <div class="big gold" id="h-pct">0.0000%</div>
+  <div class="k" id="h-claimed">0 / 1,048,576</div>
+  <div style="margin-top:7px"><span class="k">remain</span> <span class="v" id="h-remain">1,048,576</span></div>
+  <div class="k" style="margin-top:7px;font-size:10px">[M] map · [T] travel</div>
+</div>
+
+<div id="hud-bl" class="panel">
+  <span class="k">WASD</span> walk &nbsp;
+  <span class="k">LMB</span> strike / harvest / build &nbsp;
+  <span class="k">RMB</span> give back<br>
+  <span class="k">1-0</span> material &nbsp; <span class="k">M</span> map &nbsp; <span class="k">T</span> travel &nbsp; <span class="k">+/-</span> zoom
+</div>
+
+<div id="hud-br" class="panel">
+  <div class="k">carried</div>
+  <div style="margin-top:3px" id="h-inv">—</div>
+  <div class="k" style="margin-top:7px">slain <span class="v" id="h-kills">0</span> &nbsp; <span class="k">atk</span> <span class="v" id="h-atk">7</span></div>
+  <div class="k" style="margin-top:5px;font-size:10px" id="h-vol">—</div>
+</div>
+
+<div id="toast"></div>
+
+<div id="map">
+  <canvas id="mapcv" width="256" height="256"></canvas>
+  <div class="cap" id="mapcap">WORLD MAP</div>
+</div>
+
+<div id="nodes">
+  <div class="disc">TRAVEL — CHOOSE A MAP</div>
+  <div id="mlist"></div>
+  <div class="disc" style="margin-top:4px">[T] CLOSE</div>
+</div>
+
+<div id="gate">
+  <div class="box">
+    <h1>STRATUM</h1>
+    <p>One finite world per map. Each 1,048,576 tiles. They never expand.</p>
+    <div class="rules">
+      <b>The land is permanent.</b> What you place, you own — nobody can ever overwrite it.<br>
+      <b>The wilderness is a commons.</b> Anyone may build on unclaimed terrain.<br>
+      <b>The provisions reset.</b> Ore, timber, herbs and beasts come back on their own timers.<br>
+      <b>You can only give land back</b> — you can never take it from another.
+    </div>
+    <input id="name-in" maxlength="18" placeholder="YOUR NAME" autocomplete="off">
+    <button id="enter-btn">ENTER THE WORLD</button>
+    <div class="err" id="gate-err"></div>
+  </div>
+</div>
+
+<!-- touch controls — revealed only on touch devices (body.touch) -->
+<div id="pad">
+  <div id="stick"><div id="knob"></div></div>
+  <div id="pbtns">
+    <button type="button" id="pb-map">MAP</button>
+    <button type="button" id="pb-travel">TRAVEL</button>
+    <button type="button" id="pb-zin">+</button>
+    <button type="button" id="pb-zout">−</button>
+  </div>
+</div>
+<style>
+  #pad{display:none}
+  body.touch #pad{display:block}
+  body.touch #hud-bl{display:none}
+  #stick{position:fixed;left:calc(16px + env(safe-area-inset-left));bottom:calc(16px + env(safe-area-inset-bottom));
+    width:138px;height:138px;border-radius:50%;
+    background:radial-gradient(circle,rgba(8,10,8,.5),rgba(8,10,8,.3) 60%,rgba(8,10,8,0) 74%);
+    border:1.5px solid rgba(224,205,160,.42);box-shadow:0 0 16px rgba(0,0,0,.4) inset;
+    touch-action:none;z-index:60}
+  #knob{position:absolute;left:50%;top:50%;width:58px;height:58px;margin:-29px 0 0 -29px;border-radius:50%;
+    background:rgba(224,205,160,.55);border:1.5px solid rgba(255,242,214,.9);
+    box-shadow:0 0 16px rgba(224,205,160,.35);will-change:transform}
+  #pbtns{position:fixed;right:calc(14px + env(safe-area-inset-right));top:50%;transform:translateY(-50%);
+    display:flex;flex-direction:column;gap:9px;z-index:60}
+  #pbtns button{font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.1em;color:#e0cda0;
+    background:rgba(18,20,18,.84);border:1px solid rgba(224,205,160,.3);border-radius:8px;padding:13px 12px;
+    min-width:66px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+  #pbtns button:active{background:rgba(224,205,160,.22)}
+  body.touch #hud-br{max-width:46vw}
+  body.touch #hotbar .chip{padding:9px 7px;font-size:10px}
+  body.touch #gate .box{width:92vw;padding:22px 18px}
+  body.touch #gate .rules{font-size:12.5px}
+  /* narrow screens: the two top panels must not collide in portrait */
+  @media (max-width:560px){
+    #hud-tl{min-width:0;max-width:54vw}
+    #hud-tr{min-width:0;max-width:44vw}
+    #hud-br{min-width:0;max-width:54vw}
+    #hud-tl h1{font-size:12px;letter-spacing:.2em}
+    #hud-tr .big{font-size:19px}
+    .slot{width:25px;height:25px}
+  }
+  /* short screens (landscape phone): trim vertical bulk, and move the buttons to a
+     horizontal row along the bottom where there is room, instead of a right-edge
+     column that collides with the top-right panel. */
+  @media (max-height:460px){
+    #hud-tl,#hud-tr{font-size:11px;padding:7px 9px}
+    .bar{margin-top:5px}
+    #stick{width:112px;height:112px}
+    #knob{width:48px;height:48px;margin:-24px 0 0 -24px}
+    #pbtns{right:auto;left:50%;top:auto;bottom:calc(8px + env(safe-area-inset-bottom));
+      transform:translateX(-50%);flex-direction:row;gap:7px}
+    #pbtns button{padding:9px 11px;min-width:56px;font-size:10px}
+  }
+</style>
+
+<script src="terrain.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
