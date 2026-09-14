@@ -655,6 +655,12 @@
     };
   }
   function send(o) { if (ws && wsReady && ws.readyState === 1) try { ws.send(JSON.stringify(o)); } catch (e) { } }
+  // Procedural sound, loaded from audio.js as window.SFX. Every call is guarded:
+  // an old cached page without audio.js, or a browser with no Web Audio, plays mute.
+  function sfx(n, o) { try { if (window.SFX && SFX.play) SFX.play(n, o); } catch (e) {} }
+  // Browsers keep the AudioContext suspended until a real gesture. Cheap and
+  // idempotent — call it from every gesture handler, not just the first.
+  function unlockAudio() { try { if (window.SFX && SFX.unlock) SFX.unlock(); } catch (e) {} }
   function b64ToBytes(b) {
     var bin = atob(b), a = new Uint8Array(bin.length);
     for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
@@ -670,6 +676,9 @@
         S.x = m.x; S.y = m.y; S.cam.x = m.x; S.cam.y = m.y;
         S.energy = m.energy; S.energyMax = m.energyMax; S.reach = m.reach; S.attackRange = m.attackRange;
         S.hp = m.hp; S.maxHp = m.maxHp; S.atk = m.atk; S.kills = m.kills; S.inv = m.inv;
+        S.tool = (typeof m.tool === 'number') ? m.tool : 0;
+        S.level = (typeof m.level === 'number' && m.level > 0) ? m.level : 1;
+        S.catalog = m.catalog || null;
         S.claimed = m.claimed; S.total = m.total; S.online = m.online;
         if (S.maps && S.maps.length) setMapName();
         buildHotbar();
@@ -680,9 +689,9 @@
       case 'arrived':
         S.map = m.map; S.maps = m.maps; S.x = m.x; S.y = m.y;
         S.cam.x = m.x; S.cam.y = m.y;
-        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.baseCache.clear(); S.lamps.clear();
+        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
         S.claimed = m.claimed; S.total = m.total;
-        setMapName(); closeTravel();
+        setMapName(); closeTravel(); closeCraft();
         toast('ARRIVED — ' + m.name, true);
         break;
 
@@ -714,6 +723,7 @@
       case 'you': {
         var yk = tk(m.x, m.y);
         S.energy = m.energy; S.claimed = m.claimed;
+        if (m.inv) S.inv = m.inv;
         S.edits.set(yk, { m: m.m, owner: S.key });
         setLamp(yk, m.m);
         if (m.x === Math.round(S.x) && m.y === Math.round(S.y)) puff(m.x, m.y, '#e8e6cf', 6, 1.4);
@@ -722,7 +732,7 @@
       case 'node': applyNode([m.x, m.y, m.kind, m.state, m.ripeSec]); break;
 
       case 'harvested': {
-        if (m.err) { toast(m.err.toUpperCase() + (m.wait ? ' — ' + m.wait + 's' : '')); break; }
+        if (m.err) { toast(m.err.toUpperCase() + (m.wait ? ' — ' + m.wait + 's' : '')); sfx('deny'); break; }
         var nd = S.nodes.get(nkN(m.x, m.y));
         if (nd && m.state === 0) { nd.state = 0; nd.until = Date.now() + (m.ripeSec || 0) * 1000; }
         if (m.inv) S.inv = m.inv;
@@ -730,9 +740,11 @@
           for (var y2 in m.gains) float(m.x, m.y, '+' + m.gains[y2] + ' ' + y2, '#c9e08a', 0);
           var ndc = NODECLR[m.kind] || '#c9e08a';
           puff(m.x + 0.5, m.y + 0.3, ndc, 7, 1.8);
+          sfx('harvest');
         } else if (m.partial) {
           float(m.x, m.y, 'struck', '#cbbf9a', 0);
           puff(m.x + 0.5, m.y + 0.3, '#cbbf9a', 3, 1.2);
+          sfx('hit', { volume: 0.3 });
         }
         break;
       }
@@ -791,15 +803,26 @@
         if (m.r === 'reach') toast('OUT OF REACH — ' + S.reach + ' TILES MAX');
         else if (m.r === 'material') toast('CANNOT PLACE THAT');
         else if (m.r === 'bounds') toast('THAT IS THE EDGE OF THE WORLD');
+        else if (m.r === 'energy') toast('NO WILL LEFT');
+        else if (m.r === 'resources') toast('NEED ' + costText(m.need) + (m.missing ? ' — SHORT ' + costText(m.missing) : ''));
+        else if (m.r === 'owned') toast('THAT LAND IS CLAIMED. NOT YOURS.');
         else toast('THE WORLD REFUSED THAT');
+        sfx('deny');
         break;
       }
 
       case 'combat': {
-        if (m.err) { toast(String(m.err).toUpperCase()); break; }
+        if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
         var mm = S.mons.get(m.id);
         if (m.killed) {
           S.kills = m.kills; S.atk = m.atk; S.inv = m.inv;
+          if (typeof m.level === 'number' && m.level > (S.level || 1)) {
+            S.level = m.level;
+            toast('LEVEL ' + m.level + ' — LIFE AND STRENGTH GROW', true);
+            sfx('levelup');
+          } else {
+            sfx('die');
+          }
           if (mm) {
             float(mm.rx, mm.ry - 0.4, 'SLAIN', mm.pal.hex, 2);
             burst(mm.rx, mm.ry, mm.pal, 16, 2.6);
@@ -817,6 +840,7 @@
             float(mm.rx, mm.ry - 0.35, '-' + dealt, crit ? '#fff2c8' : mm.pal.hex, crit ? 2 : (dealt >= 8 ? 1 : 0));
             burst(mm.rx, mm.ry, crit ? { glowc: '#fff0b8', light: '#ffffff' } : mm.pal, crit ? 14 : 8, crit ? 2.6 : 1.8);
             if (crit || dealt >= 10) S.shake = Math.max(S.shake, Math.min(0.9, 0.32 + dealt / 40));
+            if (crit) sfx('crit'); else sfx('hit');
           }
           if (m.name) S.targetName = m.name;
         }
@@ -833,6 +857,7 @@
         S.shake = Math.max(S.shake, Math.min(1.1, 0.25 + took / 30));
         float(S.x, S.y - 0.5, '-' + took, '#ff8a70', took >= 12 ? 1 : 0);
         puff(S.x + 0.5, S.y + 0.3, '#ff9a80', 8, 2);
+        sfx('hurt');
         // the nearest beast lunges: whatever just hit us, it should look like it meant it
         var best = null, bd = 36;
         S.mons.forEach(function (mo) {
@@ -855,10 +880,34 @@
         burst(S.x, S.y, { glowc: '#ffc9a8', light: '#ffe9d2' }, 22, 3);
         S.deathBy = String(m.by || 'the world').toUpperCase();
         toast('YOU WERE SLAIN BY ' + String(m.by).toUpperCase() + ' — RETURNED TO THE SHORE');
+        sfx('die', { pitch: 0.6 });
         break;
       case 'vitals':
         S.hp = m.hp; S.maxHp = m.maxHp; S.inv = m.inv; S.kills = m.kills; S.atk = m.atk;
+        if (typeof m.tool === 'number') S.tool = m.tool;
+        if (typeof m.level === 'number' && m.level > (S.level || 1)) { S.level = m.level; sfx('levelup'); }
+        if (S.craftOpen) buildCraft();
         break;
+      case 'crafted': {
+        if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
+        if (m.inv) S.inv = m.inv;
+        toast('CRAFTED: ' + String(m.item || '').toUpperCase(), true);
+        sfx('craft');
+        if (S.craftOpen) buildCraft();
+        break;
+      }
+      case 'tooled': {
+        if (m.err) {
+          toast(String(m.err).toUpperCase() + (m.missing ? ' — SHORT ' + costText(m.missing) : ''));
+          sfx('deny'); break;
+        }
+        if (typeof m.tool === 'number') S.tool = m.tool;
+        if (m.inv) S.inv = m.inv;
+        toast(String(m.name || '').toUpperCase() + ' TOOLS', true);
+        sfx('levelup');
+        if (S.craftOpen) buildCraft();
+        break;
+      }
       case 'stats':
         S.claimed = m.claimed; S.total = m.total; S.online = m.online; S.volatile = m.volatile;
         break;
@@ -935,6 +984,7 @@
       puff(x + 0.5, y + 0.5, '#d8d2bd', 5, 1.6);
     }
     send({ t: 'set', x: x, y: y, m: m });
+    sfx(m === RELEASE ? 'release' : 'place');
   }
 
   /** One button, context-sensitive: strike a beast, else harvest, else build. */
@@ -947,6 +997,7 @@
       startSwing(Math.atan2(mon.ry - S.y, mon.rx - S.x));
       S.target = mon; S.targetUntil = Date.now() + 4000;
       send({ t: 'attack', id: mon.id });
+      sfx('attack');
       return;
     }
     var nd = S.nodes.get(nkN(x, y));
@@ -989,9 +1040,11 @@
     if (isTyping(e)) return;
     var k = e.key.toLowerCase();
     keys[k] = true;
-    if (k === 'm') { toggleMap(); e.preventDefault(); return; }
-    if (k === 't') { toggleTravel(); e.preventDefault(); return; }
-    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); return; }
+    unlockAudio();
+    if (k === 'm') { toggleMap(); sfx('ui'); e.preventDefault(); return; }
+    if (k === 't') { toggleTravel(); sfx('ui'); e.preventDefault(); return; }
+    if (k === 'c') { toggleCraft(); e.preventDefault(); return; }
+    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); return; }
     if (e.key === '+' || e.key === '=') { S.zoom = Math.min(3, S.zoom * 2); e.preventDefault(); return; }
     if (e.key === '-' || e.key === '_') { S.zoom = Math.max(0.5, S.zoom / 2); e.preventDefault(); return; }
     var n = parseInt(e.key, 10);
@@ -1008,7 +1061,8 @@
   var painting = 0;
   cv.addEventListener('mousedown', function (e) {
     e.preventDefault();
-    if (S.mapOpen || S.travelOpen) return;
+    unlockAudio();
+    if (S.mapOpen || S.travelOpen || S.craftOpen) return;
     // Act on where this click is, not on where the cursor last was: a click can arrive
     // without a preceding move (programmatic clicks, some touch/pen paths).
     var r = cv.getBoundingClientRect();
@@ -1049,6 +1103,7 @@
 
     stick.addEventListener('touchstart', function (e) {
       e.preventDefault();
+      unlockAudio();
       if (stickId !== null) return;                        // first finger owns the stick
       stickId = e.changedTouches[0].identifier;
       stickRect = stick.getBoundingClientRect();
@@ -1077,7 +1132,8 @@
   var tapId = null, tapT0 = 0, tapX = 0, tapY = 0, tapMoved = false, holdFired = false, holdTimer = null;
 
   cv.addEventListener('touchstart', function (e) {
-    if (S.mapOpen || S.travelOpen) return;                 // overlays handle their own taps
+    unlockAudio();
+    if (S.mapOpen || S.travelOpen || S.craftOpen) return;                 // overlays handle their own taps
     e.preventDefault();
     if (tapId !== null) return;
     var t = e.changedTouches[0];
@@ -1122,6 +1178,7 @@
     }
     tap('pb-map', toggleMap);
     tap('pb-travel', toggleTravel);
+    tap('pb-craft', toggleCraft);
     tap('pb-zin', function () { S.zoom = Math.min(3, S.zoom * 2); });
     tap('pb-zout', function () { S.zoom = Math.max(0.5, S.zoom / 2); });
   })();
@@ -1191,8 +1248,15 @@
     var html = '';
     for (var i = 0; i < PALETTE.length; i++) {
       var m = PALETTE[i], c = CLR[m];
+      // the tooltip prices the material when the server has taught us the costs.
+      // catalog.costs is palette-ordered, exactly like PALETTE, so index i is slot i.
+      var price = '';
+      if (S.catalog && S.catalog.costs && S.catalog.costs[i]) {
+        var ct = costText(S.catalog.costs[i]);
+        if (ct !== 'nothing') price = ' — ' + ct;
+      }
       html += '<div class="slot' + (i === S.sel ? ' on' : '') + '" data-i="' + i + '" title="' + MATNAME[m] +
-        '" style="background:rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')">' +
+        price + '" style="background:rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')">' +
         '<span class="n">' + (i === 9 ? '0' : String(i + 1)) + '</span></div>';
     }
     hotbar.innerHTML = html;
@@ -1233,6 +1297,78 @@
         var id = +c.dataset.id;
         if (id === S.map) return closeTravel();
         send({ t: 'travel', map: id });
+      });
+    });
+  }
+
+  // ---------- craft ----------------------------------------------------------
+  // The server ships the whole catalogue inside the welcome message (costs, recipes,
+  // tool tiers), so this panel renders from S.catalog and never needs economy.js.
+  function costText(cost) {
+    if (!cost || typeof cost !== 'object') return 'nothing';
+    var parts = [];
+    for (var k in cost) if (cost[k] > 0) parts.push(cost[k] + ' ' + k);
+    return parts.length ? parts.join(' + ') : 'nothing';
+  }
+  function canPay(cost) {
+    if (!cost) return true;
+    var inv = S.inv || {};
+    for (var k in cost) if ((inv[k] || 0) < cost[k]) return false;
+    return true;
+  }
+  function itemName(id) {
+    if (S.catalog && S.catalog.items && S.catalog.items[id]) return S.catalog.items[id].name;
+    return String(id).replace(/_/g, ' ');
+  }
+  function toolName(t) {
+    if (S.catalog && S.catalog.tools && S.catalog.tools[t]) return S.catalog.tools[t].name;
+    return 'tier ' + t;
+  }
+  function toggleCraft() {
+    if (!S.ready) return;
+    S.craftOpen = !S.craftOpen;
+    document.getElementById('craft').classList.toggle('on', S.craftOpen);
+    if (S.craftOpen) { buildCraft(); sfx('ui'); }
+  }
+  function closeCraft() {
+    S.craftOpen = false;
+    document.getElementById('craft').classList.remove('on');
+  }
+  function buildCraft() {
+    var list = document.getElementById('craftlist');
+    document.getElementById('crafttool').textContent = toolName(S.tool | 0).toUpperCase() + ' TOOLS';
+    if (!S.catalog) {
+      list.innerHTML = '<div class="mcard"><div class="ds">THE WORLD HAS NOT TAUGHT YOU CRAFT YET.</div></div>';
+      return;
+    }
+    var html = '', i, r;
+    var tiers = S.catalog.tools || [];
+    var next = (S.tool | 0) + 1;
+    if (next < tiers.length) {
+      var ok = canPay(tiers[next].cost);
+      html += '<div class="mcard" data-toolup="1"><div class="nm">' + tiers[next].name.toUpperCase() + ' TOOLS</div>' +
+        '<div class="tier">HARVEST MORE PER SWING</div>' +
+        '<div class="cost ' + (ok ? 'can' : 'cant') + '">' + costText(tiers[next].cost) + '</div></div>';
+    } else if (tiers.length) {
+      html += '<div class="mcard locked"><div class="nm">' + tiers[tiers.length - 1].name.toUpperCase() + ' TOOLS</div>' +
+        '<div class="tier">THE BEST THERE IS</div></div>';
+    }
+    var recs = S.catalog.recipes || [];
+    for (i = 0; i < recs.length; i++) {
+      r = recs[i];
+      var locked = r.tier > (S.tool | 0);
+      var afford = !locked && canPay(r.inputs);
+      html += '<div class="mcard' + (locked ? ' locked' : '') + '" data-recipe="' + r.id + '">' +
+        '<div class="nm">' + itemName(r.output.item).toUpperCase() +
+        (locked ? ' <span class="tier">— NEEDS ' + toolName(r.tier).toUpperCase() + '</span>' : '') + '</div>' +
+        '<div class="cost ' + (afford ? 'can' : 'cant') + '">' + costText(r.inputs) + '</div></div>';
+    }
+    list.innerHTML = html;
+    Array.prototype.forEach.call(list.children, function (el) {
+      el.addEventListener('click', function () {
+        unlockAudio();
+        if (el.dataset.toolup) send({ t: 'toolup' });
+        else if (el.dataset.recipe) send({ t: 'craft', id: el.dataset.recipe });
       });
     });
   }
@@ -1290,7 +1426,7 @@
     S.dt = dt;
 
     if (S.ready) {
-      if (!S.mapOpen && !S.travelOpen) {
+      if (!S.mapOpen && !S.travelOpen && !S.craftOpen) {
         var sp = 9.5 * dt, vx = 0, vy = 0;
         if (keys['a'] || keys['arrowleft']) vx -= 1;
         if (keys['d'] || keys['arrowright']) vx += 1;
@@ -1990,10 +2126,16 @@
     var inv = S.inv || {};
     INV_HTML.length = 0;
     INV_KEYS.forEach(invChip, inv);
+    // crafted gear rides in the same inventory under its item id — chip anything else.
+    for (var ck in inv) {
+      if (INV_KEYS.indexOf(ck) < 0 && inv[ck] > 0) INV_HTML.push('<span class="chip">' + ck + ' ' + inv[ck] + '</span>');
+    }
     document.getElementById('h-inv').innerHTML = INV_HTML.join('');
     if (S.volatile) {
+      var tooln = toolName(S.tool | 0);
       document.getElementById('h-vol').textContent =
-        'beasts ' + S.volatile.monstersLive + ' · regrowing ' + S.volatile.nodesDepleted;
+        'beasts ' + S.volatile.monstersLive + ' · regrowing ' + S.volatile.nodesDepleted +
+        ' · ' + tooln + ' tools';
     }
     if (tlPanel) tlPanel.classList.toggle('hurt', S.hurt > 0.25);
     // target frame
@@ -2034,6 +2176,7 @@
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
       window.scrollTo(0, 0);
       setTimeout(resize, 260);
+      unlockAudio(); sfx('ui');
       connect();
     }
     requestAnimationFrame(frame);

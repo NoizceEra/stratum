@@ -309,7 +309,7 @@ class World {
     const h = this.hunter(player);
     this.syncDerived(h, player);                  // your level decides your attack
     const type = player.dmgType || T.DEFAULT_DMG_TYPE;
-    const roll = T.damageRoll(player.atk, T.COMBAT.critChance, T.COMBAT.critMul);
+    const roll = T.damageRoll(player.atk + (player.atkBoost | 0), T.COMBAT.critChance, T.COMBAT.critMul);
     const dmg = Math.max(1, Math.round(T.applyResist(type, roll.dmg, m.sp)));
 
     m.hp -= dmg;

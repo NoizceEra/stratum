@@ -18,6 +18,7 @@ const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const T = require('./public/terrain.js');
 const { World, ATTACK_RANGE } = require('./world.js');
+const ECO = require('./src/economy.js');
 
 const PORT = Number(process.env.PORT || 8090);
 const PUB = path.join(__dirname, 'public');
@@ -81,6 +82,15 @@ db.exec(`
   }
 })();
 
+// tool tier rides beside the survival state; databases from before the economy
+// gain the column on boot instead of failing the prepare below.
+(function migrateTool() {
+  try {
+    const cols = db.prepare('PRAGMA table_info(player_state)').all();
+    if (!cols.some(c => c.name === 'tool')) db.exec('ALTER TABLE player_state ADD COLUMN tool INTEGER NOT NULL DEFAULT 0');
+  } catch (e) { console.log('[db] tool migration skipped:', e && e.message); }
+})();
+
 /** authoritative in-memory land: "map:y*W+x" -> {m, owner} */
 const tiles = new Map();
 const density = new Map();               // mapId -> Uint8Array(MAPGRID^2)
@@ -114,7 +124,7 @@ const qPlay = db.prepare('INSERT OR REPLACE INTO players(k,name,hue,created,last
 const qPlayGet = db.prepare('SELECT name,hue FROM players WHERE k=?');
 const qPlayCount = db.prepare('SELECT COUNT(*) n FROM players');
 const qPlayLast = db.prepare('UPDATE players SET last=? WHERE k=?');
-const qState = db.prepare('INSERT OR REPLACE INTO player_state(k,map,x,y,hp,kills,inv) VALUES(?,?,?,?,?,?,?)');
+const qState = db.prepare('INSERT OR REPLACE INTO player_state(k,map,x,y,hp,kills,inv,tool) VALUES(?,?,?,?,?,?,?,?)');
 const qStateGet = db.prepare('SELECT * FROM player_state WHERE k=?');
 
 const world = new World(db);
@@ -273,7 +283,7 @@ server.on('upgrade', (req, socket) => {
   const c = {
     id: nextId++, sock: socket, ip, key: null, name: null, hue: 0, map: 0,
     x: 0, y: 0, hp: PLAYER_HP, maxHp: PLAYER_HP, kills: 0, atk: BASE_ATK,
-    inv: { wood: 0, ore: 0, herb: 0, crystal: 0 },
+    inv: { wood: 0, ore: 0, herb: 0, crystal: 0 }, tool: 0, atkBoost: 0,
     energy: ENERGY_MAX, subs: new Set(), sent: new Set(),
     ready: false, lastMove: Date.now(), dead: false,
     gone: false, bad: 0, lastRx: Date.now(), tokenAt: Date.now(), tokens: MSG_BURST, dropped: 0,
@@ -401,11 +411,24 @@ function broadcastTile(map, cx, cy, x, y, m, owner) {
 }
 
 function gain(c, what, n) { c.inv[what] = (c.inv[what] || 0) + n; }
+/** Best owned bonus of a gear kind: weapons add damage, armour soaks it. Zero when bare. */
+function gearBonus(inv, kind) {
+  let best = 0;
+  if (!inv || typeof inv !== 'object') return 0;
+  for (const k of Object.keys(inv)) {
+    if (!inv[k]) continue;
+    const it = ECO.itemOf(k);
+    if (!it || it.kind !== kind) continue;
+    if (kind === 'weapon') best = Math.max(best, it.damageBonus | 0);
+    else best = Math.max(best, it.mitigation | 0);
+  }
+  return best;
+}
 function stateSave(c) {
-  qState.run(c.key, c.map, Math.round(c.x), Math.round(c.y), Math.round(c.hp), c.kills, JSON.stringify(c.inv));
+  qState.run(c.key, c.map, Math.round(c.x), Math.round(c.y), Math.round(c.hp), c.kills, JSON.stringify(c.inv), c.tool | 0);
 }
 function sendVitals(c, extra) {
-  const o = { t: 'vitals', hp: Math.round(c.hp), maxHp: c.maxHp, inv: c.inv, kills: c.kills, atk: c.atk };
+  const o = { t: 'vitals', hp: Math.round(c.hp), maxHp: c.maxHp, inv: c.inv, kills: c.kills, atk: c.atk, tool: c.tool | 0, level: world.hunter(c).level };
   if (extra) Object.assign(o, extra);
   c.send(o);
 }
@@ -441,7 +464,7 @@ function cleanText(v, max) {
 // The complete set of things a client may say. Anything else is ignored on sight: the
 // server never dispatches a type it does not know, so a new type cannot reach any code
 // path by accident.
-const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping']);
+const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -468,16 +491,30 @@ function onMessage(c, msg) {
         c.map = st.map; c.x = st.x; c.y = st.y;
         c.hp = Math.max(1, st.hp); c.kills = st.kills;
         try { c.inv = Object.assign({ wood: 0, ore: 0, herb: 0, crystal: 0 }, JSON.parse(st.inv)); } catch (e) {}
+        c.tool = (st && Number.isFinite(+st.tool)) ? Math.max(0, Math.min(ECO.maxToolTier(), (+st.tool) | 0)) : 0;
       } else {
         const sp = T.spawnPoint(0);
         c.map = 0; c.x = sp.x; c.y = sp.y;
+        // new arrivals wash up with salvaged materials: enough for a first shelter,
+        // never enough to skip the harvest loop.
+        c.inv = { wood: 6, ore: 4, herb: 2, crystal: 1 };
+        c.tool = 0;
       }
       c.atk = BASE_ATK + Math.floor(c.kills / 3);
+      c.atkBoost = gearBonus(c.inv, 'weapon');
       c.energy = ENERGY_MAX;
 
       c.send({
         t: 'welcome', id: c.id, key, name, hue, map: c.map, x: c.x, y: c.y,
         hp: Math.round(c.hp), maxHp: c.maxHp, atk: c.atk, inv: c.inv, kills: c.kills,
+        tool: c.tool | 0, level: world.hunter(c).level,
+        catalog: {
+          costs: ECO.MATERIAL_COSTS.map(co => Object.assign({}, co)),
+          names: ECO.MATERIAL_NAMES.slice(),
+          recipes: ECO.RECIPES.map(r => ({ id: r.id, tier: r.tier, inputs: Object.assign({}, r.inputs), output: { item: r.output.item, count: r.output.count } })),
+          items: Object.assign({}, ECO.ITEMS),
+          tools: ECO.TOOL_TIERS.map(t => ({ tier: t.tier, id: t.id, name: t.name, cost: Object.assign({}, t.cost) }))
+        },
         world: { w: W, h: H, chunk: CHUNK },
         maps: T.MAPS.map(m => ({ id: m.id, name: m.name, tier: m.tier, desc: m.desc })),
         spawn: T.spawnPoint(c.map),
@@ -557,6 +594,15 @@ function onMessage(c, msg) {
       const isRelease = (m === 0);
       if (!isRelease && !T.isPlaceable(m)) return c.send({ t: 'deny', x, y, r: 'material' });
       if (c.energy < (isRelease ? RELEASE_COST : COST)) return c.send({ t: 'deny', x, y, r: 'energy' });
+      // placing a tile spends harvested resources on top of will. The check and the
+      // deduction both happen inside this one synchronous handler, so nothing can
+      // slip between them.
+      if (!isRelease) {
+        const cost = ECO.costOfTile(m);
+        if (cost && !ECO.canAfford(c.inv, cost)) {
+          return c.send({ t: 'deny', x, y, r: 'resources', need: cost, missing: ECO.missingFor(c.inv, cost) });
+        }
+      }
 
       const cx = T.chunkOf(x), cy = T.chunkOf(y);
       if (isRelease) {
@@ -576,7 +622,10 @@ function onMessage(c, msg) {
         }
         broadcastTile(c.map, cx, cy, x, y, m, c.key);
         c.energy -= COST;
-        c.send({ t: 'you', x, y, m, claimed: countClaims(c.map), energy: c.energy });
+        const pcost = ECO.costOfTile(m);
+        if (pcost) { const paid = ECO.applyCost(c.inv, pcost); if (paid) c.inv = paid; }
+        stateSave(c);
+        c.send({ t: 'you', x, y, m, claimed: countClaims(c.map), energy: c.energy, inv: c.inv });
       }
       break;
     }
@@ -590,11 +639,14 @@ function onMessage(c, msg) {
       const r = world.harvest(c, x, y);
       if (r.err) return c.send({ t: 'harvested', x, y, err: r.err, wait: r.wait });
       if (r.yielded) {
-        gain(c, r.yields, r.amount);
+        // better tools pay off more; a tool never pays off LESS than bare hands.
+        const boosted = ECO.toolHarvestAmount(c.tool | 0, r.kind);
+        const amount = (typeof boosted === 'number') ? Math.max(r.amount, boosted) : r.amount;
+        gain(c, r.yields, amount);
         stateSave(c);
         const ripeSec = Math.ceil((r.ripe - Date.now()) / 1000);
         broadcastNode(c.map, x, y, r.kind, 0, ripeSec);
-        c.send({ t: 'harvested', x, y, kind: r.kind, state: 0, ripeSec, gains: { [r.yields]: r.amount }, inv: c.inv });
+        c.send({ t: 'harvested', x, y, kind: r.kind, state: 0, ripeSec, gains: { [r.yields]: amount }, inv: c.inv });
       } else {
         c.send({ t: 'harvested', x, y, kind: r.kind, state: 1, partial: true, inv: c.inv });
       }
@@ -605,6 +657,7 @@ function onMessage(c, msg) {
       if (!c.ready || c.dead) return;
       const mid = clampInt(msg.id, 0, 0x7fffffff, -1);
       if (mid < 0) return c.send({ t: 'combat', err: 'no such creature', id: 0 });
+      c.atkBoost = gearBonus(c.inv, 'weapon');
       const r = world.attack(c, mid);
       if (r.err) return c.send({ t: 'combat', err: r.err, id: mid });
       if (r.killed) {
@@ -612,10 +665,45 @@ function onMessage(c, msg) {
         c.atk = BASE_ATK + Math.floor(c.kills / 3);
         gain(c, r.loot, 1);
         stateSave(c);
-        c.send({ t: 'combat', id: r.id, killed: true, name: r.name, loot: r.loot, kills: c.kills, atk: c.atk, inv: c.inv });
+        c.send({ t: 'combat', id: r.id, killed: true, name: r.name, loot: r.loot, kills: c.kills, atk: c.atk, inv: c.inv, level: world.hunter(c).level });
       } else {
         c.send({ t: 'combat', id: r.id, killed: false, name: r.name, hp: r.hp, maxHp: r.maxHp });
       }
+      break;
+    }
+
+    case 'craft': {
+      if (!c.ready || c.dead) return;
+      const id = cleanText(msg.id, 32);
+      const rec = ECO.recipeById(id);
+      if (!rec) return c.send({ t: 'crafted', err: 'unknown recipe', id });
+      if (rec.tier > (c.tool | 0)) return c.send({ t: 'crafted', err: 'locked: needs ' + (ECO.toolTier(rec.tier) || {}).name + ' tools', id });
+      const res = ECO.craft(id, c.inv);
+      if (!res.ok) return c.send({ t: 'crafted', err: res.error, id });
+      c.inv = res.inv;
+      c.atkBoost = gearBonus(c.inv, 'weapon');
+      stateSave(c);
+      sendVitals(c);
+      c.send({ t: 'crafted', id, item: res.item, count: res.count, inv: c.inv, atkBoost: c.atkBoost });
+      break;
+    }
+
+    case 'toolup': {
+      if (!c.ready || c.dead) return;
+      const next = (c.tool | 0) + 1;
+      const cost = ECO.toolCost(next);
+      const tier = ECO.toolTier(next);
+      if (!cost || !tier) return c.send({ t: 'tooled', err: 'already at the best tools' });
+      if (!ECO.canAfford(c.inv, cost)) {
+        return c.send({ t: 'tooled', err: 'not enough resources', need: cost, missing: ECO.missingFor(c.inv, cost) });
+      }
+      const paid = ECO.applyCost(c.inv, cost);
+      if (!paid) return c.send({ t: 'tooled', err: 'not enough resources', need: cost, missing: ECO.missingFor(c.inv, cost) });
+      c.inv = paid;
+      c.tool = next;
+      stateSave(c);
+      sendVitals(c);
+      c.send({ t: 'tooled', tool: next, name: tier.name, inv: c.inv });
       break;
     }
 
@@ -685,7 +773,9 @@ every(100, 'world tick', () => {
   for (const h of ev.hits) {
     for (const c of clients.values()) {
       if (!c.ready || c.key !== h.key) continue;
-      c.hp -= h.dmg;
+      // worn armour soaks part of the blow, never below 1: being hit always costs.
+      const dealt = Math.max(1, h.dmg - gearBonus(c.inv, 'armour'));
+      c.hp -= dealt;
       if (c.hp <= 0) {
         c.hp = c.maxHp; c.dead = false;
         const sp = T.spawnPoint(c.map);
@@ -696,7 +786,7 @@ every(100, 'world tick', () => {
         setView(c, c.x, c.y);
         console.log(`[net] ${c.name} was killed by ${h.name}`);
       } else {
-        c.send({ t: 'dmg', dmg: h.dmg, by: h.name, hp: Math.round(c.hp), maxHp: c.maxHp });
+        c.send({ t: 'dmg', dmg: dealt, by: h.name, hp: Math.round(c.hp), maxHp: c.maxHp });
       }
     }
   }

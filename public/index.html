@@ -91,6 +91,16 @@
     transition:width .1s linear}
   /* struck — a quiet pulse on the frame the player is actually standing in */
   #hud-tl.hurt{border-color:rgba(214,90,70,.85);box-shadow:0 0 12px rgba(200,60,40,.32)}
+  /* craft overlay — same full-screen pattern as #nodes and #map: fixed, inset 0,
+     inherits safe-area behaviour by covering the viewport instead of dodging it */
+  #craft{position:fixed;inset:0;z-index:15;background:rgba(5,6,9,.95);display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:10px}
+  #craft.on{display:flex}
+  #craftlist{display:flex;flex-direction:column;gap:8px;max-height:68vh;overflow-y:auto;width:min(560px,86vw)}
+  #craft .locked{opacity:.45}
+  #craft .cost{color:var(--dim);font-size:10.5px;margin-top:3px}
+  #craft .cant{color:#e08070}
+  #craft .can{color:#9dc98a}
 </style>
 </head>
 <body>
@@ -128,7 +138,7 @@
   <span class="k">WASD</span> walk &nbsp;
   <span class="k">LMB</span> strike / harvest / build &nbsp;
   <span class="k">RMB</span> give back<br>
-  <span class="k">1-0</span> material &nbsp; <span class="k">M</span> map &nbsp; <span class="k">T</span> travel &nbsp; <span class="k">+/-</span> zoom
+  <span class="k">1-0</span> material &nbsp; <span class="k">M</span> map &nbsp; <span class="k">T</span> travel &nbsp; <span class="k">C</span> craft &nbsp; <span class="k">+/-</span> zoom
 </div>
 
 <div id="hud-br" class="panel">
@@ -149,6 +159,12 @@
   <div class="disc">TRAVEL — CHOOSE A MAP</div>
   <div id="mlist"></div>
   <div class="disc" style="margin-top:4px">[T] CLOSE</div>
+</div>
+
+<div id="craft">
+  <div class="disc">CRAFT — <span id="crafttool">FLINT TOOLS</span></div>
+  <div id="craftlist"></div>
+  <div class="disc" style="margin-top:4px">[C] CLOSE</div>
 </div>
 
 <div id="gate">
@@ -173,6 +189,7 @@
   <div id="pbtns">
     <button type="button" id="pb-map">MAP</button>
     <button type="button" id="pb-travel">TRAVEL</button>
+    <button type="button" id="pb-craft">CRAFT</button>
     <button type="button" id="pb-zin">+</button>
     <button type="button" id="pb-zout">−</button>
   </div>
@@ -223,6 +240,7 @@
 </style>
 
 <script src="terrain.js"></script>
+<script src="audio.js"></script>
 <script src="game.js"></script>
 </body>
 </html>
