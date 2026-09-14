@@ -33,6 +33,24 @@ const MAPGRID = 256, MAPSTEP = W / MAPGRID;
 const B64 = 'base64';
 const PLAYER_HP = 100, BASE_ATK = 7;
 
+// ---------- hardening limits -----------------------------------------------
+// Everything below arrives from an untrusted client. These ceilings are what stop one
+// rude (or one buggy) peer from taking the whole world down with it. All of them are
+// tunable through env vars so a test can tighten them without touching the protocol.
+const envNum = (k, d) => { const n = Number(process.env[k]); return Number.isFinite(n) && n > 0 ? n : d; };
+const MAX_FRAME = envNum('STRATUM_MAX_FRAME', 64 * 1024);        // hard cap on ONE inbound frame
+const MAX_BUFFER = envNum('STRATUM_MAX_BUFFER', 256 * 1024);     // un-parsed bytes held per connection
+const MAX_OUTBUF = envNum('STRATUM_MAX_OUTBUF', 4 * 1024 * 1024); // unsent bytes before we hang up
+const MSG_PER_SEC = envNum('STRATUM_MSG_PER_SEC', 120);          // sustained inbound frames/second
+const MSG_BURST = envNum('STRATUM_MSG_BURST', 240);              // tokens available at once
+const FLOOD_SLACK = envNum('STRATUM_FLOOD_SLACK', MSG_BURST);    // dropped frames tolerated before cutoff
+const MAX_CONN_PER_IP = envNum('STRATUM_MAX_CONN_PER_IP', 256);  // simultaneous sockets from one address
+const MAX_CONNS = envNum('STRATUM_MAX_CONNS', 512);              // simultaneous sockets, period
+const HS_IDLE_MS = envNum('STRATUM_HS_IDLE_MS', 15000);          // silence allowed before hello
+const IDLE_MS = envNum('STRATUM_IDLE_MS', 90000);                // silence allowed after hello
+const WS_PING_MS = envNum('STRATUM_WS_PING_MS', 20000);          // keepalive ping cadence
+const KEY_RE = /^[\x21-\x7e]{1,64}$/;                            // printable ASCII player keys only
+
 // ---------- persistence ----------------------------------------------------
 const db = new DatabaseSync(DBFILE);
 db.exec(`
@@ -146,10 +164,73 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// slowloris on the HTTP side: bound how long a request may dribble in, and how long a
+// socket may sit silent before we stop paying for it.
+server.headersTimeout = Math.min(20000, HS_IDLE_MS * 2);
+server.requestTimeout = 60000;
+server.keepAliveTimeout = 10000;
+server.maxHeadersCount = 64;
+server.on('connection', (socket) => {
+  try { socket.setTimeout(HS_IDLE_MS, () => { try { socket.destroy(); } catch (e) {} }); } catch (e) {}
+});
+server.on('clientError', (err, socket) => {
+  try { if (socket.writable && !socket.destroyed) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n'); } catch (e) {}
+  try { socket.destroy(); } catch (e) {}
+});
+server.on('error', (e) => {
+  console.log('[fatal] http server error (still serving):', e && (e.stack || e.message));
+});
+
 // ---------- websocket ------------------------------------------------------
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const clients = new Map();
+const connsByIp = new Map();               // address -> Set<socket>: the per-IP connection cap
 let nextId = 1;
+
+const OP_TEXT = 0x1, OP_CLOSE = 0x8, OP_PING = 0x9, OP_PONG = 0xA;
+
+/** Token bucket. False means "this frame arrived too fast to be served". */
+function admit(c, now) {
+  const dt = (now - c.tokenAt) / 1000;
+  if (dt > 0) { c.tokens = Math.min(MSG_BURST, c.tokens + dt * MSG_PER_SEC); c.tokenAt = now; }
+  if (c.tokens >= 1) { c.tokens -= 1; return true; }
+  c.dropped++;
+  return false;
+}
+
+/** Where a connection really comes from. Behind a tunnel every peer looks local, so a
+ *  forwarded-for header is honoured when present and plausible. */
+function ipOf(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff) {
+    const first = xff.split(',')[0].trim();
+    if (first.length && first.length <= 45 && /^[0-9a-fA-F:.\[\]]+$/.test(first)) return first;
+  }
+  const ip = (req.socket && req.socket.remoteAddress) || 'unknown';
+  return ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+}
+
+function closeFrame(code, reason) {
+  const r = Buffer.from(String(reason || '').slice(0, 60), 'utf8');
+  const p = Buffer.alloc(2 + r.length);
+  p.writeUInt16BE(code, 0);
+  r.copy(p, 2);
+  return wsEncode(p, OP_CLOSE);
+}
+
+/** Tear one connection down for good: close frame, FIN, then a hard destroy if the peer
+ *  will not let go. Never throws — teardown has to work on a half-dead socket too. */
+function dropClient(c, why) {
+  if (!c || c.gone) return;
+  c.gone = true;
+  try { console.log(`[net] #${c.id}${c.name ? ' ' + c.name : ''} dropped: ${why} (${live()} online)`); } catch (e) {}
+  const s = c.sock;
+  try { s.write(closeFrame(why === 'frame too large' ? 1009 : 1008, why)); } catch (e) {}
+  try { s.end(); } catch (e) {}
+  const t = setTimeout(() => { try { s.destroy(); } catch (e) {} }, 250);
+  if (t && t.unref) t.unref();
+  clients.delete(s);
+}
 
 function wsEncode(str, opcode) {
   const payload = Buffer.from(str, 'utf8');
@@ -164,21 +245,42 @@ function wsEncode(str, opcode) {
 
 server.on('upgrade', (req, socket) => {
   const key = req.headers['sec-websocket-key'];
-  if (!key) { socket.destroy(); return; }
+  if (!key || socket.destroyed) { try { socket.destroy(); } catch (e) {} return; }
+
+  // Connection caps come first: a peer that is already over its allowance costs us
+  // nothing but a 503, and a socket we never accepted can never become a client.
+  const ip = ipOf(req);
+  let byIp = connsByIp.get(ip);
+  if (!byIp) { byIp = new Set(); connsByIp.set(ip, byIp); }
+  if (byIp.size >= MAX_CONN_PER_IP || clients.size >= MAX_CONNS) {
+    console.log(`[net] refused ${ip}: ${byIp.size} open from that address (cap ${MAX_CONN_PER_IP}), ${clients.size} total`);
+    // end() (not destroy()) so the refusal is actually flushed to the peer
+    try { socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); } catch (e) {}
+    const t = setTimeout(() => { try { socket.destroy(); } catch (e) {} }, 250);
+    if (t && t.unref) t.unref();
+    if (!byIp.size) connsByIp.delete(ip);
+    return;
+  }
+  byIp.add(socket);
+
   socket.write(
     'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
     'Sec-WebSocket-Accept: ' + crypto.createHash('sha1').update(key + GUID).digest(B64) + '\r\n\r\n'
   );
   socket.setNoDelay(true);
+  socket.setTimeout(HS_IDLE_MS);      // silence before hello costs the socket
 
   const c = {
-    id: nextId++, sock: socket, key: null, name: null, hue: 0, map: 0,
+    id: nextId++, sock: socket, ip, key: null, name: null, hue: 0, map: 0,
     x: 0, y: 0, hp: PLAYER_HP, maxHp: PLAYER_HP, kills: 0, atk: BASE_ATK,
     inv: { wood: 0, ore: 0, herb: 0, crystal: 0 },
     energy: ENERGY_MAX, subs: new Set(), sent: new Set(),
     ready: false, lastMove: Date.now(), dead: false,
+    gone: false, bad: 0, lastRx: Date.now(), tokenAt: Date.now(), tokens: MSG_BURST, dropped: 0,
     send(obj) {
-      if (socket.destroyed) return;
+      if (c.gone || socket.destroyed) return;
+      // a peer that stops reading must not be able to grow our memory: drop it instead
+      if (socket.writableLength > MAX_OUTBUF) return dropClient(c, 'outbound backlog');
       try { socket.write(wsEncode(JSON.stringify(obj))); } catch (e) {}
     }
   };
@@ -186,34 +288,64 @@ server.on('upgrade', (req, socket) => {
 
   let buf = Buffer.alloc(0);
   socket.on('data', (chunk) => {
-    buf = Buffer.concat([buf, chunk]);
-    for (;;) {
-      if (buf.length < 2) return;
-      const b0 = buf[0], b1 = buf[1];
-      const op = b0 & 0x0f;
-      const masked = (b1 & 0x80) !== 0;
-      let len = b1 & 0x7f, off = 2;
-      if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); off = 4; }
-      else if (len === 127) { if (buf.length < 10) return; len = Number(buf.readBigUInt64BE(2)); off = 10; }
-      let mask = null;
-      if (masked) { if (buf.length < off + 4) return; mask = buf.subarray(off, off + 4); off += 4; }
-      if (buf.length < off + len) return;
-      let payload = Buffer.from(buf.subarray(off, off + len));
-      buf = buf.subarray(off + len);
-      if (mask) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
+    c.lastRx = Date.now();
+    try {
+      if (c.gone) return;
+      if (buf.length + chunk.length > MAX_BUFFER) return dropClient(c, 'buffered bytes');
+      buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
+      for (;;) {
+        if (c.gone) return;
+        if (buf.length < 2) return;
+        const b0 = buf[0], b1 = buf[1];
+        const op = b0 & 0x0f;
+        const masked = (b1 & 0x80) !== 0;
+        let len = b1 & 0x7f, off = 2;
+        if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); off = 4; }
+        else if (len === 127) { if (buf.length < 10) return; len = Number(buf.readBigUInt64BE(2)); off = 10; }
+        // A frame's size is declared in its header, so it is policed there: a client that
+        // announces a huge frame is refused before we buffer a single byte of it.
+        if (!Number.isFinite(len) || len < 0 || len > MAX_FRAME) return dropClient(c, 'frame too large');
+        let mask = null;
+        if (masked) { if (buf.length < off + 4) return; mask = buf.subarray(off, off + 4); off += 4; }
+        if (buf.length < off + len) return;
+        let payload = Buffer.from(buf.subarray(off, off + len));
+        buf = buf.subarray(off + len);
+        if (mask) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
 
-      if (op === 0x8) { socket.destroy(); return; }
-      if (op === 0x9) { try { socket.write(wsEncode(payload.toString('utf8'), 0xA)); } catch (e) {} continue; }
-      if (op === 0xA) continue;
-      if (op === 0x1) {
+        // every frame, including control frames, is billed against the rate limit
+        if (!admit(c, Date.now())) {
+          if (c.dropped > FLOOD_SLACK) return dropClient(c, 'rate limit exceeded');
+          continue;                                  // short burst: frame dropped, socket kept
+        }
+
+        if (op === OP_CLOSE) return dropClient(c, 'client close');
+        if (op === OP_PING) { try { socket.write(wsEncode(payload.toString('utf8'), OP_PONG)); } catch (e) {} continue; }
+        if (op === OP_PONG) continue;
+        if (op !== OP_TEXT) continue;                // binary / unknown opcode: consumed, ignored
+
         let msg;
-        try { msg = JSON.parse(payload.toString('utf8')); } catch (e) { continue; }
-        try { onMessage(c, msg); } catch (e) { console.log('[err]', e.stack || e.message); }
+        try { msg = JSON.parse(payload.toString('utf8')); }
+        catch (e) { c.bad++; continue; }             // malformed JSON: ignored, connection kept
+        try { onMessage(c, msg); }
+        catch (e) { console.log('[err]', e && (e.stack || e.message)); }
       }
+    } catch (e) {
+      // a decoder fault must never take the process with it
+      console.log('[err] frame decode:', e && (e.stack || e.message));
+      dropClient(c, 'decode error');
     }
   });
   socket.on('error', () => {});
-  socket.on('close', () => { clients.delete(socket); console.log(`[net] ${c.name || '#' + c.id} left (${live()} online)`); });
+  // An upgraded socket is half-open by default, so a peer that closes (or dies) shows up
+  // as 'end' — never as 'close'. Without this, dead connections would keep their slot in
+  // the per-IP ledger and their entry in the client map until an idle sweep caught them.
+  socket.on('end', () => dropClient(c, 'peer closed'));
+  socket.on('close', () => {
+    clients.delete(socket);
+    const s = connsByIp.get(ip);
+    if (s) { s.delete(socket); if (!s.size) connsByIp.delete(ip); }
+    console.log(`[net] ${c.name || '#' + c.id} left (${live()} online)`);
+  });
   console.log(`[net] #${c.id} connected`);
 });
 
@@ -278,21 +410,58 @@ function sendVitals(c, extra) {
   c.send(o);
 }
 
+// ---------- inbound validation ---------------------------------------------
+// One rule for every field a client controls: a value that is not a finite number is
+// refused outright (NaN, Infinity, null and "12" are not coordinates), and a finite one
+// is clamped into the world before it is allowed anywhere near game state.
+const isFin = (v) => typeof v === 'number' && Number.isFinite(v);
+function clampInt(v, lo, hi, dflt) {
+  if (!isFin(v)) return dflt;
+  return Math.max(lo, Math.min(hi, Math.trunc(v)));
+}
+/** Finite coordinate clamped into [0, n-1], or null when it was not a number at all. */
+function clampCoord(v, n) {
+  if (!isFin(v)) return null;
+  return Math.max(0, Math.min(n - 1, Math.trunc(v)));
+}
+/** Finite coordinate that must already lie inside [0, n-1]; null otherwise. */
+function inBounds(v, n) {
+  if (!isFin(v)) return null;
+  const i = Math.trunc(v);
+  return (i < 0 || i >= n) ? null : i;
+}
+/** Untrusted text -> bounded, printable, control-character-free string. */
+function cleanText(v, max) {
+  if (isFin(v)) v = String(v);
+  if (typeof v !== 'string') return '';
+  return v.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, max);
+}
+
 // ---------- messages -------------------------------------------------------
+// The complete set of things a client may say. Anything else is ignored on sight: the
+// server never dispatches a type it does not know, so a new type cannot reach any code
+// path by accident.
+const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping']);
+
 function onMessage(c, msg) {
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
+  if (typeof msg.t !== 'string' || !INBOUND.has(msg.t)) { c.bad++; return; }
   switch (msg.t) {
     case 'hello': {
-      const key = String(msg.key || '').slice(0, 64);
+      const key = (typeof msg.key === 'string') ? msg.key.slice(0, 64)
+        : (isFin(msg.key) ? String(msg.key).slice(0, 64) : '');
       // Never drop this silently: a client that fails here looks identical to a dead
       // socket ("connected" but permanently blank), which is a miserable thing to debug.
       if (!key) return c.send({ t: 'err', err: 'handshake rejected: no key' });
-      const name = String(msg.name || '').trim().slice(0, 18) || 'WANDERER';
+      if (!KEY_RE.test(key)) return c.send({ t: 'err', err: 'handshake rejected: bad key' });
+      const name = cleanText(msg.name, 18) || 'WANDERER';
       const prev = qPlayGet.get(key);
       const hue = prev ? prev.hue : (T.hash2(key.length, key.charCodeAt(0) | 0, 7) % 360);
       const now = Date.now();
       qPlay.run(key, name, hue, prev ? now : now, now);
 
       c.key = key; c.name = name; c.hue = hue; c.ready = true;
+      try { c.sock.setTimeout(0); } catch (e) {}   // idle handling now runs on pings + the sweep
 
       const st = qStateGet.get(key);
       if (st) {
@@ -321,29 +490,34 @@ function onMessage(c, msg) {
       break;
     }
 
-    case 'view':
+    case 'view': {
       if (!c.ready) return;
-      setView(c, msg.x | 0, msg.y | 0);
-      world.activate(c.map, msg.x | 0, msg.y | 0);
+      const vx = clampCoord(msg.x, W), vy = clampCoord(msg.y, H);
+      if (vx === null || vy === null) return;          // not a number: refused
+      setView(c, vx, vy);
+      world.activate(c.map, vx, vy);
       break;
+    }
 
     case 'move': {
       if (!c.ready || c.dead) return;
+      const mx = clampCoord(msg.x, W), my = clampCoord(msg.y, H);
+      // NaN / Infinity / missing / null: the player does not move at all. (It used to
+      // fall through a `| 0` and quietly teleport them to the origin.)
+      if (mx === null || my === null) return;
       const now = Date.now();
-      const dt = Math.min(1, (now - c.lastMove) / 1000);
+      const dt = Math.min(1, Math.max(0, now - c.lastMove) / 1000);
       c.lastMove = now;
-      const nx = Math.max(0, Math.min(W - 1, +msg.x || 0));
-      const ny = Math.max(0, Math.min(H - 1, +msg.y || 0));
       const maxStep = dt * 14 + 2;                       // ~14 tiles/s + latency slack
-      const dx = nx - c.x, dy = ny - c.y;
-      if (dx * dx + dy * dy <= maxStep * maxStep) { c.x = nx; c.y = ny; }
+      const dx = mx - c.x, dy = my - c.y;
+      if (dx * dx + dy * dy <= maxStep * maxStep) { c.x = mx; c.y = my; }
       setView(c, c.x, c.y);
       break;
     }
 
     case 'travel': {
       if (!c.ready) return;
-      const id = msg.map | 0;
+      const id = clampInt(msg.map, 0, 1024, -1);
       const def = T.MAPS.find(m => m.id === id);
       if (!def) return c.send({ t: 'deny2', r: 'no such map' });
       c.map = id;
@@ -361,10 +535,17 @@ function onMessage(c, msg) {
       break;
     }
 
-    case 'set': {
+    // 'release' is the named form of set-with-material-0: same wire shape, same handler,
+    // it just hands the tile back to the commons.
+    case 'set':
+    case 'release': {
       if (!c.ready || c.dead) return;
-      const x = msg.x | 0, y = msg.y | 0, m = msg.m | 0;
-      if (x < 0 || y < 0 || x >= W || y >= H) return c.send({ t: 'deny', x, y, r: 'bounds' });
+      const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
+      if (x === null || y === null) {
+        return c.send({ t: 'deny', x: clampInt(msg.x, 0, W - 1, 0), y: clampInt(msg.y, 0, H - 1, 0), r: 'bounds' });
+      }
+      const m = (msg.t === 'release') ? 0 : clampInt(msg.m, 0, 4095, -1);
+      if (m < 0) return c.send({ t: 'deny', x, y, r: 'material' });
       const dx = x - c.x, dy = y - c.y;
       if (dx * dx + dy * dy > REACH * REACH) return c.send({ t: 'deny', x, y, r: 'reach' });
       const key = c.map + ':' + (y * W + x);
@@ -402,7 +583,8 @@ function onMessage(c, msg) {
 
     case 'harvest': {
       if (!c.ready || c.dead) return;
-      const x = msg.x | 0, y = msg.y | 0;
+      const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
+      if (x === null || y === null) return;      // not a coordinate: never answered as if it were
       const dx = x - c.x, dy = y - c.y;
       if (dx * dx + dy * dy > REACH * REACH) return c.send({ t: 'harvested', x, y, err: 'out of reach' });
       const r = world.harvest(c, x, y);
@@ -421,8 +603,10 @@ function onMessage(c, msg) {
 
     case 'attack': {
       if (!c.ready || c.dead) return;
-      const r = world.attack(c, msg.id | 0);
-      if (r.err) return c.send({ t: 'combat', err: r.err, id: msg.id | 0 });
+      const mid = clampInt(msg.id, 0, 0x7fffffff, -1);
+      if (mid < 0) return c.send({ t: 'combat', err: 'no such creature', id: 0 });
+      const r = world.attack(c, mid);
+      if (r.err) return c.send({ t: 'combat', err: r.err, id: mid });
       if (r.killed) {
         c.kills += 1;
         c.atk = BASE_ATK + Math.floor(c.kills / 3);
@@ -437,15 +621,21 @@ function onMessage(c, msg) {
 
     case 'map': {
       if (!c.ready) return;
-      const map = (msg.map === undefined) ? c.map : (msg.map | 0);
+      // Never densFor() an id the world does not have: that would allocate a fresh grid
+      // per invented map number, which is a cheap way to eat all the memory we have.
+      let map = (msg.map === undefined) ? c.map : clampInt(msg.map, 0, 1024, c.map);
+      if (!T.MAPS.some(m => m.id === map)) map = c.map;
       const d = densFor(map);
       c.send({ t: 'map', map, grid: MAPGRID, step: MAPSTEP, d: Buffer.from(d).toString(B64), claimed: countClaims(map) });
       break;
     }
 
-    case 'ping':
-      c.send({ t: 'pong', c: msg.c });
+    case 'ping': {
+      // echoed, but bounded: a client must not be able to make us repeat a payload back
+      const echo = isFin(msg.c) ? Math.trunc(msg.c) : (cleanText(msg.c, 32) || null);
+      c.send({ t: 'pong', c: echo });
       break;
+    }
   }
 }
 
@@ -460,14 +650,28 @@ function broadcastNode(map, x, y, kind, state, ripeSec) {
 }
 
 // ---------- ticks ----------------------------------------------------------
-setInterval(() => {
+// Every timer body is wrapped: a fault in one tick (or in one client's data) must cost
+// us that tick, not the world. Repeated faults log at most once per 5s so a throwing
+// condition can never be turned into a log flood.
+function every(ms, label, fn) {
+  let lastLog = 0;
+  setInterval(() => {
+    try { fn(); }
+    catch (e) {
+      const now = Date.now();
+      if (now - lastLog > 5000) { lastLog = now; console.log(`[err] ${label}:`, e && (e.stack || e.message)); }
+    }
+  }, ms);
+}
+
+every(REGEN_MS, 'energy regen', () => {
   for (const c of clients.values()) {
     if (c.ready) c.energy = Math.min(ENERGY_MAX, c.energy + 1);
   }
-}, REGEN_MS);
+});
 
 // world simulation: monsters move, fight, respawn; depleted nodes come back
-setInterval(() => {
+every(100, 'world tick', () => {
   const ps = ready().filter(c => !c.dead);
   if (!ps.length) return;
   const now = Date.now();
@@ -496,10 +700,10 @@ setInterval(() => {
       }
     }
   }
-}, 100);
+});
 
 // presence + nearby monsters at 10Hz
-setInterval(() => {
+every(100, 'presence tick', () => {
   const all = ready();
   if (!all.length) return;
   for (const c of all) {
@@ -513,28 +717,83 @@ setInterval(() => {
     c.send({ t: 'players', list: near, you: [Math.round(c.x * 10) / 10, Math.round(c.y * 10) / 10, c.energy] });
     c.send({ t: 'mons', map: c.map, list: world.nearby(c.map, c.x, c.y) });
   }
-}, 100);
+});
 
-setInterval(() => {
+every(5000, 'stats tick', () => {
   const n = live();
   if (!n) return;
   for (const c of clients.values()) {
     if (!c.ready) continue;
     c.send({ t: 'stats', claimed: countClaims(c.map), total: W * H, online: n, volatile: world.stats() });
   }
-}, 5000);
+});
 
-setInterval(() => {
+every(20000, 'state flush', () => {
   const now = Date.now();
   for (const c of clients.values()) if (c.ready && c.key) { qPlayLast.run(now, c.key); stateSave(c); }
-}, 20000);
-
-process.on('SIGINT', () => {
-  console.log('\n[world] sealing world…');
-  for (const c of clients.values()) if (c.ready && c.key) stateSave(c);
-  try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (e) {}
-  process.exit(0);
 });
+
+// Idle sweep: sockets that have gone quiet are closed. This is what defeats slowloris —
+// half-open connections cannot be parked here indefinitely. The read deadline is short
+// before the handshake and generous after it, so a player who is simply standing still
+// is never punished for it (the keepalive below keeps them counted as alive).
+every(5000, 'idle sweep', () => {
+  const now = Date.now();
+  for (const c of [...clients.values()]) {
+    if (c.gone) continue;
+    if (now - c.lastRx > (c.ready ? IDLE_MS : HS_IDLE_MS)) dropClient(c, 'idle timeout');
+  }
+});
+
+// WebSocket keepalive: browsers answer a ping frame themselves, so a "connected" client
+// whose link has silently died stops looking alive within one ping interval.
+every(WS_PING_MS, 'ws keepalive', () => {
+  for (const c of clients.values()) {
+    if (c.gone || !c.ready) continue;
+    try { c.sock.write(wsEncode('', OP_PING)); } catch (e) {}
+  }
+});
+
+// ---------- process safety net ---------------------------------------------
+// One bad frame, one bad tick, one bad socket must never end the world. A shared
+// persistent world that goes down is worse than any single fault, so these log loudly
+// and keep serving.
+process.on('uncaughtException', (e) => {
+  try { console.log('[fatal] uncaughtException (still serving):', e && (e.stack || e.message)); } catch (_) {}
+});
+process.on('unhandledRejection', (r) => {
+  try { console.log('[fatal] unhandledRejection (still serving):', (r && (r.stack || r.message)) || r); } catch (_) {}
+});
+
+// Test hook (see test-hardening.js): proves the net above really does keep the process
+// serving after a fault. Never set in production.
+if (process.env.STRATUM_TEST_THROW === '1') {
+  setTimeout(() => { throw new Error('STRATUM_TEST_THROW: deliberate fault'); }, 700);
+}
+
+// ---------- shutdown -------------------------------------------------------
+// Graceful: checkpoint every live player, say a proper goodbye on the wire, stop
+// accepting, checkpoint the WAL and close SQLite before the process goes.
+let shuttingDown = false;
+function shutdown(sig) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[world] ${sig} — sealing world…`);
+  try { for (const c of clients.values()) if (c.ready && c.key) stateSave(c); }
+  catch (e) { console.log('[err] shutdown state flush:', e && e.message); }
+  try {
+    for (const c of clients.values()) {
+      try { c.sock.write(closeFrame(1001, 'server shutting down')); c.sock.end(); } catch (e) {}
+    }
+  } catch (e) {}
+  try { server.close(); } catch (e) {}
+  try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (e) {}
+  try { db.close(); }
+  catch (e) { console.log('[err] db.close:', e && e.message); }
+  try { process.exit(0); } catch (e) {}
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 server.listen(PORT, () => {
   console.log(`[world] STRATUM listening on http://127.0.0.1:${PORT}`);

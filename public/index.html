@@ -80,6 +80,17 @@
     width:min(76vh,76vw);height:min(76vh,76vw)}
   #map .cap{color:var(--dim);letter-spacing:.14em;font-size:11px;text-align:center}
   #map .cap b{color:var(--gold);font-weight:400}
+  /* Target frame — appears inside the top-left panel when a beast is under the
+     cursor or has just been struck. Lives inside #hud-tl so it inherits the fixed
+     anchoring and the safe-area offsets instead of inventing new geometry. */
+  #h-target{display:none;margin-top:7px}
+  #h-target.on{display:block}
+  #h-target .tfn{color:var(--gold);font-size:10.5px;letter-spacing:.14em}
+  #h-target .tfhp{margin-top:4px;height:5px;background:rgba(255,255,255,.07);overflow:hidden}
+  #h-target .tfhp>div{height:100%;width:100%;background:linear-gradient(90deg,#8e2f22,#d0674a);
+    transition:width .1s linear}
+  /* struck — a quiet pulse on the frame the player is actually standing in */
+  #hud-tl.hurt{border-color:rgba(214,90,70,.85);box-shadow:0 0 12px rgba(200,60,40,.32)}
 </style>
 </head>
 <body>
@@ -99,6 +110,10 @@
   <div class="barlab"><span>will</span><span id="h-energy">240</span></div>
   <div id="hotbar"></div>
   <div class="k" id="h-sel" style="margin-top:6px">—</div>
+  <div id="h-target">
+    <div class="tfn" id="h-target-name">—</div>
+    <div class="tfhp"><div id="h-target-bar"></div></div>
+  </div>
 </div>
 
 <div id="hud-tr" class="panel">

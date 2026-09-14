@@ -48,6 +48,14 @@ function waitReady(port) {
   });
 }
 
+// Grab an unused port so two suites (or two agents) never collide on a fixed one.
+function freePort() {
+  return new Promise(res => {
+    const s = require('node:net').createServer();
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); });
+  });
+}
+
 function runChild(args, port) {
   return new Promise((resolve) => {
     const c = spawn(process.execPath, args, {
@@ -78,12 +86,12 @@ async function phase(label, port, db, scale, args, fresh) {
   let bad = 0;
 
   // A: protocol suite, fast respawn clocks
-  if (await phase('PHASE A — protocol suite', 8091, TESTDB, 0.02, ['test.js'], true) !== 0) bad++;
+  if (await phase('PHASE A — protocol suite', await freePort(), TESTDB, 0.02, ['test.js'], true) !== 0) bad++;
 
   // B/C: restart persistence with REAL timers, same DB across the restart
   const restartDb = path.join(CWD, 'data', 'restart.db');
-  if (await phase('PHASE B — restart setup', 8092, restartDb, 1, ['test-restart.js', 'setup'], true) !== 0) bad++;
-  if (await phase('PHASE C — restart verify', 8092, restartDb, 1, ['test-restart.js', 'verify'], false) !== 0) bad++;
+  if (await phase('PHASE B — restart setup', await freePort(), restartDb, 1, ['test-restart.js', 'setup'], true) !== 0) bad++;
+  if (await phase('PHASE C — restart verify', await freePort(), restartDb, 1, ['test-restart.js', 'verify'], false) !== 0) bad++;
 
   console.log('\n' + (bad === 0 ? '=== SUITE GREEN ===' : '=== ' + bad + ' PHASE(S) FAILED ===') + '\n');
   process.exit(bad === 0 ? 0 : 1);

@@ -182,10 +182,10 @@
   // A node is a *provision of the world*, not a player's build: it is generated from
   // (map, x, y) and can therefore reset forever without anyone losing anything.
   var NODE_KINDS = {
-    TREE: { id: 1, name: 'tree', yields: 'wood', amount: 2, respawnMs: 45000, hp: 3 },
-    ORE: { id: 2, name: 'ore seam', yields: 'ore', amount: 2, respawnMs: 90000, hp: 4 },
-    HERB: { id: 3, name: 'herb', yields: 'herb', amount: 1, respawnMs: 30000, hp: 1 },
-    CRYSTAL: { id: 4, name: 'crystal', yields: 'crystal', amount: 1, respawnMs: 150000, hp: 2 }
+    TREE: { id: 1, name: 'tree', yield: 'wood', yields: 'wood', amount: 2, respawnMs: 45000, hp: 3, form: 'trunk' },
+    ORE: { id: 2, name: 'ore seam', yield: 'ore', yields: 'ore', amount: 2, respawnMs: 90000, hp: 4, form: 'vein' },
+    HERB: { id: 3, name: 'herb', yield: 'herb', yields: 'herb', amount: 1, respawnMs: 30000, hp: 1, form: 'sprig' },
+    CRYSTAL: { id: 4, name: 'crystal', yield: 'crystal', yields: 'crystal', amount: 1, respawnMs: 150000, hp: 2, form: 'shard' }
   };
 
   /** The node (if any) generated at this tile. Pure function — no state. */
@@ -216,20 +216,228 @@
     return null;
   }
 
+  // ---- combat & progression data ------------------------------------------
+  /**
+   * COMBAT MODEL — all of it data, all of it shared with the browser.
+   *
+   * A species is declared once, here, and read by the server (world.js runs the AI), by
+   * the renderer (draws .form) and by the tests. Nothing about a creature is hidden in
+   * code: if it isn't in this table it doesn't exist. Damage types, resistances, wind-up
+   * timings and loot tables are all plain numbers so balance is a data edit.
+   */
+  var DAMAGE_TYPES = ['physical', 'fire', 'ice'];
+  var DEFAULT_DMG_TYPE = 'physical';
+
+  var COMBAT = {
+    variance: 0.18,       // every blow lands within ±18% of the attacker's attack
+    critChance: 0.25,     // the player's chance to land a critical hit
+    critMul: 1.8,
+    monCritChance: 0.12,  // monsters crit less often than you do
+    monCritMul: 1.6,
+    minDamage: 1,
+    regenDelayMs: 12000   // untouched for this long and a wounded creature knits itself
+  };
+
+  // A monster's reset clock scales with its tier: losing a tier-3 tank should hurt.
+  var TIER_RESPAWN_MUL = { 1: 1, 2: 1.4, 3: 1.9 };
+  function respawnMsFor(sp) { return Math.round((sp.respawnMs || 60000) * (TIER_RESPAWN_MUL[sp.tier] || 1)); }
+
+  /** Roll one blow: variance, then crit. Returns {dmg, crit}. */
+  function damageRoll(atk, critChance, critMul) {
+    var a = Math.max(1, +atk || 1);
+    var cc = (critChance === undefined) ? COMBAT.critChance : critChance;
+    var cm = (critMul === undefined) ? COMBAT.critMul : critMul;
+    var v = 1 + (Math.random() * 2 - 1) * COMBAT.variance;
+    var crit = Math.random() < cc;
+    return { dmg: Math.max(COMBAT.minDamage, Math.round(a * v * (crit ? cm : 1))), crit: crit, atk: a };
+  }
+
+  /** Resistance of a defender (species OR player) to a damage type: -1 weak, +1 immune. */
+  function resistOf(target, type) {
+    if (!target || !target.resist) return 0;
+    var r = target.resist[type];
+    return (typeof r === 'number') ? r : 0;
+  }
+  function applyResist(type, amount, target) {
+    var r = resistOf(target, type);
+    if (r > 0.95) r = 0.95;
+    if (r < -0.95) r = -0.95;
+    return amount * (1 - r);
+  }
+
+  /** Roll a species' loot table: {grants:{item:qty}, primary, rolls}. `rand` is injectable. */
+  function rollLoot(sp, rand) {
+    var rnd = rand || Math.random;
+    var table = (sp && sp.lootTable) || [];
+    var grants = {}, primary = null, rolls = 0;
+    for (var i = 0; i < table.length; i++) {
+      var e = table[i];
+      rolls++;
+      var n = 0;
+      if (rnd() < (e.chance === undefined ? 1 : e.chance)) {
+        var mn = e.min === undefined ? 1 : e.min;
+        var mx = e.max === undefined ? mn : e.max;
+        n = mn + Math.floor(rnd() * (mx - mn + 1));
+      }
+      if (n > 0) { grants[e.item] = (grants[e.item] || 0) + n; if (!primary) primary = e.item; }
+    }
+    return { grants: grants, primary: primary, rolls: rolls };
+  }
+
+  // ---- player progression -------------------------------------------------
+  /** Level curve. Max HP and attack are DERIVED from level, never stored. */
+  var LEVEL = { max: 40, hpBase: 100, hpPer: 15, atkBase: 7, atkPerLevel: 0.5, xpBase: 30, xpGrowth: 1.6 };
+
+  function xpToNext(level) { return Math.round(LEVEL.xpBase * Math.pow(LEVEL.xpGrowth, Math.max(0, (level | 0) - 1))); }
+  function maxHpForLevel(level) { return LEVEL.hpBase + LEVEL.hpPer * (Math.max(1, level | 0) - 1); }
+  function attackForLevel(level) { return LEVEL.atkBase + Math.floor((Math.max(1, level | 0) - 1) * LEVEL.atkPerLevel); }
+  function levelFromXp(xp) {
+    var total = Math.max(0, xp || 0), l = 1, rem = total;
+    while (l < LEVEL.max && rem >= xpToNext(l)) { rem -= xpToNext(l); l++; }
+    return { level: l, xp: total, into: rem, next: xpToNext(l) };
+  }
+
+  /** Non-reversible tag for a player key — safe to publish in /api/stats. */
+  function keyTag(key) {
+    var s = String(key || ''), h = 0x811c9dc5;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i) | 0; h = Math.imul(h, 0x01000193); }
+    return (h >>> 0).toString(16);
+  }
+
+  function speciesOf(mapId, idx) {
+    var list = SPECIES[mapId] || SPECIES[0];
+    return list[idx] || list[0];
+  }
+
+  /** Generated monster homes within a chunk radius of a point: [{x,y,kind,sp}]. */
+  function homesNear(mapId, x, y, chunkRadius) {
+    var r = (chunkRadius === undefined) ? 3 : chunkRadius;
+    var cx = chunkOf(x), cy = chunkOf(y), out = [];
+    for (var dy = -r; dy <= r; dy++) {
+      for (var dx = -r; dx <= r; dx++) {
+        var hx = cx + dx, hy = cy + dy;
+        if (hx < 0 || hy < 0 || hx * CHUNK >= W || hy * CHUNK >= H) continue;
+        var list = monstersInChunk(mapId, hx, hy);
+        for (var i = 0; i < list.length; i++) {
+          out.push({
+            x: list[i][0] + 0.5, y: list[i][1] + 0.5, kind: list[i][2],
+            sp: speciesOf(mapId, list[i][2])
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Fill in every field a species must carry, so the tables below only spell out what is
+   * interesting about each creature. Required on every entry: kind/name, form, tier,
+   * hp, atk, speed, aggro, respawnMs (the renderer and the tests read these directly).
+   */
+  function sp(o) {
+    o.name = o.kind;
+    o.form = o.form || 'blob';
+    o.tier = o.tier || 1;
+    o.role = o.role || 'brute';
+    o.dmgType = o.dmgType || DEFAULT_DMG_TYPE;
+    o.resist = o.resist || {};
+    o.windupMs = o.windupMs || 420;
+    o.cooldownMs = o.cooldownMs || 1400;
+    o.melee = o.melee || 1.7;
+    o.xp = o.xp || 5;
+    o.leash = o.leash || Math.max(14, Math.round(o.aggro * 1.6));
+    if (!o.lootTable) o.lootTable = [{ item: o.loot, chance: 1, min: 1, max: 1 }];
+    return o;
+  }
+
   // ---- monsters -----------------------------------------------------------
   var SPECIES = {
     0: [ // THE FIRST ACRE — gentle
-      { kind: 'MOSS_HOPPER', hp: 22, atk: 3, respawnMs: 60000, speed: 1.1, aggro: 7, xp: 4, loot: 'herb' },
-      { kind: 'THICKET_MAW', hp: 34, atk: 5, respawnMs: 90000, speed: 1.3, aggro: 9, xp: 7, loot: 'wood' },
-      { kind: 'STONE_SKITTER', hp: 28, atk: 4, respawnMs: 75000, speed: 1.8, aggro: 8, xp: 6, loot: 'ore' }
+      // 0 kiter — keeps its distance and plinks you; hard to corner
+      sp({ kind: 'MOSS_HOPPER', form: 'wisp', tier: 1, role: 'kiter',
+        hp: 22, atk: 3, speed: 1.9, aggro: 7, respawnMs: 60000, xp: 5, loot: 'herb',
+        dmgType: 'physical', resist: { physical: 0, fire: -0.25, ice: 0.2 },
+        windupMs: 340, cooldownMs: 1500, ranged: 5, keepAway: 3.5, shootRange: 5,
+        lootTable: [{ item: 'herb', chance: 1, min: 1, max: 2 }, { item: 'wood', chance: 0.25, min: 1, max: 1 }] }),
+      // 1 charging brute — winds up, then barrels through you
+      sp({ kind: 'THICKET_MAW', form: 'brute', tier: 1, role: 'brute',
+        hp: 34, atk: 5, speed: 1.3, aggro: 9, respawnMs: 90000, xp: 12, loot: 'wood',
+        dmgType: 'physical', resist: { physical: 0.15, fire: 0, ice: -0.2 },
+        windupMs: 520, cooldownMs: 1800, melee: 1.6,
+        charge: { range: 15, windupMs: 650, dashMs: 900, dashMul: 2.8, cooldownMs: 4200 },
+        lootTable: [{ item: 'wood', chance: 1, min: 1, max: 3 }, { item: 'herb', chance: 0.2, min: 1, max: 1 }] }),
+      // 2 fast swarmling — weak, quick, and always first to arrive
+      sp({ kind: 'STONE_SKITTER', form: 'swarm', tier: 1, role: 'swarm',
+        hp: 18, atk: 4, speed: 2.6, aggro: 8, respawnMs: 75000, xp: 6, loot: 'ore',
+        dmgType: 'physical', resist: { physical: 0, fire: 0.25, ice: -0.2 },
+        windupMs: 260, cooldownMs: 1000, melee: 1.5,
+        lootTable: [{ item: 'ore', chance: 1, min: 1, max: 2 }, { item: 'crystal', chance: 0.08, min: 1, max: 1 }] }),
+      // 3 slow high-HP tank — you cannot out-DPS it, you have to out-think it
+      sp({ kind: 'BOULDERBACK', form: 'tank', tier: 2, role: 'tank',
+        hp: 64, atk: 8, speed: 0.85, aggro: 7, respawnMs: 140000, xp: 26, loot: 'ore',
+        dmgType: 'physical', resist: { physical: 0.35, fire: -0.1, ice: -0.15 },
+        windupMs: 780, cooldownMs: 2400, melee: 1.8,
+        lootTable: [{ item: 'ore', chance: 1, min: 1, max: 3 }, { item: 'crystal', chance: 0.3, min: 1, max: 2 }] }),
+      // 4 pack hunter — screams, and its neighbours come
+      sp({ kind: 'ACRE_RAT', form: 'hound', tier: 1, role: 'pack',
+        hp: 26, atk: 4, speed: 2.1, aggro: 10, respawnMs: 70000, xp: 10, loot: 'herb',
+        dmgType: 'physical', resist: { physical: 0, fire: -0.2, ice: 0 },
+        windupMs: 300, cooldownMs: 1100, melee: 1.5,
+        pack: { callRadius: 22, maxAllies: 3 },
+        lootTable: [{ item: 'herb', chance: 1, min: 1, max: 2 }, { item: 'wood', chance: 0.15, min: 1, max: 1 }] })
     ],
     1: [ // ASHEN HOLLOW — hostile
-      { kind: 'CINDER_HOUND', hp: 52, atk: 9, respawnMs: 120000, speed: 2.0, aggro: 12, xp: 16, loot: 'ore' },
-      { kind: 'SLAG_WRETCH', hp: 78, atk: 13, respawnMs: 180000, speed: 1.2, aggro: 10, xp: 24, loot: 'crystal' }
+      // 0 pack hunter — calls nearby CINDER_HOUNDs the moment it aggros
+      sp({ kind: 'CINDER_HOUND', form: 'hound', tier: 2, role: 'pack',
+        hp: 52, atk: 9, speed: 2.0, aggro: 12, respawnMs: 120000, xp: 30, loot: 'ore',
+        dmgType: 'fire', resist: { physical: 0, fire: 0.6, ice: -0.35 },
+        windupMs: 420, cooldownMs: 1300, melee: 1.6,
+        pack: { callRadius: 26, maxAllies: 3 },
+        lootTable: [{ item: 'ore', chance: 1, min: 1, max: 3 }, { item: 'crystal', chance: 0.2, min: 1, max: 1 }] }),
+      // 1 tank — 96 HP, lava-blooded, and it knows it
+      sp({ kind: 'SLAG_WRETCH', form: 'tank', tier: 3, role: 'tank',
+        hp: 96, atk: 13, speed: 0.9, aggro: 10, respawnMs: 180000, xp: 60, loot: 'crystal',
+        dmgType: 'fire', resist: { physical: 0.3, fire: 0.85, ice: -0.4 },
+        windupMs: 800, cooldownMs: 2400, melee: 1.8,
+        lootTable: [{ item: 'crystal', chance: 1, min: 1, max: 2 }, { item: 'ore', chance: 0.6, min: 1, max: 4 }] }),
+      // 2 spitter — burns you from nine tiles out
+      sp({ kind: 'ASH_SPITTER', form: 'spitter', tier: 2, role: 'spitter',
+        hp: 40, atk: 7, speed: 1.1, aggro: 13, respawnMs: 110000, xp: 20, loot: 'herb',
+        dmgType: 'fire', resist: { physical: 0, fire: 0.5, ice: -0.3 },
+        windupMs: 620, cooldownMs: 1900, ranged: 9, keepAway: 6, shootRange: 10,
+        lootTable: [{ item: 'herb', chance: 1, min: 1, max: 2 }, { item: 'ore', chance: 0.4, min: 1, max: 2 }] }),
+      // 3 swarmling — arrives in a pack's worth of noise, dies in two hits
+      sp({ kind: 'EMBER_SWARMLING', form: 'swarm', tier: 2, role: 'swarm',
+        hp: 22, atk: 5, speed: 2.8, aggro: 11, respawnMs: 80000, xp: 9, loot: 'ore',
+        dmgType: 'fire', resist: { physical: 0, fire: 0.4, ice: -0.3 },
+        windupMs: 240, cooldownMs: 950, melee: 1.5,
+        lootTable: [{ item: 'ore', chance: 1, min: 1, max: 2 }, { item: 'crystal', chance: 0.12, min: 1, max: 1 }] })
     ],
     2: [ // THE SUNKEN SHELF — amphibious
-      { kind: 'BRINE_LURKER', hp: 44, atk: 7, respawnMs: 100000, speed: 1.6, aggro: 11, xp: 13, loot: 'herb' },
-      { kind: 'SHELL_BRUTE', hp: 66, atk: 11, respawnMs: 150000, speed: 1.0, aggro: 8, xp: 20, loot: 'crystal' }
+      // 0 kiter — amphibious skirmisher; dances out of melee range
+      sp({ kind: 'BRINE_LURKER', form: 'wisp', tier: 2, role: 'kiter',
+        hp: 44, atk: 7, speed: 1.7, aggro: 11, respawnMs: 100000, xp: 15, loot: 'herb',
+        dmgType: 'ice', resist: { physical: 0, fire: -0.3, ice: 0.6 },
+        windupMs: 400, cooldownMs: 1600, ranged: 6, keepAway: 5, shootRange: 8,
+        lootTable: [{ item: 'herb', chance: 1, min: 1, max: 2 }, { item: 'crystal', chance: 0.2, min: 1, max: 1 }] }),
+      // 1 tank — armoured, patient, and worth real XP
+      sp({ kind: 'SHELL_BRUTE', form: 'tank', tier: 3, role: 'tank',
+        hp: 84, atk: 11, speed: 0.95, aggro: 8, respawnMs: 150000, xp: 45, loot: 'crystal',
+        dmgType: 'physical', resist: { physical: 0.4, fire: 0, ice: 0.2 },
+        windupMs: 700, cooldownMs: 2200, melee: 1.8,
+        lootTable: [{ item: 'crystal', chance: 1, min: 1, max: 2 }, { item: 'herb', chance: 0.5, min: 1, max: 3 }] }),
+      // 2 spitter — spits ice from ten tiles out, so the shore is not safe
+      sp({ kind: 'SALT_SPITTER', form: 'spitter', tier: 2, role: 'spitter',
+        hp: 38, atk: 8, speed: 1.2, aggro: 14, respawnMs: 120000, xp: 22, loot: 'herb',
+        dmgType: 'ice', resist: { physical: 0, fire: -0.3, ice: 0.5 },
+        windupMs: 640, cooldownMs: 2000, ranged: 10, keepAway: 6, shootRange: 11,
+        lootTable: [{ item: 'herb', chance: 1, min: 1, max: 2 }, { item: 'ore', chance: 0.45, min: 1, max: 2 }] }),
+      // 3 swarmling — the fastest thing on the shelf
+      sp({ kind: 'TIDE_SWARMLING', form: 'swarm', tier: 2, role: 'swarm',
+        hp: 20, atk: 5, speed: 3.0, aggro: 12, respawnMs: 70000, xp: 8, loot: 'herb',
+        dmgType: 'ice', resist: { physical: 0, fire: -0.2, ice: 0.4 },
+        windupMs: 220, cooldownMs: 900, melee: 1.5,
+        lootTable: [{ item: 'herb', chance: 1, min: 1, max: 3 }, { item: 'ore', chance: 0.2, min: 1, max: 1 }] })
     ]
   };
 
@@ -255,12 +463,18 @@
   return {
     W: W, H: H, CHUNK: CHUNK, BORDER: BORDER, SEED: MAP0.seed,
     ID: ID, PALETTE: PALETTE, MAPS: MAPS, NODE_KINDS: NODE_KINDS, SPECIES: SPECIES,
+    DAMAGE_TYPES: DAMAGE_TYPES, DEFAULT_DMG_TYPE: DEFAULT_DMG_TYPE,
+    COMBAT: COMBAT, LEVEL: LEVEL, TIER_RESPAWN_MUL: TIER_RESPAWN_MUL,
     isPlaceable: isPlaceable, mapDef: mapDef, kindById: kindById,
     hash2: hash2, r01: r01, fbm: fbm,
     elevation: elevation, elevationFor: elevationFor,
     baseType: baseType, baseTypeFor: baseTypeFor,
     chunkOf: chunkOf, buildChunk: buildChunk, sampleGrid: sampleGrid,
     spawnPoint: spawnPoint, nodeAt: nodeAt, nodesInChunk: nodesInChunk,
-    monstersInChunk: monstersInChunk
+    monstersInChunk: monstersInChunk, homesNear: homesNear, speciesOf: speciesOf,
+    respawnMsFor: respawnMsFor, damageRoll: damageRoll,
+    resistOf: resistOf, applyResist: applyResist, rollLoot: rollLoot,
+    xpToNext: xpToNext, maxHpForLevel: maxHpForLevel, attackForLevel: attackForLevel,
+    levelFromXp: levelFromXp, keyTag: keyTag
   };
 });
