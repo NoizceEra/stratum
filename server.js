@@ -32,6 +32,29 @@ const DBFILE = process.env.STRATUM_DB || path.join(DATA, 'world.db');
 const W = T.W, H = T.H, CHUNK = T.CHUNK;
 const REACH = 6;
 const COST = 1, RELEASE_COST = 0, ENERGY_MAX = 240, REGEN_MS = 80;
+
+// ---------- cozy pivot: heavier crafting/gathering + light grouping --------
+// (ROADMAP_COZY.md §3, §5) Kill XP today ranges from 5 (weakest tier-0 critter, see
+// terrain.js SPECIES) to 60 (a tier-3 boss) via world.awardXp in the 'attack' case
+// below. Harvesting and crafting now award XP too, but deliberately far less per
+// action than even the cheapest kill: a node harvest is instant and infinitely
+// repeatable (the node just regrows), so it stays flat and small. Crafting costs real
+// material investment and is gated by tool tier, so its XP scales with the recipe's
+// tier the same way kill XP scales with a species' tier — a tier-3 craft still lands
+// well under a tier-0 kill.
+const HARVEST_XP = 2;                             // per successful (depleting) harvest
+const CRAFT_XP_BASE = 2, CRAFT_XP_PER_TIER = 2;    // 2 (tier 0) .. 8 (tier 3)
+
+// Light grouping (ROADMAP_COZY.md §5): players gathering the same node or fighting the
+// same creature within a small radius all get XP credit — proximity is the whole
+// mechanic, no invite flow. GROUP_RADIUS is intentionally its own constant rather than
+// reusing REACH: REACH gates whether YOU can interact with a tile, GROUP_RADIUS gates
+// whether a BYSTANDER benefits from someone else's action, which is a different (and
+// looser) game-feel knob. GROUP_XP_SHARE is a fraction, never a duplicate full award,
+// so two colluding players always net LESS total XP than doing the same actions apart
+// (actor gets 1x, each bystander gets 0.5x < the 1x they'd get soloing it).
+const GROUP_RADIUS = 8;
+const GROUP_XP_SHARE = 0.5;
 const VIEW_RADIUS = 2;
 const LB_N = 20;    // /api/leaderboard: top-N per ranking. Never the whole world.
 const MAPGRID = 256, MAPSTEP = W / MAPGRID;
@@ -585,6 +608,27 @@ function sendVitals(c, extra) {
   c.send(o);
 }
 
+/**
+ * Light grouping (ROADMAP_COZY.md §5): every OTHER ready, living player within
+ * GROUP_RADIUS of (x,y) on `actor`'s map gets a SHARE of the XP `actor` just earned —
+ * XP only, never materials or loot, which stays with the actor who landed the harvest
+ * or the killing blow (simpler, and avoids duplicating scarce resources for free).
+ * This is one server-side event fanning credit out to whoever happens to be nearby —
+ * bystanders never send a message and never trigger their own award, so there is no
+ * way for two clients to each claim credit for the same event.
+ */
+function creditNearby(actor, x, y, shareXp) {
+  const amt = Math.max(0, Math.round(shareXp));
+  if (amt <= 0) return;
+  for (const o of ready()) {
+    if (o === actor || o.map !== actor.map || o.dead) continue;
+    const dx = o.x - x, dy = o.y - y;
+    if (dx * dx + dy * dy > GROUP_RADIUS * GROUP_RADIUS) continue;
+    world.awardXp(o, amt);
+    sendVitals(o);              // reuses the existing vitals shape: client already knows how to react to a level-up
+  }
+}
+
 // ---------- inbound validation ---------------------------------------------
 // One rule for every field a client controls: a value that is not a finite number is
 // refused outright (NaN, Infinity, null and "12" are not coordinates), and a finite one
@@ -821,10 +865,13 @@ function onMessage(c, msg) {
         const boosted = ECO.toolHarvestAmount(c.tool | 0, r.kind);
         const amount = (typeof boosted === 'number') ? Math.max(r.amount, boosted) : r.amount;
         gain(c, r.yields, amount);
+        world.awardXp(c, HARVEST_XP);      // gathering is a real XP source now (ROADMAP_COZY §3)
         stateSave(c);
+        sendVitals(c);                     // same pattern 'craft' uses: level/xp reach the client via vitals
         const ripeSec = Math.ceil((r.ripe - Date.now()) / 1000);
         broadcastNode(c.map, x, y, r.kind, 0, ripeSec);
         c.send({ t: 'harvested', x, y, kind: r.kind, state: 0, ripeSec, gains: { [r.yields]: amount }, inv: c.inv });
+        creditNearby(c, x, y, HARVEST_XP * GROUP_XP_SHARE);   // light grouping (ROADMAP_COZY §5)
       } else {
         c.send({ t: 'harvested', x, y, kind: r.kind, state: 1, partial: true, inv: c.inv });
       }
@@ -862,6 +909,7 @@ function onMessage(c, msg) {
         stateSave(c);
         c.send({ t: 'combat', id: r.id, killed: true, name: r.name, loot: r.loot, kills: c.kills, atk: c.atk, inv: c.inv, level: world.hunter(c).level });
         checkAchievements(c);                  // kills track AND level (XP is only awarded here)
+        creditNearby(c, r.x, r.y, r.xp * GROUP_XP_SHARE);   // light grouping (ROADMAP_COZY §5): XP only, loot stays with the killer
       } else {
         c.send({ t: 'combat', id: r.id, killed: false, name: r.name, hp: r.hp, maxHp: r.maxHp });
       }
@@ -879,6 +927,7 @@ function onMessage(c, msg) {
       c.inv = res.inv;
       c.atkBoost = gearBonus(c.inv, 'weapon');
       c.achCrafts = (c.achCrafts | 0) + 1;
+      world.awardXp(c, CRAFT_XP_BASE + CRAFT_XP_PER_TIER * rec.tier);  // crafting is a real XP source now (ROADMAP_COZY §3)
       stateSave(c);
       sendVitals(c);
       c.send({ t: 'crafted', id, item: res.item, count: res.count, inv: c.inv, atkBoost: c.atkBoost });

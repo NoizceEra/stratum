@@ -173,7 +173,8 @@ class Client {
   ok(w.tool === 0, 'fresh arrival starts at flint tools (tool 0)', w.tool);
   ok(typeof w.level === 'number' && w.level >= 1, 'welcome carries the hunter level', w.level);
   ok(w.catalog && w.catalog.costs && w.catalog.costs.length === 10, 'catalogue prices all 10 materials', w.catalog && w.catalog.costs && w.catalog.costs.length);
-  ok(w.catalog && w.catalog.recipes && w.catalog.recipes.length === 8, 'catalogue lists all 8 recipes', w.catalog && w.catalog.recipes && w.catalog.recipes.length);
+  // 8 original weapon/armour recipes + 3 cozy decor recipes (ROADMAP_COZY §3) = 11
+  ok(w.catalog && w.catalog.recipes && w.catalog.recipes.length === 11, 'catalogue lists all 11 recipes', w.catalog && w.catalog.recipes && w.catalog.recipes.length);
   ok(w.catalog && w.catalog.tools && w.catalog.tools.length === 4, 'catalogue lists all 4 tool tiers', w.catalog && w.catalog.tools && w.catalog.tools.length);
   ok(w.inv && w.inv.wood === 6 && w.inv.ore === 4 && w.inv.herb === 2 && w.inv.crystal === 1,
     'new arrivals wash up with the starter cache {6,4,2,1}', w.inv);
