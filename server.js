@@ -27,6 +27,7 @@ const Shops = require('./src/shops.js');
 const Trade = require('./src/trade.js');
 const Parcels = require('./src/parcels.js');
 const TokenConfig = require('./src/token-config.js');
+const ChainAdapter = require('./src/chain-adapter.js');
 const Rewards = require('./src/rewards.js');
 
 /** Live commerce config — env can replace the placeholder CA without a redeploy of call sites. */
@@ -100,6 +101,13 @@ const PARCEL_LISTING_TTL_MS = TRADE_TTL_MS;
 // in parcels.js) so tuning monetization is a config edit, never a module edit.
 const PARCEL_FEE_BPS = Number(process.env.STRATUM_PARCEL_FEE_BPS) >= 0
   ? Number(process.env.STRATUM_PARCEL_FEE_BPS) | 0 : Parcels.FEE_BPS;
+// Same monetization pattern, applied to ordinary shop sales — until now shops.js's buy()
+// was always called with no fee, so every shop trade was 100% seller/0% treasury while
+// parcel deeds took a cut. This closes that gap: real commerce (a priced listing) earns
+// the treasury a cut; player-to-player trade.js gifting/barter deliberately still does not
+// (taking a cut of a gift is a different, worse product decision — see ROADMAP_COZY.md).
+const SHOP_FEE_BPS = Number(process.env.STRATUM_SHOP_FEE_BPS) >= 0
+  ? Number(process.env.STRATUM_SHOP_FEE_BPS) | 0 : Shops.FEE_BPS;
 // The fixed emote allowlist. No freeform text ever — see ROADMAP.md's no-chat non-goal.
 const EMOTES = ['wave', 'thanks', 'nice-place', 'gg'];
 
@@ -151,6 +159,17 @@ db.exec(`
     claimed INTEGER NOT NULL DEFAULT 0,
     wallet TEXT,
     updated INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS claim_requests(
+    id TEXT PRIMARY KEY,
+    k TEXT NOT NULL,
+    wallet TEXT NOT NULL,
+    amountUnits INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    reason TEXT,
+    txHash TEXT,
+    requestedAt INTEGER NOT NULL,
+    settledAt INTEGER);
+  CREATE INDEX IF NOT EXISTS claim_requests_k ON claim_requests(k);
 `);
 
 // migrate a pre-maps tiles table (tiles used to be keyed by x,y only)
@@ -278,6 +297,15 @@ function creditToken(key, n) {
   ledgerSave(key, pending, cur.claimed, cur.wallet);
   return pending;
 }
+
+// ---------- claim requests: the audit trail for "turn pending STRM into a real payout" --
+// See src/chain-adapter.js's header for why nothing here ever actually pays out yet.
+// Every claim attempt is recorded regardless of outcome — "not configured" is a normal,
+// expected, fully-logged result, not a swallowed failure.
+const qClaimIns = db.prepare(
+  'INSERT INTO claim_requests(id,k,wallet,amountUnits,status,reason,txHash,requestedAt,settledAt) VALUES(?,?,?,?,?,?,?,?,?)');
+const qClaimUpdate = db.prepare('UPDATE claim_requests SET status=?,reason=?,txHash=?,settledAt=? WHERE id=?');
+const qClaimHistory = db.prepare('SELECT id,amountUnits,status,reason,txHash,requestedAt,settledAt FROM claim_requests WHERE k=? ORDER BY requestedAt DESC LIMIT 20');
 
 /** authoritative in-memory idle structures: "map:y*W+x" -> {id,kind,map,x,y,owner,builtAt,lastCollectedAt}
  *  Same key shape as `tiles` — a structure needs a claimed tile under it, so the two
@@ -437,7 +465,8 @@ const server = http.createServer((req, res) => {
       online: [...clients.values()].filter(c => c.ready).length,
       playersEver: qPlayCount.get().n,
       volatile: world.stats(),
-      spawn: T.spawnPoint(0)
+      spawn: T.spawnPoint(0),
+      treasury: treasuryTotals()          // real fee revenue so far — parcel deeds + shops
     }, null, 2);
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(body);
@@ -906,7 +935,7 @@ const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', '
   'build-structure', 'collect-structure', 'set-look',
   'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote',
   'parcel-mint', 'parcel-list', 'parcel-buy', 'parcel-cancel', 'parcel-browse', 'parcel-mine',
-  'wallet-link']);
+  'wallet-link', 'claim']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -1255,6 +1284,47 @@ function onMessage(c, msg) {
       break;
     }
 
+    // Turn a player's pending STRM ledger balance into a claim attempt. This is the
+    // ONE place src/chain-adapter.js gets called — see that file's header for why it
+    // always answers 'not_configured' today. The pending balance is NEVER decremented
+    // on that answer: nothing was lost, the claim just sits recorded and queued, exactly
+    // as owed as it was before the request. The async settle call is why this handler
+    // (alone, today) doesn't finish synchronously — every other message in this switch
+    // still does.
+    case 'claim': {
+      if (!c.ready || !c.key) return;
+      if (!c.tokenWallet) return c.send({ t: 'claimed', ok: false, err: 'link a wallet first' });
+      const cur = ledgerOf(c.key);
+      const amount = cur.pending | 0;
+      if (amount <= 0) return c.send({ t: 'claimed', ok: false, err: 'nothing pending' });
+      const id = crypto.randomUUID();
+      const wallet = c.tokenWallet, key = c.key, now = Date.now();
+      qClaimIns.run(id, key, wallet, amount, 'requested', null, null, now, null);
+      ChainAdapter.settleClaim({ key, wallet, amountUnits: amount }, process.env).then((res) => {
+        if (res.ok) {
+          // Unreachable today (settleClaim can only resolve ok:true once real signing
+          // is added — see chain-adapter.js) — written correctly now so that day is a
+          // config change, not a rewrite of this handler.
+          const latest = ledgerOf(key);
+          const claimed = (latest.claimed | 0) + amount;
+          const pending = Math.max(0, (latest.pending | 0) - amount);
+          ledgerSave(key, pending, claimed, latest.wallet);
+          qClaimUpdate.run('settled', null, res.txHash || null, Date.now(), id);
+          notifyPlayer(key, { t: 'claimed', ok: true, amount, txHash: res.txHash, tokenPending: pending, tokenClaimed: claimed });
+        } else {
+          qClaimUpdate.run('queued', res.reason || null, null, null, id);
+          notifyPlayer(key, {
+            t: 'claimed', ok: false, queued: true, reason: res.reason, detail: res.detail,
+            amount, tokenPending: ledgerOf(key).pending
+          });
+        }
+      }).catch((e) => {
+        qClaimUpdate.run('queued', 'internal_error', null, null, id);
+        notifyPlayer(key, { t: 'claimed', ok: false, queued: true, reason: 'internal_error', amount, tokenPending: ledgerOf(key).pending });
+      });
+      break;
+    }
+
     case 'toolup': {
       if (!c.ready || c.dead) return;
       const next = (c.tool | 0) + 1;
@@ -1391,11 +1461,12 @@ function onMessage(c, msg) {
       if (bdx * bdx + bdy * bdy > REACH * REACH) return c.send({ t: 'shop-bought', id, err: 'out of reach' });
       if (listing.seller === c.key) return c.send({ t: 'shop-bought', id, err: 'cannot buy your own listing' });
       const buyQty = clampInt(msg.qty, 1, Shops.MAX_QTY, 1);
-      const res = Shops.buy(listing, c.inv, buyQty);
+      const res = Shops.buy(listing, c.inv, buyQty, SHOP_FEE_BPS);
       if (!res.ok) return c.send({ t: 'shop-bought', id, err: res.error });
 
       // one atomic step: buyer's payment leaves, the seller's already-escrowed goods
-      // arrive, the seller's payment is credited (online or not) — never partially.
+      // arrive, the seller gets its price-minus-fee (online or not) and the treasury
+      // gets the fee — never partially, same split parcel-buy already does below.
       c.inv = res.buyerInv;
       listing.qty = res.remainingQty;
       if (listing.qty <= 0) {
@@ -1404,10 +1475,11 @@ function onMessage(c, msg) {
       } else {
         qShopIns.run(id, listing.seller, listing.map, listing.x, listing.y, listing.item, listing.qty, listing.priceItem, listing.priceQty, listing.createdAt);
       }
-      creditPlayer(listing.seller, listing.priceItem, res.cost);
+      creditPlayer(listing.seller, listing.priceItem, res.sellerGets);
+      treasuryCredit(listing.priceItem, res.treasuryGets);
       stateSave(c);
-      c.send({ t: 'shop-bought', id, bought: buyQty, item: listing.item, cost: res.cost, priceItem: listing.priceItem, remainingQty: listing.qty, inv: c.inv });
-      notifyPlayer(listing.seller, { t: 'shop-sold', id, buyer: c.key, item: listing.item, qty: buyQty, cost: res.cost, priceItem: listing.priceItem });
+      c.send({ t: 'shop-bought', id, bought: buyQty, item: listing.item, cost: res.cost, fee: res.treasuryGets, priceItem: listing.priceItem, remainingQty: listing.qty, inv: c.inv });
+      notifyPlayer(listing.seller, { t: 'shop-sold', id, buyer: c.key, item: listing.item, qty: buyQty, cost: res.sellerGets, priceItem: listing.priceItem });
       break;
     }
 

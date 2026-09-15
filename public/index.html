@@ -238,6 +238,14 @@
       <button type="button" id="wallet-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">CONNECT WALLET</button>
       <span class="k" id="h-wallet" style="margin-left:6px;font-size:10px"></span>
     </div>
+    <!-- Claiming turns pending STRM into a real claim_requests row server-side, but
+         nothing settles on-chain yet (src/chain-adapter.js is an honest, unconfigured
+         stub) — every claim today answers "queued", and h-claim-status says exactly
+         that rather than implying a payout happened. -->
+    <div style="margin-top:6px">
+      <button type="button" id="claim-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">CLAIM STRM</button>
+      <span class="k" id="h-claim-status" style="margin-left:6px;font-size:10px"></span>
+    </div>
     <div class="k" id="h-token-badge" style="margin-top:4px;font-size:9px;display:none">PLACEHOLDER CA</div>
     <div class="k" style="margin-top:7px">slain <span class="v" id="h-kills">0</span> &nbsp; <span class="k">atk</span> <span class="v" id="h-atk">7</span></div>
     <div class="k" style="margin-top:5px;font-size:10px" id="h-vol">—</div>

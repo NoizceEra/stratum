@@ -179,7 +179,14 @@ are the server's.
 
 ## Commerce (Robinhood Chain)
 
-Harvesting, crafting, and kills award **in-game gold** plus pending **STRM** token units.
+Harvesting, crafting, and kills award **in-game gold** plus pending **STRM** token units
+(`src/rewards.js`). Two separate marketplaces charge a real treasury fee on top of that —
+parcel deeds (`src/parcels.js`) and player shops (`src/shops.js`), both 2.5% by default,
+both tunable via `STRATUM_PARCEL_FEE_BPS` / `STRATUM_SHOP_FEE_BPS`. Direct player-to-player
+trade (`src/trade.js` — gifting/barter, not a priced marketplace) deliberately charges
+nothing; taking a cut of a gift is a different, worse product decision. `/api/stats`
+reports the treasury's running total across both fee sources.
+
 The token contract is configured in `src/token-config.js` (Robinhood Chain `4663`).
 
 Placeholder CA (replace soon):
@@ -195,20 +202,41 @@ STRATUM_RPC_URL=https://rpc.mainnet.chain.robinhood.com
 STRATUM_TOKEN_SYMBOL=STRM
 ```
 
-Connect a wallet in the HUD to switch to Robinhood Chain and read on-chain `balanceOf`.
-Pending STRM is a server ledger — on-chain claim/mint is a follow-up once the official
-token is live.
+Connect a wallet in the HUD to switch to Robinhood Chain and read on-chain `balanceOf`
+(read-only — `public/wallet.js` never signs or sends a transaction). Pending STRM accrues
+in a server ledger (`token_ledger`); a **CLAIM STRM** button in the HUD sends it toward
+settlement, but read the next section before assuming that means a payout happens.
+
+### The claim pipeline — real, but deliberately not settling anything yet
+
+Every claim is genuinely recorded end-to-end: `token_ledger.pending` → a `claim_requests`
+row (id, wallet, amount, status, full audit trail) → `src/chain-adapter.js`. That last step
+is an honest, unconfigured stub — it always answers `not_configured`, and the pending
+balance is **never decremented** on that answer, so nothing is ever silently lost. The HUD
+reports this plainly ("QUEUED — ON-CHAIN SETTLEMENT NOT YET LIVE"), not as a payout.
+
+This is deliberate, not an oversight: real settlement means a wallet holding either mint
+authority or real funds, with a private key reachable from this server — genuine custody
+risk — plus correctly signing and broadcasting a real transaction (RLP encoding, secp256k1
+ECDSA with a recovery id, keccak256), which this project's zero-npm-dependency rule makes
+expensive to get right by hand. `src/chain-adapter.js`'s header spells out exactly what
+flipping it on would take. Until there's a real contract and real funds behind it, that
+switch stays off — see `src/chain-adapter.js` before changing that.
 
 ## Status
 
 Playable and tested. Honest gaps:
 
-- **Token claim not live yet** — pending STRM accrues in SQLite; no mint/transfer until the
-  official contract + treasury/minter path exists.
+- **On-chain settlement is not live** — see "The claim pipeline" above. Every claim today
+  queues; none settle.
 - **Not deployed.** It runs locally. Hosting needs a long-lived process (Railway/Fly/VPS) plus the
   static client — not a static host alone.
 - **Anti-cheat is basic** — movement rate-limiting and server-side validation, no persistence of
   suspicion.
+- **Real-money play-to-earn is a regulated space in most jurisdictions** (gambling,
+  securities, money-transmission considerations all vary by where players and the operator
+  are). Worth real legal review before any of this handles real value, independent of
+  anything this codebase does or doesn't enforce.
 
 ### Reset everything
 

@@ -59,6 +59,17 @@
   /** Ceiling on any single quantity in a listing — guards against overflow/silly listings. */
   var MAX_QTY = 1000000;
 
+  /** Fee denominator (basis points) — mirrors parcels.js exactly, so a fee is always
+   *  "N / 10000", never a floating-point percentage that could round two different ways
+   *  in two different places. */
+  var FEE_DENOM = 10000;
+  /** Treasury cut on a shop sale, in basis points. Unlike parcels.js's FEE_BPS (which is
+   *  the *default* the module falls back to for a bad bps), shops has no built-in default
+   *  fee: `buy()` charges 0 unless the caller explicitly passes one, so every existing
+   *  call site (and every existing test) keeps working unchanged. server.js is the one
+   *  place that decides the live rate, same as it already does for parcels. */
+  var FEE_BPS = 250;
+
   /**
    * Validate the shape of a would-be listing (server.js still checks that `item` and
    * `priceItem` are real catalog entries — this module only knows about generic barter
@@ -104,32 +115,56 @@
   }
 
   /**
+   * Treasury cut of a sale's `cost`, in the same units. Integer math, floored — a 1-unit
+   * sale yields a 0 fee, no dust chasing. `bps` is OPTIONAL and defaults to 0 (no fee),
+   * unlike parcels.js's equivalent which falls back to its own FEE_BPS — that asymmetry
+   * is deliberate: server.js always passes the live rate explicitly for a real purchase,
+   * so a caller that forgets to pass `bps` (e.g. every existing test) gets 0 fee rather
+   * than a silently-applied default, which is the safer failure direction for money.
+   */
+  function feeFor(cost, bps) {
+    var b = (isInt(bps) && bps >= 0 && bps <= FEE_DENOM) ? bps : 0;
+    if (!isPosInt(cost)) return 0;
+    return Math.floor((cost * b) / FEE_DENOM);
+  }
+
+  /**
    * Resolve a purchase of `buyQty` units of `listing` against `buyerInv`.
-   * Returns { ok:true, buyerInv (NEW), cost, remainingQty } — `cost` is what the caller
-   * must credit to the seller (who may be offline), exactly as `priceQty * buyQty` units
-   * of `listing.priceItem`; `remainingQty` is what is left in escrow after this sale, for
-   * the caller to persist (0 means the listing sold out and should be removed).
+   * Returns { ok:true, buyerInv (NEW), cost, sellerGets, treasuryGets, remainingQty } —
+   * `cost` is the FULL amount the buyer pays (unchanged by `feeBps`); `sellerGets` and
+   * `treasuryGets` split that same total for the caller to credit to each party (the
+   * seller may be offline, so the caller credits persisted state, never a live object,
+   * mirroring parcels.js `swapDeed` exactly). `remainingQty` is what is left in escrow
+   * after this sale (0 means the listing sold out and should be removed). `feeBps` is
+   * optional; omitting it (as every pre-existing call site does) charges no fee at all.
    * Returns { ok:false, error } on any invalid input. Never mutates `buyerInv` or `listing`.
    */
-  function buy(listing, buyerInv, buyQty) {
+  function buy(listing, buyerInv, buyQty, feeBps) {
     if (!listing || typeof listing !== 'object') return { ok: false, error: 'no such listing' };
     if (!isPosInt(buyQty)) return { ok: false, error: 'bad quantity' };
     if (buyQty > listing.qty) return { ok: false, error: 'not enough stock' };
     var cost = costFor(listing.priceQty, buyQty);
     if (held(buyerInv, listing.priceItem) < cost) return { ok: false, error: 'cannot afford' };
+    var fee = feeFor(cost, feeBps);
     var out = cloneInv(buyerInv);
     out[listing.priceItem] = held(buyerInv, listing.priceItem) - cost;
     out[listing.item] = held(buyerInv, listing.item) + buyQty;
-    return { ok: true, error: null, buyerInv: out, cost: cost, remainingQty: listing.qty - buyQty };
+    return {
+      ok: true, error: null, buyerInv: out, cost: cost,
+      sellerGets: cost - fee, treasuryGets: fee, remainingQty: listing.qty - buyQty
+    };
   }
 
   return {
     MAX_QTY: MAX_QTY,
+    FEE_BPS: FEE_BPS,
+    FEE_DENOM: FEE_DENOM,
     validListing: validListing,   // { ok, error } — shape/sanity check for a new listing.
     canEscrow: canEscrow,         // can `inv` afford to list `qty` of `item`?
     escrow: escrow,               // NEW inv with `qty` of `item` removed, or null.
     costFor: costFor,             // priceQty * buyQty (0 for bad input).
     canBuy: canBuy,               // can `buyQty` units be bought right now?
-    buy: buy                      // { ok, buyerInv (NEW), cost, remainingQty } or { ok:false, error }.
+    feeFor: feeFor,                // treasury cut of a cost, in bps (0 if bps omitted).
+    buy: buy                      // { ok, buyerInv (NEW), cost, sellerGets, treasuryGets, remainingQty } or { ok:false, error }.
   };
 });

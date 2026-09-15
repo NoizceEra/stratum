@@ -1024,6 +1024,28 @@
         updateWalletHud();
         break;
       }
+      case 'claimed': {
+        const statusEl = document.getElementById('h-claim-status');
+        if (m.err) {
+          if (statusEl) statusEl.textContent = String(m.err).toUpperCase();
+          toast(String(m.err).toUpperCase());
+          break;
+        }
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (m.ok) {
+          // Not reachable today — src/chain-adapter.js has no real signer wired in yet
+          // (see its own header) — but written correctly for the day it is.
+          if (typeof m.tokenClaimed === 'number') S.tokenClaimed = m.tokenClaimed;
+          if (statusEl) statusEl.textContent = 'SETTLED';
+          toast('CLAIMED ' + m.amount + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), true);
+        } else if (m.queued) {
+          // The honest, expected answer right now: recorded, not lost, not yet on-chain.
+          if (statusEl) statusEl.textContent = 'QUEUED — ON-CHAIN SETTLEMENT NOT YET LIVE';
+          toast('CLAIM RECORDED — ON-CHAIN SETTLEMENT NOT YET LIVE', true);
+        }
+        updateWalletHud();
+        break;
+      }
       case 'tooled': {
         if (m.err) {
           toast(String(m.err).toUpperCase() + (m.missing ? ' — SHORT ' + costText(m.missing) : ''));
@@ -2969,6 +2991,14 @@
     nameIn.addEventListener('keydown', function (e) { if (e.key === 'Enter') enter(); });
     var wbtn = document.getElementById('wallet-btn');
     if (wbtn) wbtn.addEventListener('click', function () { onWalletClick(); });
+    var claimBtn = document.getElementById('claim-btn');
+    if (claimBtn) claimBtn.addEventListener('click', function () {
+      if (!S.ready) return;
+      if (!S.walletAddress) { toast('LINK A WALLET FIRST'); return; }
+      send({ t: 'claim' });
+      var statusEl = document.getElementById('h-claim-status');
+      if (statusEl) statusEl.textContent = 'CLAIMING…';
+    });
     try {
       var savedW = localStorage.getItem('stratum_wallet');
       if (savedW && /^0x[0-9a-fA-F]{40}$/.test(savedW)) S.walletAddress = savedW;

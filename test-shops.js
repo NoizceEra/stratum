@@ -104,5 +104,23 @@ var second = S.buy(stockAfter1, first.buyerInv, 6);
 check('sequential-buy-2-exhausts-stock', second.ok === true && second.remainingQty === 0);
 check('sequential-buy-2-final-inv', second.buyerInv.herb === 10 && second.buyerInv.crystal === 0);
 
+// ---------------------------------------------------------------- treasury fee
+var feeListing = { seller: 's', item: 'ore', qty: 10, priceItem: 'wood', priceQty: 10 };
+var feeBuyer = { wood: 100 };
+var noFee = S.buy(feeListing, feeBuyer, 1);
+check('buy-omitted-feeBps-charges-nothing', noFee.cost === 10 && noFee.sellerGets === 10 && noFee.treasuryGets === 0);
+// cost=10 at 250bps floors to 0 fee (10*250/10000 = 0.25) — prove the floor, then prove
+// a cost that actually clears one whole unit of fee.
+var withFee = S.buy(feeListing, feeBuyer, 1, 250);
+check('buy-feeBps-floors-tiny-cost-to-zero', withFee.cost === 10 && withFee.treasuryGets === 0 && withFee.sellerGets === 10);
+var bigListing = { seller: 's', item: 'ore', qty: 10, priceItem: 'wood', priceQty: 100 };
+var bigFee = S.buy(bigListing, feeBuyer, 1, 250);                 // cost=100 -> fee=2
+check('buy-fee-floors-correctly', bigFee.cost === 100 && bigFee.treasuryGets === 2 && bigFee.sellerGets === 98);
+check('buy-fee-cost-unaffected-by-split', bigFee.cost === bigFee.sellerGets + bigFee.treasuryGets);
+check('feeFor-matches-buy', S.feeFor(100, 250) === 2);
+check('feeFor-bad-bps-defaults-zero', S.feeFor(100, -1) === 0 && S.feeFor(100, 20000) === 0);
+check('feeFor-bad-cost-zero', S.feeFor(0, 250) === 0 && S.feeFor(-5, 250) === 0);
+check('FEE_BPS-matches-parcels-rate', S.FEE_BPS === 250 && S.FEE_DENOM === 10000);
+
 console.log('\n' + (failures === 0 ? 'ALL PASS' : failures + ' FAILED'));
 process.exit(failures === 0 ? 0 : 1);
