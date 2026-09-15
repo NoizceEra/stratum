@@ -597,7 +597,12 @@
     craftOpens: 0,
     crafts: 0,
     mapsSeen: {},
-    achUnlocked: 0, achTitle: null
+    achUnlocked: 0, achTitle: null, achUnlockedIds: [],
+    // appearance — palette id + the two hues it carries, plus equipped accessory ids per
+    // slot (null = nothing equipped). customization is the catalog the server ships in
+    // 'welcome' (palettes + accessories, the latter carrying unlockDesc for the tooltip).
+    paletteId: null, bodyHue: 0, trimHue: 0, hat: null, cloak: null, scarf: null,
+    customization: null, wardrobeOpen: false, gatePalettes: [], gatePick: null, pendingPaletteId: null
   };
   if (S.canBuild && S.harvests < 1) S.harvests = 1; // returning builders already passed harvest
   localStorage.setItem('stratum_key', S.key);
@@ -701,6 +706,19 @@
         S.level = (typeof m.level === 'number' && m.level > 0) ? m.level : 1;
         S.catalog = m.catalog || null;
         S.claimed = m.claimed; S.total = m.total; S.online = m.online;
+        S.customization = m.customization || null;
+        if (m.look) {
+          S.paletteId = m.look.paletteId; S.bodyHue = m.look.bodyHue; S.trimHue = m.look.trimHue;
+          S.hat = m.look.hat; S.cloak = m.look.cloak; S.scarf = m.look.scarf;
+          try { localStorage.setItem('stratum_palette', S.paletteId); } catch (e) {}
+        }
+        // a swatch picked at the gate this session overrides the loaded/default look —
+        // a returning player who never touched the picker keeps whatever the server
+        // already had for them, so the wardrobe is never silently undone by a login.
+        if (S.pendingPaletteId && S.pendingPaletteId !== S.paletteId) {
+          send({ t: 'set-look', paletteId: S.pendingPaletteId, hat: S.hat, cloak: S.cloak, scarf: S.scarf });
+        }
+        S.pendingPaletteId = null;
         if (S.maps && S.maps.length) setMapName();
         noteMapVisit(S.map);
         buildHotbar();
@@ -996,15 +1014,24 @@
       }
       case 'achievements':
         S.achUnlocked = (m.unlocked && m.unlocked.length) || 0;
+        S.achUnlockedIds = (m.unlocked && m.unlocked.slice()) || [];
         S.achTitle = m.title || null;
         updateAchHud();
         break;
       case 'achievement':
         S.achUnlocked += 1;
+        S.achUnlockedIds.push(m.id);
         if (m.title) S.achTitle = m.title;
         updateAchHud();
         toast('ACHIEVEMENT: ' + m.name, true);
         sfx('levelup');
+        if (S.wardrobeOpen) buildWardrobe();     // a newly-unlocked accessory should stop looking greyed-out right away
+        break;
+      case 'look':
+        S.paletteId = m.paletteId; S.bodyHue = m.bodyHue; S.trimHue = m.trimHue;
+        S.hat = m.hat; S.cloak = m.cloak; S.scarf = m.scarf;
+        try { localStorage.setItem('stratum_palette', S.paletteId); } catch (e) {}
+        if (S.wardrobeOpen) buildWardrobe();
         break;
       case 'stats':
         S.claimed = m.claimed; S.total = m.total; S.online = m.online; S.volatile = m.volatile;
@@ -1017,17 +1044,19 @@
           var r = S.remotes.get(p[0]);
           if (!r) {
             S.remotes.set(p[0], {
-              name: p[1], x: p[2], y: p[3], rx: p[2], ry: p[3], hue: p[4], lx: p[2], ly: p[3],
+              name: p[1], x: p[2], y: p[3], rx: p[2], ry: p[3], lx: p[2], ly: p[3],
               faceX: 0, faceY: 1, walk: 0, moving: 0,
+              bodyHue: p[4], trimHue: p[5], hat: p[6] || null, cloak: p[7] || null, scarf: p[8] || null,
               // colour strings are built once, not per frame
-              body: 'hsl(' + p[4] + ',58%,62%)', trim: 'hsl(' + p[4] + ',48%,40%)'
+              body: 'hsl(' + p[4] + ',58%,62%)', trim: 'hsl(' + p[5] + ',48%,40%)'
             });
           } else {
             r.x = p[2]; r.y = p[3]; r.name = p[1];
-            if (typeof p[4] === 'number' && p[4] !== r.hue) {
-              r.hue = p[4];
+            r.hat = p[6] || null; r.cloak = p[7] || null; r.scarf = p[8] || null;
+            if (typeof p[4] === 'number' && (p[4] !== r.bodyHue || p[5] !== r.trimHue)) {
+              r.bodyHue = p[4]; r.trimHue = p[5];
               r.body = 'hsl(' + p[4] + ',58%,62%)';
-              r.trim = 'hsl(' + p[4] + ',48%,40%)';
+              r.trim = 'hsl(' + p[5] + ',48%,40%)';
             }
           }
         }
@@ -1187,7 +1216,8 @@
     if (k === 'c') { toggleCraft(); e.preventDefault(); return; }
     if (k === 'i') { toggleIdle(); e.preventDefault(); return; }
     if (k === 'l') { toggleLeaderboard(); sfx('ui'); e.preventDefault(); return; }
-    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); return; }
+    if (k === 'k') { toggleWardrobe(); sfx('ui'); e.preventDefault(); return; }
+    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); if (S.wardrobeOpen) closeWardrobe(); return; }
     if (e.key === '+' || e.key === '=') { S.zoom = Math.min(3, S.zoom * 2); e.preventDefault(); return; }
     if (e.key === '-' || e.key === '_') { S.zoom = Math.max(0.5, S.zoom / 2); e.preventDefault(); return; }
     var n = parseInt(e.key, 10);
@@ -1205,7 +1235,7 @@
   cv.addEventListener('mousedown', function (e) {
     e.preventDefault();
     unlockAudio();
-    if (S.mapOpen || S.travelOpen || S.craftOpen || S.lbOpen) return;
+    if (S.mapOpen || S.travelOpen || S.craftOpen || S.lbOpen || S.wardrobeOpen) return;
     // Act on where this click is, not on where the cursor last was: a click can arrive
     // without a preceding move (programmatic clicks, some touch/pen paths).
     var r = cv.getBoundingClientRect();
@@ -1276,7 +1306,7 @@
 
   cv.addEventListener('touchstart', function (e) {
     unlockAudio();
-    if (S.mapOpen || S.travelOpen || S.craftOpen || S.lbOpen) return;                 // overlays handle their own taps
+    if (S.mapOpen || S.travelOpen || S.craftOpen || S.lbOpen || S.wardrobeOpen) return;                 // overlays handle their own taps
     e.preventDefault();
     if (tapId !== null) return;
     var t = e.changedTouches[0];
@@ -1322,6 +1352,7 @@
     tap('pb-map', toggleMap);
     tap('pb-travel', toggleTravel);
     tap('pb-craft', toggleCraft);
+    tap('pb-wardrobe', toggleWardrobe);
     tap('pb-lb', toggleLeaderboard);
     tap('pb-zin', function () { S.zoom = Math.min(3, S.zoom * 2); });
     tap('pb-zout', function () { S.zoom = Math.max(0.5, S.zoom / 2); });
@@ -1689,6 +1720,63 @@
     });
   }
 
+  // ---------- wardrobe ------------------------------------------------------
+  // Revisitable version of the gate's one-time picker: same swatches, plus the
+  // accessory slots (locked ones greyed out, achievement desc as their tooltip).
+  // Renders from S.customization, which the server ships once inside 'welcome' —
+  // no separate catalog round-trip needed.
+  function toggleWardrobe() {
+    if (!S.ready) return;
+    S.wardrobeOpen = !S.wardrobeOpen;
+    document.getElementById('wardrobe').classList.toggle('on', S.wardrobeOpen);
+    if (S.wardrobeOpen) { buildWardrobe(); if (window.StratumHud) window.StratumHud.noteAction(); }
+  }
+  function closeWardrobe() {
+    S.wardrobeOpen = false;
+    document.getElementById('wardrobe').classList.remove('on');
+  }
+  function sendLook(overrides) {
+    var look = { paletteId: S.paletteId, hat: S.hat, cloak: S.cloak, scarf: S.scarf };
+    Object.assign(look, overrides);
+    send(Object.assign({ t: 'set-look' }, look));
+  }
+  function buildWardrobe() {
+    var sw = document.getElementById('swatches'), ac = document.getElementById('acslots');
+    if (!S.customization) { sw.innerHTML = ac.innerHTML = ''; return; }
+    var swHtml = '';
+    for (var i = 0; i < S.customization.palettes.length; i++) {
+      var p = S.customization.palettes[i];
+      swHtml += '<div class="swatch' + (p.id === S.paletteId ? ' sel' : '') + '" data-id="' + p.id +
+        '" title="' + p.name + '" style="background:hsl(' + p.bodyHue + ',58%,62%)"></div>';
+    }
+    sw.innerHTML = swHtml;
+    Array.prototype.forEach.call(sw.children, function (el) {
+      el.addEventListener('click', function () { sendLook({ paletteId: el.dataset.id }); sfx('ui'); });
+    });
+
+    var acHtml = '';
+    for (var j = 0; j < S.customization.accessories.length; j++) {
+      var a = S.customization.accessories[j];
+      var unlocked = !a.unlockedBy || S.achUnlockedIds.indexOf(a.unlockedBy) !== -1;
+      var equipped = S[a.slot] === a.id;
+      acHtml += '<div class="acrow' + (equipped ? ' on' : '') + (unlocked ? '' : ' locked') + '" data-id="' + a.id +
+        '" data-slot="' + a.slot + '" data-unlocked="' + (unlocked ? '1' : '0')
+        + (unlocked ? '' : '" title="LOCKED — ' + (a.unlockDesc || '') ) + '">' +
+        '<div class="acswab"></div><div class="acnm">' + a.name.toUpperCase() + '</div>' +
+        '<div class="acslot">' + a.slot.toUpperCase() + (equipped ? ' · WORN' : '') + '</div></div>';
+    }
+    ac.innerHTML = acHtml;
+    Array.prototype.forEach.call(ac.children, function (el) {
+      el.addEventListener('click', function () {
+        if (el.dataset.unlocked !== '1') { sfx('deny'); return; }
+        var slot = el.dataset.slot, id = el.dataset.id;
+        // clicking an already-equipped accessory takes it off; otherwise it's equipped
+        var o = {}; o[slot] = (S[slot] === id) ? null : id;
+        sendLook(o); sfx('ui');
+      });
+    });
+  }
+
   // ---------- map artifact -------------------------------------------------
   var mapCv = document.getElementById('mapcv'), mapCtx = mapCv.getContext('2d');
   var mapBase = null, mapBaseFor = -1;
@@ -1962,12 +2050,13 @@
       else if (kk === 5) drawDropSprite(ex, ey, s, now);
       else if (kk === 2) drawMonster(ex, ey, s, rr, now);
       else if (kk === 3) {
-        drawAvatar(ex, ey, s, now, rr.body || '#b7c8dc', rr.trim || '#7f93a8', rr.faceX, rr.faceY, rr.walk, rr.moving, -1, 0);
+        drawAvatar(ex, ey, s, now, rr.body || '#b7c8dc', rr.trim || '#7f93a8', rr.faceX, rr.faceY, rr.walk, rr.moving, -1, 0, rr.hat, rr.cloak, rr.scarf);
         ctx.font = '10px ui-monospace,monospace'; ctx.textAlign = 'center';
         ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText(rr.name, ex + 1, ey - s * 0.95 + 1);
         ctx.fillStyle = '#e8e6df'; ctx.fillText(rr.name, ex, ey - s * 0.95);
       } else {
-        drawAvatar(ex, ey, s, now, '#e8e6df', '#c9a55c', S.faceX, S.faceY, S.walk, S.moving, S.swingT, S.swingA);
+        drawAvatar(ex, ey, s, now, 'hsl(' + S.bodyHue + ',58%,62%)', 'hsl(' + S.trimHue + ',48%,40%)',
+          S.faceX, S.faceY, S.walk, S.moving, S.swingT, S.swingA, S.hat, S.cloak, S.scarf);
         if (S.swingT >= 0) drawSlash(ex, ey, s);
       }
     }
@@ -2380,7 +2469,14 @@
   }
 
   // ---------- avatars (self + remotes) ------------------------------------
-  function drawAvatar(x, y, s, now, body, trim, fx, fy, walk, moving, swingT, swingA) {
+  // hat/cloak/scarf are equipped accessory ids (or null) — simple additive shapes
+  // layered onto the same body the game already draws, using the same ell/rct
+  // primitives. One flat colour per slot for v1, not per accessory: the win here is
+  // "something is equipped", not silhouette variety.
+  var HAT_COL = '#2e2a22', HAT_BRIM_COL = '#241f16';
+  var CLOAK_COL = '#463522', CLOAK_TRIM_COL = '#5a4326';
+  var SCARF_COL = '#c9a55c';
+  function drawAvatar(x, y, s, now, body, trim, fx, fy, walk, moving, swingT, swingA, hat, cloak, scarf) {
     var step = moving ? Math.sin(walk) : 0;
     var breath = Math.sin(now / 560) * s * 0.02;
     var bob = moving ? -Math.abs(Math.sin(walk)) * s * 0.05 : breath;
@@ -2396,6 +2492,12 @@
 
     ell(x, y + s * 0.32, w * 0.7, s * 0.14, 'rgba(0,0,0,.34)');
 
+    // cloak — a wide trapezoid BEHIND the body, drawn first so the torso overlaps it
+    if (cloak) {
+      rct(bx - w * 0.22, by + h * 0.3, w * 1.44, h * 0.7, CLOAK_COL);
+      rct(bx - w * 0.22, by + h * 0.3, w * 1.44, h * 0.08, CLOAK_TRIM_COL);
+    }
+
     // legs (alternating), body, arms — chunky pixel blocks
     var sw = step * s * 0.16, asw = step * s * 0.12;
     rct(bx - 1, by + h * 0.62 - 1, w + 2, h * 0.4 + 2, OUTL);
@@ -2404,6 +2506,8 @@
     rct(bx + w * 0.56 + sw, by + h * 0.62, w * 0.38, h * 0.38, '#332d22');
     rct(bx, by + h * 0.36, w, h * 0.3, trim);
     rct(bx, by + h * 0.34, w, h * 0.07, 'rgba(255,250,225,.4)');
+    // scarf — a small band right at the collar, on top of the trim
+    if (scarf) rct(bx + w * 0.08, by + h * 0.32, w * 0.84, h * 0.08, SCARF_COL);
     rct(bx - w * 0.18, by + h * 0.42 + asw, w * 0.24, h * 0.3, body);
     rct(bx + w * 0.94, by + h * 0.42 - asw, w * 0.24, h * 0.3, body);
     rct(bx + w * 0.12, by + h * 0.04, w * 0.76, h * 0.34, body);
@@ -2414,6 +2518,11 @@
       rct(bx + w * 0.28 + off, by + h * 0.17, w * 0.14, h * 0.07, '#241f16');
       rct(bx + w * 0.58 + off, by + h * 0.17, w * 0.14, h * 0.07, '#241f16');
       rct(bx + w * 0.16, by + h * 0.04, w * 0.68, h * 0.06, '#4a4132');
+    }
+    // hat — brim + crown stacked above the head
+    if (hat) {
+      rct(bx + w * 0.06, by - h * 0.02, w * 0.88, h * 0.06, HAT_BRIM_COL);
+      rct(bx + w * 0.2, by - h * 0.14, w * 0.6, h * 0.14, HAT_COL);
     }
     // the tool in hand, swinging through an arc while the arm is out
     var ax2 = bx + w * 1.06, ay2 = by + h * 0.5;
@@ -2503,6 +2612,7 @@
     GLOW_WARN = mkGlow('255,120,80', 64);
     buildVignette();
     buildMapBase(0);
+    buildGateSwatches();
     var nameIn = document.getElementById('name-in');
     nameIn.value = S.name || '';
     document.getElementById('enter-btn').addEventListener('click', enter);
@@ -2512,6 +2622,10 @@
       if (!n) { document.getElementById('gate-err').textContent = 'THE WORLD NEEDS A NAME.'; return; }
       S.name = n;
       localStorage.setItem('stratum_name', n);
+      // Only forwarded if the player actively clicked a swatch this session — a
+      // returning player who never touched the picker keeps whatever look the server
+      // already has for them; see the 'welcome' handler in onServer().
+      S.pendingPaletteId = S.gatePick;
       // Dismiss the keyboard and undo the viewport pan it caused. Without this the HUD
       // stays shifted off-screen until the player deliberately scrolls.
       if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -2521,6 +2635,31 @@
       connect();
     }
     requestAnimationFrame(frame);
+  }
+  // Gate swatches: a plain fetch (same "no wire protocol of its own" precedent as
+  // /api/leaderboard) so the picker can render BEFORE there is a client to say hello to.
+  function buildGateSwatches() {
+    var el = document.getElementById('gateswatch');
+    fetch('/api/palettes').then(function (r) { return r.json(); }).then(function (list) {
+      S.gatePalettes = list || [];
+      var remembered = null;
+      try { remembered = localStorage.getItem('stratum_palette'); } catch (e) {}
+      var html = '';
+      for (var i = 0; i < S.gatePalettes.length; i++) {
+        var p = S.gatePalettes[i];
+        html += '<div class="swatch' + (p.id === remembered ? ' sel' : '') + '" data-id="' + p.id +
+          '" title="' + p.name + '" style="background:hsl(' + p.bodyHue + ',58%,62%)"></div>';
+      }
+      el.innerHTML = html;
+      Array.prototype.forEach.call(el.children, function (sw) {
+        sw.addEventListener('click', function () {
+          S.gatePick = sw.dataset.id;
+          Array.prototype.forEach.call(el.children, function (x) { x.classList.remove('sel'); });
+          sw.classList.add('sel');
+          sfx('ui');
+        });
+      });
+    }).catch(function () { el.innerHTML = ''; });
   }
   boot();
 })();

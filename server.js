@@ -22,6 +22,7 @@ const ECO = require('./src/economy.js');
 const Drops = require('./src/drops.js');
 const ACH = require('./src/achievements.js');
 const Idle = require('./src/idle.js');
+const CU = require('./src/customization.js');
 
 const PORT = Number(process.env.PORT || 8090);
 const PUB = path.join(__dirname, 'public');
@@ -127,6 +128,21 @@ db.exec(`
   } catch (e) { console.log('[db] tool migration skipped:', e && e.message); }
 })();
 
+// character customization rides beside name/hue; databases from before this feature
+// gain the columns on boot instead of failing the prepares below. Nullable (no default
+// needed): a NULL paletteId just means "no saved look yet" and hello falls back to the
+// hash-derived starting palette, same as it already does for hue.
+(function migrateCustomization() {
+  try {
+    const cols = db.prepare('PRAGMA table_info(players)').all();
+    const names = cols.map(c => c.name);
+    if (!names.includes('paletteId')) db.exec('ALTER TABLE players ADD COLUMN paletteId TEXT');
+    if (!names.includes('bodyHue')) db.exec('ALTER TABLE players ADD COLUMN bodyHue INTEGER');
+    if (!names.includes('trimHue')) db.exec('ALTER TABLE players ADD COLUMN trimHue INTEGER');
+    if (!names.includes('accessories')) db.exec('ALTER TABLE players ADD COLUMN accessories TEXT');
+  } catch (e) { console.log('[db] customization migration skipped:', e && e.message); }
+})();
+
 /** authoritative in-memory land: "map:y*W+x" -> {m, owner} */
 const tiles = new Map();
 const density = new Map();               // mapId -> Uint8Array(MAPGRID^2)
@@ -174,10 +190,14 @@ function bumpOwner(owner, d) {
 const qTile = db.prepare('INSERT OR REPLACE INTO tiles(map,x,y,m,owner,ts) VALUES(?,?,?,?,?,?)');
 const qDel = db.prepare('DELETE FROM tiles WHERE map=? AND x=? AND y=?');
 const qStruct = db.prepare('INSERT OR REPLACE INTO structures(id,kind,map,x,y,owner,builtAt,lastCollectedAt) VALUES(?,?,?,?,?,?,?,?)');
-const qPlay = db.prepare('INSERT OR REPLACE INTO players(k,name,hue,created,last) VALUES(?,?,?,?,?)');
-const qPlayGet = db.prepare('SELECT name,hue FROM players WHERE k=?');
+const qPlay = db.prepare(
+  'INSERT OR REPLACE INTO players(k,name,hue,created,last,paletteId,bodyHue,trimHue,accessories) VALUES(?,?,?,?,?,?,?,?,?)');
+const qPlayGet = db.prepare('SELECT name,hue,paletteId,bodyHue,trimHue,accessories FROM players WHERE k=?');
 const qPlayCount = db.prepare('SELECT COUNT(*) n FROM players');
 const qPlayLast = db.prepare('UPDATE players SET last=? WHERE k=?');
+// 'set-look' updates appearance only — never touches name/hue/created/last, unlike the
+// full qPlay upsert above (which runs once, at hello).
+const qLook = db.prepare('UPDATE players SET paletteId=?,bodyHue=?,trimHue=?,accessories=? WHERE k=?');
 const qState = db.prepare('INSERT OR REPLACE INTO player_state(k,map,x,y,hp,kills,inv,tool) VALUES(?,?,?,?,?,?,?,?)');
 const qStateGet = db.prepare('SELECT * FROM player_state WHERE k=?');
 const qAch = db.prepare('INSERT OR REPLACE INTO player_achievements(k,ids,maps,crafts,title) VALUES(?,?,?,?,?)');
@@ -230,6 +250,15 @@ const server = http.createServer((req, res) => {
       volatile: world.stats(),
       spawn: T.spawnPoint(0)
     }, null, 2);
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(body);
+  }
+
+  if (p === '/api/palettes') {
+    // Read-only, no wire protocol of its own — same "plain fetch" precedent as
+    // /api/leaderboard. Lets the gate screen render swatches BEFORE the player has
+    // typed a name and connected, when there is no client yet to send 'hello'.
+    const body = JSON.stringify(CU.ALL_PALETTES.map(p2 => ({ id: p2.id, name: p2.name, bodyHue: p2.bodyHue, trimHue: p2.trimHue })));
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(body);
   }
@@ -387,6 +416,7 @@ server.on('upgrade', (req, socket) => {
     id: nextId++, sock: socket, ip, key: null, name: null, hue: 0, map: 0,
     x: 0, y: 0, hp: PLAYER_HP, maxHp: PLAYER_HP, kills: 0, atk: BASE_ATK,
     inv: { wood: 0, ore: 0, herb: 0, crystal: 0 }, tool: 0, atkBoost: 0,
+    paletteId: CU.DEFAULT_PALETTE_ID, bodyHue: 0, trimHue: 0, accessories: { hat: null, cloak: null, scarf: null },
     achIds: new Set(), achMaps: new Set(), achCrafts: 0, achTitle: null,
     energy: ENERGY_MAX, subs: new Set(), sent: new Set(),
     ready: false, lastMove: Date.now(), dead: false,
@@ -660,7 +690,7 @@ function cleanText(v, max) {
 // The complete set of things a client may say. Anything else is ignored on sight: the
 // server never dispatches a type it does not know, so a new type cannot reach any code
 // path by accident.
-const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup', 'build-structure', 'collect-structure']);
+const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup', 'build-structure', 'collect-structure', 'set-look']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -676,8 +706,6 @@ function onMessage(c, msg) {
       const name = cleanText(msg.name, 18) || 'WANDERER';
       const prev = qPlayGet.get(key);
       const hue = prev ? prev.hue : (T.hash2(key.length, key.charCodeAt(0) | 0, 7) % 360);
-      const now = Date.now();
-      qPlay.run(key, name, hue, prev ? now : now, now);
 
       c.key = key; c.name = name; c.hue = hue; c.ready = true;
       try { c.sock.setTimeout(0); } catch (e) {}   // idle handling now runs on pings + the sweep
@@ -711,6 +739,29 @@ function onMessage(c, msg) {
       }
       c.achMaps.add(c.map);                          // arriving anywhere counts as visiting it
 
+      // appearance: a returning player's saved look, re-validated against their current
+      // unlocks (never trust even our own stored row blindly — an achievement table
+      // change should not leave a player wearing something they no longer qualify for).
+      // A brand-new (or pre-customization) player keeps their existing hash-derived hue
+      // as a STARTING palette pick, reindexed into the palette table, so nobody's
+      // identity jarringly changes the day this feature ships.
+      let requestedLook;
+      if (prev && prev.paletteId) {
+        let savedAcc = {};
+        try { const parsed = JSON.parse(prev.accessories || '{}'); if (parsed && typeof parsed === 'object') savedAcc = parsed; } catch (e) {}
+        requestedLook = Object.assign({ paletteId: prev.paletteId }, savedAcc);
+      } else {
+        const startIdx = hue % CU.ALL_PALETTES.length;
+        requestedLook = { paletteId: CU.ALL_PALETTES[startIdx].id };
+      }
+      const look = CU.validateLook(requestedLook, [...c.achIds]);
+      const pal = CU.paletteOf(look.paletteId) || CU.paletteOf(CU.DEFAULT_PALETTE_ID);
+      c.paletteId = pal.id; c.bodyHue = pal.bodyHue; c.trimHue = pal.trimHue;
+      c.accessories = { hat: look.hat, cloak: look.cloak, scarf: look.scarf };
+
+      const now = Date.now();
+      qPlay.run(key, name, hue, prev ? now : now, now, c.paletteId, c.bodyHue, c.trimHue, JSON.stringify(c.accessories));
+
       c.send({
         t: 'welcome', id: c.id, key, name, hue, map: c.map, x: c.x, y: c.y,
         hp: Math.round(c.hp), maxHp: c.maxHp, atk: c.atk, inv: c.inv, kills: c.kills,
@@ -730,7 +781,16 @@ function onMessage(c, msg) {
         maps: T.MAPS.map(m => ({ id: m.id, name: m.name, tier: m.tier, desc: m.desc })),
         spawn: T.spawnPoint(c.map),
         energy: c.energy, energyMax: ENERGY_MAX, reach: REACH, attackRange: ATTACK_RANGE,
-        claimed: countClaims(c.map), total: W * H, online: live(), mapGrid: MAPGRID
+        claimed: countClaims(c.map), total: W * H, online: live(), mapGrid: MAPGRID,
+        look: { paletteId: c.paletteId, bodyHue: c.bodyHue, trimHue: c.trimHue,
+          hat: c.accessories.hat, cloak: c.accessories.cloak, scarf: c.accessories.scarf },
+        customization: {
+          palettes: CU.ALL_PALETTES.map(p => ({ id: p.id, name: p.name, bodyHue: p.bodyHue, trimHue: p.trimHue })),
+          accessories: CU.ALL_ACCESSORIES.map(a => {
+            const req = a.unlockedBy ? ACH.achievementById(a.unlockedBy) : null;
+            return { id: a.id, name: a.name, slot: a.slot, unlockedBy: a.unlockedBy || null, unlockDesc: req ? req.desc : null };
+          })
+        }
       });
       // returning players get their unlocked state without a round-trip; a fresh
       // arrival's stats (e.g. having now "visited" their spawn map) are checked right after.
@@ -1032,6 +1092,25 @@ function onMessage(c, msg) {
       break;
     }
 
+    case 'set-look': {
+      if (!c.ready) return;
+      // Never trust the client's claim to own an accessory: validateLook re-checks every
+      // slot against this player's ACTUAL unlocked-achievement state, same as every other
+      // player-controlled field gets re-validated server-side.
+      const requested = (msg && typeof msg === 'object')
+        ? { paletteId: msg.paletteId, hat: msg.hat, cloak: msg.cloak, scarf: msg.scarf } : {};
+      const look = CU.validateLook(requested, [...c.achIds]);
+      const pal = CU.paletteOf(look.paletteId) || CU.paletteOf(CU.DEFAULT_PALETTE_ID);
+      c.paletteId = pal.id; c.bodyHue = pal.bodyHue; c.trimHue = pal.trimHue;
+      c.accessories = { hat: look.hat, cloak: look.cloak, scarf: look.scarf };
+      qLook.run(c.paletteId, c.bodyHue, c.trimHue, JSON.stringify(c.accessories), c.key);
+      c.send({
+        t: 'look', paletteId: c.paletteId, bodyHue: c.bodyHue, trimHue: c.trimHue,
+        hat: c.accessories.hat, cloak: c.accessories.cloak, scarf: c.accessories.scarf
+      });
+      break;
+    }
+
     case 'ping': {
       // echoed, but bounded: a client must not be able to make us repeat a payload back
       const echo = isFin(msg.c) ? Math.trunc(msg.c) : (cleanText(msg.c, 32) || null);
@@ -1120,7 +1199,8 @@ every(100, 'presence tick', () => {
     for (const o of all) {
       if (o === c || o.map !== c.map) continue;
       if (Math.abs(o.x - c.x) > 72 || Math.abs(o.y - c.y) > 72) continue;
-      near.push([o.key, o.name, Math.round(o.x * 10) / 10, Math.round(o.y * 10) / 10, o.hue]);
+      near.push([o.key, o.name, Math.round(o.x * 10) / 10, Math.round(o.y * 10) / 10, o.bodyHue, o.trimHue,
+        o.accessories.hat, o.accessories.cloak, o.accessories.scarf]);
       if (near.length >= 64) break;
     }
     c.send({ t: 'players', list: near, you: [Math.round(c.x * 10) / 10, Math.round(c.y * 10) / 10, c.energy] });
