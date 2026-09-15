@@ -159,17 +159,36 @@ are the server's.
 
 ---
 
+## Commerce (Robinhood Chain)
+
+Harvesting, crafting, and kills award **in-game gold** plus pending **STRM** token units.
+The token contract is configured in `src/token-config.js` (Robinhood Chain `4663`).
+
+Placeholder CA (replace soon):
+
+`0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7`
+
+Override without code changes:
+
+```
+STRATUM_TOKEN_ADDRESS=0x…
+STRATUM_CHAIN_ID=4663
+STRATUM_RPC_URL=https://rpc.mainnet.chain.robinhood.com
+STRATUM_TOKEN_SYMBOL=STRM
+```
+
+Connect a wallet in the HUD to switch to Robinhood Chain and read on-chain `balanceOf`.
+Pending STRM is a server ledger — on-chain claim/mint is a follow-up once the official
+token is live.
+
 ## Status
 
 Playable and tested. Honest gaps:
 
-- **No combat depth** — you have one attack and the monsters have one. No equipment, no abilities.
-- **No use for resources yet** — you can harvest wood/ore/herb/crystal and carry it, but nothing
-  consumes it. Building currently costs "will", not materials. This is the next real design decision.
+- **Token claim not live yet** — pending STRM accrues in SQLite; no mint/transfer until the
+  official contract + treasury/minter path exists.
 - **Not deployed.** It runs locally. Hosting needs a long-lived process (Railway/Fly/VPS) plus the
   static client — not a static host alone.
-- **One world, three maps.** Adding a fourth is a few lines in `T.MAPS`; the node and monster
-  tables derive from it automatically.
 - **Anti-cheat is basic** — movement rate-limiting and server-side validation, no persistence of
   suspicion.
 

@@ -571,8 +571,9 @@
     name: localStorage.getItem('stratum_name') || '',
     map: 0, maps: [], mapName: '',
     x: 0, y: 0, energy: 240, energyMax: 240, reach: 6, attackRange: 3,
-    hp: 100, maxHp: 100, atk: 7, kills: 0, inv: { wood: 0, ore: 0, herb: 0, crystal: 0 },
+    hp: 100, maxHp: 100, atk: 7, kills: 0, inv: { wood: 0, ore: 0, herb: 0, crystal: 0, gold: 0 },
     claimed: 0, total: W * H, online: 0, volatile: null,
+    commerce: null, tokenPending: 0, tokenOnChain: null, walletAddress: null,
     sel: 0, zoom: 1, ready: false,
     cam: { x: 0, y: 0 }, mouse: { x: 0, y: 0 },
     edits: new Map(), baseCache: new Map(), lamps: new Set(),
@@ -707,6 +708,9 @@
         S.catalog = m.catalog || null;
         S.claimed = m.claimed; S.total = m.total; S.online = m.online;
         S.customization = m.customization || null;
+        if (m.commerce) applyCommerceConfig(m.commerce);
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (m.tokenWallet) S.walletAddress = m.tokenWallet;
         if (m.look) {
           S.paletteId = m.look.paletteId; S.bodyHue = m.look.bodyHue; S.trimHue = m.look.trimHue;
           S.hat = m.look.hat; S.cloak = m.look.cloak; S.scarf = m.look.scarf;
@@ -826,11 +830,16 @@
         var nd = S.nodes.get(nkN(m.x, m.y));
         if (nd && m.state === 0) { nd.state = 0; nd.until = Date.now() + (m.ripeSec || 0) * 1000; }
         if (m.inv) S.inv = m.inv;
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
         if (m.gains) {
           S.harvests += 1;
           unlockBuild();
           if (window.StratumHud) window.StratumHud.noteAction();
-          for (var y2 in m.gains) float(m.x, m.y, '+' + m.gains[y2] + ' ' + y2, '#c9e08a', 0);
+          for (var y2 in m.gains) {
+            var gcol = (y2 === 'gold') ? '#e8c76a' : (y2 === 'token') ? '#8fe4ff' : '#c9e08a';
+            var glab = (y2 === 'token' && S.commerce) ? (S.commerce.symbol || 'STRM') : y2;
+            float(m.x, m.y, '+' + m.gains[y2] + ' ' + glab, gcol, 0);
+          }
           var ndc = NODECLR[m.kind] || '#c9e08a';
           puff(m.x + 0.5, m.y + 0.3, ndc, 7, 1.8);
           sfx('harvest');
@@ -910,6 +919,7 @@
         var mm = S.mons.get(m.id);
         if (m.killed) {
           S.kills = m.kills; S.atk = m.atk; S.inv = m.inv;
+          if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
           if (typeof m.level === 'number' && m.level > (S.level || 1)) {
             S.level = m.level;
             toast('LEVEL ' + m.level + ' — LIFE AND STRENGTH GROW', true);
@@ -922,6 +932,10 @@
           if (mm) {
             float(mm.rx, mm.ry - 0.4, 'SLAIN', mm.pal.hex, 2);
             burst(mm.rx, mm.ry, mm.pal, 16, 2.6);
+            if (m.gains) {
+              if (m.gains.gold) float(mm.rx, mm.ry - 0.7, '+' + m.gains.gold + ' gold', '#e8c76a', 0);
+              if (m.gains.token) float(mm.rx, mm.ry - 1.0, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), '#8fe4ff', 0);
+            }
             S.mons.delete(m.id);
           }
           S.shake = Math.max(S.shake, 0.55);
@@ -984,18 +998,30 @@
         if (typeof m.tool === 'number') S.tool = m.tool;
         if (typeof m.level === 'number' && m.level > (S.level || 1)) { S.level = m.level; sfx('levelup'); }
         else if (typeof m.level === 'number' && m.level > 0) S.level = m.level;
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
         if (S.craftOpen) buildCraft();
         refreshQuest(true);
         break;
       case 'crafted': {
         if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
         if (m.inv) S.inv = m.inv;
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
         S.crafts += 1;
         toast('CRAFTED: ' + String(m.item || '').toUpperCase(), true);
+        if (m.gains && m.gains.gold) float(S.x, S.y - 0.6, '+' + m.gains.gold + ' gold', '#e8c76a', 0);
+        if (m.gains && m.gains.token) float(S.x, S.y - 0.9, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), '#8fe4ff', 0);
         sfx('craft');
         if (S.craftOpen) buildCraft();
         if (window.StratumHud) window.StratumHud.noteAction();
         refreshQuest(true);
+        break;
+      }
+      case 'wallet-linked': {
+        if (m.err) { toast(String(m.err).toUpperCase()); break; }
+        S.walletAddress = m.address || null;
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (m.commerce) applyCommerceConfig(m.commerce);
+        updateWalletHud();
         break;
       }
       case 'tooled': {
@@ -1439,6 +1465,56 @@
   // inventory chips are rebuilt from a reused array — no per-update allocation
   var INV_KEYS = ['wood', 'ore', 'herb', 'crystal'], INV_HTML = [];
   function invChip(r) { INV_HTML.push('<span class="chip">' + r + ' ' + (this[r] || 0) + '</span>'); }
+
+  function applyCommerceConfig(cfg) {
+    S.commerce = cfg;
+    var sym = document.getElementById('h-token-sym');
+    if (sym) sym.textContent = (cfg && cfg.symbol) || 'STRM';
+    var badge = document.getElementById('h-token-badge');
+    if (badge) badge.style.display = (cfg && cfg.placeholder) ? 'block' : 'none';
+  }
+  function updateWalletHud() {
+    var btn = document.getElementById('wallet-btn');
+    var lab = document.getElementById('h-wallet');
+    var chainEl = document.getElementById('h-token-chain');
+    var pendingEl = document.getElementById('h-token-pending');
+    var goldEl = document.getElementById('h-gold');
+    if (goldEl) goldEl.textContent = String((S.inv && S.inv.gold) | 0);
+    if (pendingEl) pendingEl.textContent = String(S.tokenPending | 0);
+    if (lab) {
+      lab.textContent = S.walletAddress && window.StratumWallet
+        ? window.StratumWallet.shortAddr(S.walletAddress) : '';
+    }
+    if (btn) btn.textContent = S.walletAddress ? 'REFRESH BALANCE' : 'CONNECT WALLET';
+    if (chainEl) {
+      if (S.tokenOnChain == null) chainEl.textContent = 'on-chain —';
+      else {
+        var dec = (S.commerce && S.commerce.decimals) | 18;
+        var formatted = window.StratumWallet
+          ? window.StratumWallet.formatUnits(S.tokenOnChain, dec) : String(S.tokenOnChain);
+        chainEl.textContent = 'on-chain ' + formatted;
+      }
+    }
+  }
+  async function onWalletClick() {
+    if (!window.StratumWallet) return toast('WALLET HELPER MISSING');
+    if (!S.commerce) return toast('COMMERCE CONFIG NOT LOADED YET');
+    try {
+      var addr = S.walletAddress || await window.StratumWallet.connect();
+      await window.StratumWallet.ensureChain(S.commerce);
+      if (!S.walletAddress) {
+        S.walletAddress = addr;
+        try { localStorage.setItem('stratum_wallet', addr); } catch (e) {}
+        send({ t: 'wallet-link', address: addr });
+      }
+      var bal = await window.StratumWallet.balanceOf(S.commerce, S.walletAddress);
+      S.tokenOnChain = bal;
+      updateWalletHud();
+      toast('WALLET LINKED — ' + window.StratumWallet.shortAddr(S.walletAddress).toUpperCase(), true);
+    } catch (e) {
+      toast(String((e && e.message) || e).toUpperCase().slice(0, 80));
+    }
+  }
 
   // ---- first-session progressive disclosure (integrator / quests.js hooks) ----
   // body.onboarding       — no localStorage stratum_onboard_done
@@ -2640,10 +2716,13 @@
     INV_HTML.length = 0;
     INV_KEYS.forEach(invChip, inv);
     // crafted gear rides in the same inventory under its item id — chip anything else.
+    // gold is shown on its own HUD row (commerce), so skip it here.
     for (var ck in inv) {
+      if (ck === 'gold') continue;
       if (INV_KEYS.indexOf(ck) < 0 && inv[ck] > 0) INV_HTML.push('<span class="chip">' + ck + ' ' + inv[ck] + '</span>');
     }
     document.getElementById('h-inv').innerHTML = INV_HTML.join(' ');
+    updateWalletHud();
     if (S.volatile) {
       var tooln = toolName(S.tool | 0);
       document.getElementById('h-vol').textContent =
@@ -2682,6 +2761,13 @@
     nameIn.value = S.name || '';
     document.getElementById('enter-btn').addEventListener('click', enter);
     nameIn.addEventListener('keydown', function (e) { if (e.key === 'Enter') enter(); });
+    var wbtn = document.getElementById('wallet-btn');
+    if (wbtn) wbtn.addEventListener('click', function () { onWalletClick(); });
+    try {
+      var savedW = localStorage.getItem('stratum_wallet');
+      if (savedW && /^0x[0-9a-fA-F]{40}$/.test(savedW)) S.walletAddress = savedW;
+    } catch (e) {}
+    updateWalletHud();
     function enter() {
       var n = (nameIn.value || '').trim().slice(0, 18);
       if (!n) { document.getElementById('gate-err').textContent = 'THE WORLD NEEDS A NAME.'; return; }

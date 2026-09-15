@@ -268,7 +268,7 @@ function stats() {
   }
   ok(yieldMsg && yieldMsg.ripeSec > 0, 'node exhausted: depleted with a reset timer',
     yieldMsg ? { state: yieldMsg.state, ripeSec: yieldMsg.ripeSec } : lastReply);
-  ok(yieldMsg && yieldMsg.gains && Object.keys(yieldMsg.gains).length === 1, 'A was credited with the resource', yieldMsg && yieldMsg.gains);
+  ok(yieldMsg && yieldMsg.gains && Object.keys(yieldMsg.gains).length >= 1 && Object.values(yieldMsg.gains).every(v => v > 0), 'A was credited with the resource (+ dual commerce rewards)', yieldMsg && yieldMsg.gains);
   ok(yieldMsg && yieldMsg.inv && Object.values(yieldMsg.inv).some(v => v > 0), 'inventory updated', yieldMsg && yieldMsg.inv);
 
   a.send({ t: 'harvest', x: node.x, y: node.y });

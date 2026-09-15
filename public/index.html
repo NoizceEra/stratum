@@ -204,6 +204,18 @@
 <div id="hud-br" class="panel">
   <div class="k">carried</div>
   <div style="margin-top:3px" id="h-inv">—</div>
+  <div style="margin-top:7px">
+    <span class="k">gold</span> <span class="v gold" id="h-gold">0</span>
+    <span class="k" style="margin-left:8px" id="h-token-sym">STRM</span>
+    <span class="v" id="h-token-pending">0</span>
+    <span class="k" style="margin-left:4px;font-size:9px">pending</span>
+  </div>
+  <div class="k" style="margin-top:4px;font-size:10px" id="h-token-chain">on-chain —</div>
+  <div style="margin-top:6px">
+    <button type="button" id="wallet-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">CONNECT WALLET</button>
+    <span class="k" id="h-wallet" style="margin-left:6px;font-size:10px"></span>
+  </div>
+  <div class="k" id="h-token-badge" style="margin-top:4px;font-size:9px;display:none">PLACEHOLDER CA</div>
   <div class="k" style="margin-top:7px">slain <span class="v" id="h-kills">0</span> &nbsp; <span class="k">atk</span> <span class="v" id="h-atk">7</span></div>
   <div class="k" style="margin-top:5px;font-size:10px" id="h-vol">—</div>
   <div class="k" style="margin-top:5px;font-size:10px" id="h-ach">0 / 14 earned</div>
@@ -265,7 +277,8 @@
       <b>The land is permanent.</b> What you place, you own — nobody can ever overwrite it.<br>
       <b>The wilderness is a commons.</b> Anyone may build on unclaimed terrain.<br>
       <b>The provisions reset.</b> Ore, timber, herbs and beasts come back on their own timers.<br>
-      <b>You can only give land back</b> — you can never take it from another.
+      <b>You can only give land back</b> — you can never take it from another.<br>
+      <b>Commerce.</b> Mining and crafting earn gold and STRM on Robinhood Chain.
     </div>
     <input id="name-in" maxlength="18" placeholder="YOUR NAME" autocomplete="off">
     <div id="gateswatch"></div>
@@ -338,6 +351,7 @@
 <script src="terrain.js"></script>
 <script src="audio.js"></script>
 <script src="quests.js"></script>
+<script src="wallet.js"></script>
 <script src="game.js"></script>
 </body>
 </html>

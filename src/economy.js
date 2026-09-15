@@ -33,8 +33,12 @@
   // basics
   // ======================================================================
 
-  /** The four harvested resources, in the order the HUD shows them. */
-  var RESOURCES = ['wood', 'ore', 'herb', 'crystal'];
+  /**
+   * Harvested resources (first four) plus soft currency `gold` from commerce rewards.
+   * Gold is earned via Rewards, not nodes — it still rides in `inv` so shops/trade
+   * can price in it once listings allow.
+   */
+  var RESOURCES = ['wood', 'ore', 'herb', 'crystal', 'gold'];
 
   /** True for a finite integer (0 included); used to reject garbage input. */
   function isInt(n) { return typeof n === 'number' && isFinite(n) && Math.floor(n) === n; }
@@ -283,7 +287,7 @@
   // ======================================================================
 
   /** Per-resource stack ceilings; crafted items use their ITEMS[].stack value. */
-  var STACK_LIMITS = deepFreeze({ wood: 400, ore: 400, herb: 200, crystal: 100 });
+  var STACK_LIMITS = deepFreeze({ wood: 400, ore: 400, herb: 200, crystal: 100, gold: 999999 });
 
   /** How many of `key` fit in one stack: resource limit, item stack, else DEFAULT_STACK. */
   function stackLimit(key) {

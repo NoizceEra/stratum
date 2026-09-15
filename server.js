@@ -25,6 +25,11 @@ const Idle = require('./src/idle.js');
 const CU = require('./src/customization.js');
 const Shops = require('./src/shops.js');
 const Trade = require('./src/trade.js');
+const TokenConfig = require('./src/token-config.js');
+const Rewards = require('./src/rewards.js');
+
+/** Live commerce config — env can replace the placeholder CA without a redeploy of call sites. */
+const COMMERCE = TokenConfig.withEnv(process.env);
 
 const PORT = Number(process.env.PORT || 8090);
 const PUB = path.join(__dirname, 'public');
@@ -121,6 +126,12 @@ db.exec(`
     wantItem TEXT, wantQty INTEGER NOT NULL DEFAULT 0,
     createdAt INTEGER NOT NULL, ttlMs INTEGER NOT NULL);
   CREATE INDEX IF NOT EXISTS trade_offers_to ON trade_offers(toKey);
+  CREATE TABLE IF NOT EXISTS token_ledger(
+    k TEXT PRIMARY KEY,
+    pending INTEGER NOT NULL DEFAULT 0,
+    claimed INTEGER NOT NULL DEFAULT 0,
+    wallet TEXT,
+    updated INTEGER NOT NULL);
 `);
 
 // migrate a pre-maps tiles table (tiles used to be keyed by x,y only)
@@ -226,6 +237,28 @@ const qAchGet = db.prepare('SELECT * FROM player_achievements WHERE k=?');
 // achievements are keyed by player + map, so "claimed" only counts what THIS player owns
 // on the map they are currently standing on — the tiles_owner index makes this cheap.
 const qClaimCount = db.prepare('SELECT COUNT(*) n FROM tiles WHERE map=? AND owner=?');
+const qLedgerGet = db.prepare('SELECT pending, claimed, wallet FROM token_ledger WHERE k=?');
+const qLedgerUpsert = db.prepare(
+  'INSERT INTO token_ledger(k,pending,claimed,wallet,updated) VALUES(?,?,?,?,?) ' +
+  'ON CONFLICT(k) DO UPDATE SET pending=excluded.pending, claimed=excluded.claimed, wallet=excluded.wallet, updated=excluded.updated');
+
+function ledgerOf(key) {
+  const row = qLedgerGet.get(key);
+  return row
+    ? { pending: row.pending | 0, claimed: row.claimed | 0, wallet: row.wallet || null }
+    : { pending: 0, claimed: 0, wallet: null };
+}
+function ledgerSave(key, pending, claimed, wallet) {
+  qLedgerUpsert.run(key, pending | 0, claimed | 0, wallet || null, Date.now());
+}
+/** Credit pending STRM (whole units) for a player key; returns new pending total. */
+function creditToken(key, n) {
+  if (!key || !Number.isFinite(n) || n <= 0) return ledgerOf(key).pending;
+  const cur = ledgerOf(key);
+  const pending = (cur.pending | 0) + (n | 0);
+  ledgerSave(key, pending, cur.claimed, cur.wallet);
+  return pending;
+}
 
 /** authoritative in-memory idle structures: "map:y*W+x" -> {id,kind,map,x,y,owner,builtAt,lastCollectedAt}
  *  Same key shape as `tiles` — a structure needs a claimed tile under it, so the two
@@ -485,7 +518,8 @@ server.on('upgrade', (req, socket) => {
   const c = {
     id: nextId++, sock: socket, ip, key: null, name: null, hue: 0, map: 0,
     x: 0, y: 0, hp: PLAYER_HP, maxHp: PLAYER_HP, kills: 0, atk: BASE_ATK,
-    inv: { wood: 0, ore: 0, herb: 0, crystal: 0 }, tool: 0, atkBoost: 0,
+    inv: { wood: 0, ore: 0, herb: 0, crystal: 0, gold: 0 }, tool: 0, atkBoost: 0,
+    tokenPending: 0, tokenWallet: null,
     paletteId: CU.DEFAULT_PALETTE_ID, bodyHue: 0, trimHue: 0, accessories: { hat: null, cloak: null, scarf: null },
     achIds: new Set(), achMaps: new Set(), achCrafts: 0, achTitle: null,
     energy: ENERGY_MAX, subs: new Set(), sent: new Set(),
@@ -653,6 +687,23 @@ function broadcastDropGone(map, x, y) {
 }
 
 function gain(c, what, n) { c.inv[what] = (c.inv[what] || 0) + n; }
+
+/**
+ * Dual commerce payout: soft gold into inv + hard token units into token_ledger.
+ * Returns the reward applied (or zeros). Never throws.
+ */
+function applyCommerceReward(c, action, ctx) {
+  try {
+    const r = Rewards.rewardFor(action, ctx || {});
+    if (!Rewards.hasReward(r)) return { gold: 0, token: 0, tokenPending: c.tokenPending | 0 };
+    if (r.gold > 0) gain(c, 'gold', r.gold);
+    if (r.token > 0 && c.key) c.tokenPending = creditToken(c.key, r.token);
+    return { gold: r.gold | 0, token: r.token | 0, tokenPending: c.tokenPending | 0 };
+  } catch (e) {
+    return { gold: 0, token: 0, tokenPending: c.tokenPending | 0 };
+  }
+}
+
 /** Best owned bonus of a gear kind: weapons add damage, armour soaks it. Zero when bare. */
 function gearBonus(inv, kind) {
   let best = 0;
@@ -703,7 +754,12 @@ function checkAchievements(c) {
   achSave(c);
 }
 function sendVitals(c, extra) {
-  const o = { t: 'vitals', hp: Math.round(c.hp), maxHp: c.maxHp, inv: c.inv, kills: c.kills, atk: c.atk, tool: c.tool | 0, level: world.hunter(c).level };
+  const o = {
+    t: 'vitals', hp: Math.round(c.hp), maxHp: c.maxHp, inv: c.inv, kills: c.kills, atk: c.atk,
+    tool: c.tool | 0, level: world.hunter(c).level,
+    gold: (c.inv && c.inv.gold) | 0,
+    tokenPending: c.tokenPending | 0
+  };
   if (extra) Object.assign(o, extra);
   c.send(o);
 }
@@ -762,7 +818,8 @@ function cleanText(v, max) {
 // path by accident.
 const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup',
   'build-structure', 'collect-structure', 'set-look',
-  'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote']);
+  'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote',
+  'wallet-link']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -786,14 +843,15 @@ function onMessage(c, msg) {
       if (st) {
         c.map = st.map; c.x = st.x; c.y = st.y;
         c.hp = Math.max(1, st.hp); c.kills = st.kills;
-        try { c.inv = Object.assign({ wood: 0, ore: 0, herb: 0, crystal: 0 }, JSON.parse(st.inv)); } catch (e) {}
+        try { c.inv = Object.assign({ wood: 0, ore: 0, herb: 0, crystal: 0, gold: 0 }, JSON.parse(st.inv)); } catch (e) {}
+        if (!Number.isFinite(c.inv.gold)) c.inv.gold = 0;
         c.tool = (st && Number.isFinite(+st.tool)) ? Math.max(0, Math.min(ECO.maxToolTier(), (+st.tool) | 0)) : 0;
       } else {
         const sp = T.spawnPoint(0);
         c.map = 0; c.x = sp.x; c.y = sp.y;
         // new arrivals wash up with salvaged materials: enough for a first shelter,
         // never enough to skip the harvest loop.
-        c.inv = { wood: 6, ore: 4, herb: 2, crystal: 1 };
+        c.inv = { wood: 6, ore: 4, herb: 2, crystal: 1, gold: 0 };
         c.tool = 0;
       }
       c.atk = BASE_ATK + Math.floor(c.kills / 3);
@@ -810,6 +868,11 @@ function onMessage(c, msg) {
         c.achIds = new Set(); c.achMaps = new Set(); c.achCrafts = 0; c.achTitle = null;
       }
       c.achMaps.add(c.map);                          // arriving anywhere counts as visiting it
+
+      const led = ledgerOf(key);
+      c.tokenPending = led.pending | 0;
+      c.tokenWallet = led.wallet || null;
+      if (!c.inv || typeof c.inv.gold !== 'number') c.inv.gold = (c.inv && c.inv.gold) | 0;
 
       // appearance: a returning player's saved look, re-validated against their current
       // unlocks (never trust even our own stored row blindly — an achievement table
@@ -862,7 +925,11 @@ function onMessage(c, msg) {
             const req = a.unlockedBy ? ACH.achievementById(a.unlockedBy) : null;
             return { id: a.id, name: a.name, slot: a.slot, unlockedBy: a.unlockedBy || null, unlockDesc: req ? req.desc : null };
           })
-        }
+        },
+        commerce: TokenConfig.publicConfig(COMMERCE),
+        gold: (c.inv.gold | 0),
+        tokenPending: c.tokenPending | 0,
+        tokenWallet: c.tokenWallet || null
       });
       // returning players get their unlocked state without a round-trip; a fresh
       // arrival's stats (e.g. having now "visited" their spawn map) are checked right after.
@@ -997,12 +1064,16 @@ function onMessage(c, msg) {
         const boosted = ECO.toolHarvestAmount(c.tool | 0, r.kind);
         const amount = (typeof boosted === 'number') ? Math.max(r.amount, boosted) : r.amount;
         gain(c, r.yields, amount);
+        const pay = applyCommerceReward(c, 'harvest', { kind: r.kind });
         world.awardXp(c, HARVEST_XP);      // gathering is a real XP source now (ROADMAP_COZY §3)
         stateSave(c);
         sendVitals(c);                     // same pattern 'craft' uses: level/xp reach the client via vitals
         const ripeSec = Math.ceil((r.ripe - Date.now()) / 1000);
         broadcastNode(c.map, x, y, r.kind, 0, ripeSec);
-        c.send({ t: 'harvested', x, y, kind: r.kind, state: 0, ripeSec, gains: { [r.yields]: amount }, inv: c.inv });
+        const gains = { [r.yields]: amount };
+        if (pay.gold) gains.gold = pay.gold;
+        if (pay.token) gains.token = pay.token;
+        c.send({ t: 'harvested', x, y, kind: r.kind, state: 0, ripeSec, gains, inv: c.inv, tokenPending: c.tokenPending | 0 });
         creditNearby(c, x, y, HARVEST_XP * GROUP_XP_SHARE);   // light grouping (ROADMAP_COZY §5)
       } else {
         c.send({ t: 'harvested', x, y, kind: r.kind, state: 1, partial: true, inv: c.inv });
@@ -1041,8 +1112,13 @@ function onMessage(c, msg) {
         c.kills += 1;
         c.atk = BASE_ATK + Math.floor(c.kills / 3);
         gain(c, r.loot, 1);
+        const pay = applyCommerceReward(c, 'kill', { xp: r.xp | 0, loot: r.loot });
         stateSave(c);
-        c.send({ t: 'combat', id: r.id, killed: true, name: r.name, loot: r.loot, kills: c.kills, atk: c.atk, inv: c.inv, level: world.hunter(c).level });
+        c.send({
+          t: 'combat', id: r.id, killed: true, name: r.name, loot: r.loot,
+          kills: c.kills, atk: c.atk, inv: c.inv, level: world.hunter(c).level,
+          gains: { gold: pay.gold, token: pay.token }, tokenPending: c.tokenPending | 0
+        });
         checkAchievements(c);                  // kills track AND level (XP is only awarded here)
         creditNearby(c, r.x, r.y, r.xp * GROUP_XP_SHARE);   // light grouping (ROADMAP_COZY §5): XP only, loot stays with the killer
       } else {
@@ -1062,11 +1138,33 @@ function onMessage(c, msg) {
       c.inv = res.inv;
       c.atkBoost = gearBonus(c.inv, 'weapon');
       c.achCrafts = (c.achCrafts | 0) + 1;
+      const pay = applyCommerceReward(c, 'craft', { tier: rec.tier | 0 });
       world.awardXp(c, CRAFT_XP_BASE + CRAFT_XP_PER_TIER * rec.tier);  // crafting is a real XP source now (ROADMAP_COZY §3)
       stateSave(c);
       sendVitals(c);
-      c.send({ t: 'crafted', id, item: res.item, count: res.count, inv: c.inv, atkBoost: c.atkBoost });
+      c.send({
+        t: 'crafted', id, item: res.item, count: res.count, inv: c.inv, atkBoost: c.atkBoost,
+        gains: { gold: pay.gold, token: pay.token }, tokenPending: c.tokenPending | 0
+      });
       checkAchievements(c);
+      break;
+    }
+
+    case 'wallet-link': {
+      if (!c.ready || !c.key) return;
+      const addr = (typeof msg.address === 'string') ? msg.address.trim() : '';
+      if (addr && !TokenConfig.isAddr(addr)) {
+        return c.send({ t: 'wallet-linked', err: 'invalid address' });
+      }
+      const cur = ledgerOf(c.key);
+      c.tokenWallet = addr || null;
+      ledgerSave(c.key, cur.pending, cur.claimed, c.tokenWallet);
+      c.send({
+        t: 'wallet-linked',
+        address: c.tokenWallet,
+        tokenPending: cur.pending | 0,
+        commerce: TokenConfig.publicConfig(COMMERCE)
+      });
       break;
     }
 
@@ -1148,10 +1246,15 @@ function onMessage(c, msg) {
       const now = Date.now();
       const res = Idle.collect(struct, c.inv, now);
       c.inv = res.inv;
+      let pay = { gold: 0, token: 0 };
+      if (res.gained > 0) pay = applyCommerceReward(c, 'collect', { kind: struct.kind });
       structures.set(skey, res.struct);
       qStruct.run(res.struct.id, res.struct.kind, res.struct.map, res.struct.x, res.struct.y, res.struct.owner, res.struct.builtAt, res.struct.lastCollectedAt);
       stateSave(c);
-      c.send({ t: 'collected', x: struct.x, y: struct.y, gained: res.gained, resource: res.resource, inv: c.inv });
+      c.send({
+        t: 'collected', x: struct.x, y: struct.y, gained: res.gained, resource: res.resource,
+        inv: c.inv, gains: { gold: pay.gold, token: pay.token }, tokenPending: c.tokenPending | 0
+      });
       if (res.gained > 0) checkAchievements(c);
       break;
     }
