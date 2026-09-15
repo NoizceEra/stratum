@@ -1031,6 +1031,9 @@ function onMessage(c, msg) {
       if (!c.ready || c.dead) return;
       const mid = clampInt(msg.id, 0, 0x7fffffff, -1);
       if (mid < 0) return c.send({ t: 'combat', err: 'no such creature', id: 0 });
+      // Sanctuary maps have no click-to-attack: proximity alone resolves ambient ticks
+      // (world.js's tick() -> ambientTick), so a swing here is a no-op, not a fight.
+      if (T.toneOf(c.map) === 'sanctuary') return c.send({ t: 'combat', err: 'ambient combat here — no need to strike', id: mid });
       c.atkBoost = gearBonus(c.inv, 'weapon');
       const r = world.attack(c, mid);
       if (r.err) return c.send({ t: 'combat', err: r.err, id: mid });
@@ -1408,6 +1411,21 @@ every(100, 'world tick', () => {
   for (const r of ev.revived) broadcastNode(r.map, r.x, r.y, r.kind, 1, 0);
   for (const m of ev.respawned) {
     for (const c of clients.values()) if (c.ready && c.map === m.map) c.send({ t: 'mon', id: m.id, kind: m.kind, x: m.x, y: m.y, hp: 1, maxHp: 1, spawn: true });
+  }
+
+  // Ambient kills (Sanctuary maps): world.tick() already ran the same grantLoot/awardXp
+  // machinery attack() uses (see world.js's killMonster) — this just does the same
+  // bookkeeping+notification server.js's own 'attack' handler does on a Frontier kill.
+  for (const k of ev.ambientKills) {
+    for (const c of clients.values()) {
+      if (!c.ready || c.key !== k.key) continue;
+      c.kills += 1;
+      c.atk = BASE_ATK + Math.floor(c.kills / 3);
+      gain(c, k.loot, 1);
+      stateSave(c);
+      c.send({ t: 'combat', id: k.id, killed: true, name: k.name, loot: k.loot, kills: c.kills, atk: c.atk, inv: c.inv, level: k.level });
+      checkAchievements(c);
+    }
   }
 
   for (const h of ev.hits) {
