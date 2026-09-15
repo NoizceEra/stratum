@@ -1065,6 +1065,19 @@
         break;
       }
       case 'map': if (m.map === S.map && m.d) { S.mapDensity = b64ToBytes(m.d); drawMap(); } break;
+      case 'emote': {
+        if (m.err || !m.id) break;                       // a rejected send of our own — nothing to show
+        // reuse the existing floating-combat-text system as the speech-bubble overlay:
+        // it already renders text that rises and fades near a world position for ~1.25s,
+        // which is exactly "a couple of seconds near the avatar" — no new renderer needed.
+        var ex2 = m.x, ey2 = m.y;
+        if (m.key !== S.key) {
+          var rr2 = S.remotes.get(m.key);
+          if (rr2) { ex2 = rr2.x; ey2 = rr2.y; }
+        } else { ex2 = S.x; ey2 = S.y; }
+        float(ex2, ey2 - 0.6, EMOTE_LABEL[m.id] || m.id, '#cfe8ff', 0);
+        break;
+      }
       case 'pong': break;
       default: break;                                     // unknown → ignore, never throw
     }
@@ -1217,7 +1230,8 @@
     if (k === 'i') { toggleIdle(); e.preventDefault(); return; }
     if (k === 'l') { toggleLeaderboard(); sfx('ui'); e.preventDefault(); return; }
     if (k === 'k') { toggleWardrobe(); sfx('ui'); e.preventDefault(); return; }
-    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); if (S.wardrobeOpen) closeWardrobe(); return; }
+    if (k === 'g') { toggleEmoteWheel(); e.preventDefault(); return; }
+    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); if (S.wardrobeOpen) closeWardrobe(); if (emoteWheelOpen) closeEmoteWheel(); return; }
     if (e.key === '+' || e.key === '=') { S.zoom = Math.min(3, S.zoom * 2); e.preventDefault(); return; }
     if (e.key === '-' || e.key === '_') { S.zoom = Math.max(0.5, S.zoom / 2); e.preventDefault(); return; }
     var n = parseInt(e.key, 10);
@@ -1775,6 +1789,49 @@
         sendLook(o); sfx('ui');
       });
     });
+  }
+
+  // ---------- emote wheel ---------------------------------------------------
+  // A fixed, tiny set of canned gestures — never freeform text (STRATUM has no chat, by
+  // design; see ROADMAP.md's no-chat non-goal). The server validates `id` against the
+  // exact same allowlist independently, so this list existing here is only ever a
+  // convenience for building the wheel, never the source of trust.
+  var EMOTES = ['wave', 'thanks', 'nice-place', 'gg'];
+  var EMOTE_LABEL = { wave: '👋 wave!', thanks: '🙏 thanks!', 'nice-place': '✨ nice place!', gg: '🎉 gg!' };
+  var emoteWheelOpen = false, emoteWheelEl = null;
+  function buildEmoteWheel() {
+    if (emoteWheelEl) return emoteWheelEl;
+    var el = document.createElement('div');
+    el.id = 'emote-wheel';
+    el.style.cssText = 'position:fixed;left:50%;bottom:86px;transform:translateX(-50%);' +
+      'display:none;gap:6px;z-index:50;font:12px ui-monospace,monospace;';
+    EMOTES.forEach(function (id) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = EMOTE_LABEL[id] || id;
+      b.style.cssText = 'padding:6px 10px;background:rgba(20,18,14,.85);color:#e8e6df;' +
+        'border:1px solid rgba(255,255,255,.25);border-radius:4px;cursor:pointer;';
+      b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); sendEmote(id); closeEmoteWheel(); });
+      el.appendChild(b);
+    });
+    document.body.appendChild(el);
+    emoteWheelEl = el;
+    return el;
+  }
+  function toggleEmoteWheel() {
+    if (!S.ready) return;
+    var el = buildEmoteWheel();
+    emoteWheelOpen = !emoteWheelOpen;
+    el.style.display = emoteWheelOpen ? 'flex' : 'none';
+  }
+  function closeEmoteWheel() {
+    emoteWheelOpen = false;
+    if (emoteWheelEl) emoteWheelEl.style.display = 'none';
+  }
+  function sendEmote(id) {
+    if (!S.ready) return;
+    send({ t: 'emote', id: id });
+    sfx('ui');
   }
 
   // ---------- map artifact -------------------------------------------------
