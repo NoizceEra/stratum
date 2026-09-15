@@ -30,8 +30,48 @@ const TokenConfig = require('./src/token-config.js');
 const ChainAdapter = require('./src/chain-adapter.js');
 const Rewards = require('./src/rewards.js');
 
+/** Optional local `.env` (never committed). Existing process.env wins — so hosting
+ *  platform secrets always override a checked-out file. Zero-dep, KEY=VALUE only. */
+(function loadDotEnv() {
+  try {
+    const p = path.join(__dirname, '.env');
+    if (!fs.existsSync(p)) return;
+    const text = fs.readFileSync(p, 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const s = line.trim();
+      if (!s || s.charAt(0) === '#') continue;
+      const eq = s.indexOf('=');
+      if (eq <= 0) continue;
+      const k = s.slice(0, eq).trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) continue;
+      let v = s.slice(eq + 1).trim();
+      if ((v.charAt(0) === '"' && v.endsWith('"')) || (v.charAt(0) === "'" && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+      if (process.env[k] === undefined) process.env[k] = v;
+    }
+  } catch (e) { /* missing/unreadable .env is fine */ }
+})();
+
 /** Live commerce config — env can replace the placeholder CA without a redeploy of call sites. */
 const COMMERCE = TokenConfig.withEnv(process.env);
+
+/**
+ * Env snapshot for chain-adapter. Fills rpc/token/treasury from COMMERCE defaults so an
+ * operator who only drops STRATUM_CLAIM_SIGNER_KEY into the host still has a complete
+ * readiness picture. Never invents a signer key.
+ */
+function claimEnv() {
+  const e = process.env;
+  return {
+    STRATUM_CLAIM_RPC_URL: e.STRATUM_CLAIM_RPC_URL || e.STRATUM_RPC_URL || COMMERCE.rpcUrl,
+    STRATUM_CLAIM_TOKEN_ADDR: e.STRATUM_CLAIM_TOKEN_ADDR || e.STRATUM_TOKEN_ADDRESS || COMMERCE.tokenAddress,
+    STRATUM_TREASURY_ADDRESS: e.STRATUM_TREASURY_ADDRESS || COMMERCE.treasuryAddress,
+    STRATUM_CLAIM_SIGNER_KEY: e.STRATUM_CLAIM_SIGNER_KEY || e.STRATUM_TREASURY_KEY || '',
+    STRATUM_RPC_URL: e.STRATUM_RPC_URL || COMMERCE.rpcUrl,
+    STRATUM_TOKEN_ADDRESS: e.STRATUM_TOKEN_ADDRESS || COMMERCE.tokenAddress
+  };
+}
 
 const PORT = Number(process.env.PORT || 8090);
 const PUB = path.join(__dirname, 'public');
@@ -466,7 +506,12 @@ const server = http.createServer((req, res) => {
       playersEver: qPlayCount.get().n,
       volatile: world.stats(),
       spawn: T.spawnPoint(0),
-      treasury: treasuryTotals()          // real fee revenue so far — parcel deeds + shops
+      // In-game fee vault (soft resources taken as a cut of priced sales).
+      treasury: treasuryTotals(),
+      // On-chain treasury wallet (public address) + fee knobs — no secrets.
+      treasuryWallet: COMMERCE.treasuryAddress,
+      fees: { parcelBps: PARCEL_FEE_BPS, shopBps: SHOP_FEE_BPS },
+      commerce: TokenConfig.publicConfig(COMMERCE)
     }, null, 2);
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(body);
@@ -1300,7 +1345,7 @@ function onMessage(c, msg) {
       const id = crypto.randomUUID();
       const wallet = c.tokenWallet, key = c.key, now = Date.now();
       qClaimIns.run(id, key, wallet, amount, 'requested', null, null, now, null);
-      ChainAdapter.settleClaim({ key, wallet, amountUnits: amount }, process.env).then((res) => {
+      ChainAdapter.settleClaim({ key, wallet, amountUnits: amount }, claimEnv()).then((res) => {
         if (res.ok) {
           // Unreachable today (settleClaim can only resolve ok:true once real signing
           // is added — see chain-adapter.js) — written correctly now so that day is a
@@ -1999,4 +2044,13 @@ server.listen(PORT, () => {
     console.log(`[world]   #${m.id} ${m.name} (seed ${m.seed}) spawn ${sp.x},${sp.y} — ${m.desc}`);
   }
   console.log(`[volatile] ${JSON.stringify(world.stats())}`);
+  const ready = ChainAdapter.describe(claimEnv());
+  console.log(`[commerce] ${COMMERCE.symbol} @ ${COMMERCE.tokenAddress}` +
+    (COMMERCE.placeholder ? ' (placeholder CA)' : ''));
+  console.log(`[commerce] treasury ${COMMERCE.treasuryAddress}`);
+  console.log(`[commerce] fees parcel=${PARCEL_FEE_BPS}bps shop=${SHOP_FEE_BPS}bps`);
+  console.log(`[commerce] settlement live=${ChainAdapter.isConfigured(claimEnv())}` +
+    ` rpc=${ready.rpcConfigured} token=${ready.tokenConfigured}` +
+    ` treasury=${ready.treasuryConfigured} signer=${ready.signerPresent}` +
+    ` implemented=${ready.settlementImplemented}`);
 });

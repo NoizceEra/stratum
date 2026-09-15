@@ -1,2 +1,17 @@
 data/
 node_modules/
+
+.env
+.env.*
+!.env.example
+
+**/Treasury-SECRET*
+*.pem
+
+# local tooling / stray artifacts — not part of the game
+.claude/
+boot-watch.js
+cloudflared.exe
+cloudflared.log
+.obsidian/
+

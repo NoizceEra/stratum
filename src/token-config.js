@@ -1,9 +1,14 @@
 /**
  * token-config.js — Robinhood Chain commerce token for STRATUM.
  *
- * PLACEHOLDER: the contract address below will be replaced with the official
- * deploy. Override at runtime with STRATUM_TOKEN_ADDRESS / STRATUM_CHAIN_ID /
- * STRATUM_RPC_URL / STRATUM_TOKEN_SYMBOL / STRATUM_TOKEN_DECIMALS (server only).
+ * PLACEHOLDER: the token contract address below will be replaced with the official
+ * deploy. The treasury *address* is public and safe to ship; the treasury *private
+ * key* lives only in the operator Obsidian vault (STRATUM/Treasury-SECRET.md) and
+ * optionally in process env as STRATUM_CLAIM_SIGNER_KEY — never in this file.
+ *
+ * Override at runtime (server only):
+ *   STRATUM_TOKEN_ADDRESS / STRATUM_CHAIN_ID / STRATUM_RPC_URL /
+ *   STRATUM_TOKEN_SYMBOL / STRATUM_TOKEN_DECIMALS / STRATUM_TREASURY_ADDRESS
  *
  * CONTRACT
  *   - Dependency-free UMD. No require of other project files, no DOM, no I/O
@@ -30,15 +35,21 @@
     return typeof s === 'string' && /^0x[0-9a-fA-F]{40}$/.test(s);
   }
 
-  /** Defaults — Robinhood Chain mainnet + temporary commerce CA. */
+  /**
+   * Defaults — Robinhood Chain mainnet + temporary commerce CA + treasury address.
+   * Treasury private key is NOT here (see Obsidian STRATUM/Treasury-SECRET.md).
+   */
   var DEFAULTS = deepFreeze({
     chainId: 4663,
     chainName: 'Robinhood Chain',
     rpcUrl: 'https://rpc.mainnet.chain.robinhood.com',
     explorerUrl: 'https://robinhoodchain.blockscout.com',
     explorerTokenUrl: 'https://robinhoodchain.blockscout.com/token/',
+    explorerAddressUrl: 'https://robinhoodchain.blockscout.com/address/',
     nativeCurrency: deepFreeze({ name: 'ETH', symbol: 'ETH', decimals: 18 }),
     tokenAddress: '0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7',
+    /** On-chain payout wallet (public). Generated 2026-09-15. */
+    treasuryAddress: '0xE8896562619Fe0276d65952b51dcC11C17b8C144',
     symbol: 'STRM',
     name: 'STRATUM',
     decimals: 18,
@@ -52,12 +63,14 @@
       rpcUrl: cfg.rpcUrl,
       explorerUrl: cfg.explorerUrl,
       explorerTokenUrl: cfg.explorerTokenUrl,
+      explorerAddressUrl: cfg.explorerAddressUrl || DEFAULTS.explorerAddressUrl,
       nativeCurrency: {
         name: cfg.nativeCurrency.name,
         symbol: cfg.nativeCurrency.symbol,
         decimals: cfg.nativeCurrency.decimals
       },
       tokenAddress: cfg.tokenAddress,
+      treasuryAddress: cfg.treasuryAddress,
       symbol: cfg.symbol,
       name: cfg.name,
       decimals: cfg.decimals,
@@ -65,7 +78,7 @@
     };
   }
 
-  /** Public snapshot safe to send to clients (no secrets). */
+  /** Public snapshot safe to send to clients (no secrets — address only). */
   function publicConfig(cfg) {
     var c = cfg || DEFAULTS;
     return {
@@ -74,12 +87,14 @@
       rpcUrl: c.rpcUrl,
       explorerUrl: c.explorerUrl,
       explorerTokenUrl: c.explorerTokenUrl,
+      explorerAddressUrl: c.explorerAddressUrl || DEFAULTS.explorerAddressUrl,
       nativeCurrency: {
         name: c.nativeCurrency.name,
         symbol: c.nativeCurrency.symbol,
         decimals: c.nativeCurrency.decimals
       },
       tokenAddress: c.tokenAddress,
+      treasuryAddress: c.treasuryAddress,
       symbol: c.symbol,
       name: c.name,
       decimals: c.decimals,
@@ -97,6 +112,9 @@
     if (isAddr(env.STRATUM_TOKEN_ADDRESS)) {
       out.tokenAddress = env.STRATUM_TOKEN_ADDRESS;
       out.placeholder = false;
+    }
+    if (isAddr(env.STRATUM_TREASURY_ADDRESS)) {
+      out.treasuryAddress = env.STRATUM_TREASURY_ADDRESS;
     }
     var cid = Number(env.STRATUM_CHAIN_ID);
     if (Number.isFinite(cid) && cid > 0) out.chainId = cid | 0;
@@ -121,12 +139,19 @@
     return c.explorerTokenUrl + c.tokenAddress;
   }
 
+  function explorerTreasuryLink(cfg) {
+    var c = cfg || DEFAULTS;
+    var base = c.explorerAddressUrl || DEFAULTS.explorerAddressUrl;
+    return base + c.treasuryAddress;
+  }
+
   return {
     DEFAULTS: DEFAULTS,
     copy: copy,
     publicConfig: publicConfig,
     withEnv: withEnv,
     isAddr: isAddr,
-    explorerTokenLink: explorerTokenLink
+    explorerTokenLink: explorerTokenLink,
+    explorerTreasuryLink: explorerTreasuryLink
   };
 });

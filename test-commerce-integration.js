@@ -168,7 +168,19 @@ class Client {
   const wa = await a.waitFor(m => m.t === 'welcome');
   ok(wa.commerce && typeof wa.commerce.tokenAddress === 'string', 'welcome carries the commerce/token config', wa.commerce);
   ok(wa.commerce && wa.commerce.placeholder === true, 'the shipped token config is still explicitly a placeholder', wa.commerce);
+  ok(wa.commerce && typeof wa.commerce.treasuryAddress === 'string' && /^0x[0-9a-fA-F]{40}$/.test(wa.commerce.treasuryAddress),
+    'welcome carries the public treasury wallet address', wa.commerce && wa.commerce.treasuryAddress);
+  ok(wa.commerce && !('privateKey' in wa.commerce) && !('signerKey' in wa.commerce),
+    'welcome commerce config never includes a private key field', wa.commerce);
   ok(wa.tokenPending === 0, 'a fresh player has never earned any pending STRM', wa.tokenPending);
+
+  const bootStats = await getStats(port);
+  ok(bootStats.treasuryWallet === wa.commerce.treasuryAddress,
+    '/api/stats exposes the same public treasury wallet as welcome.commerce', bootStats.treasuryWallet);
+  ok(bootStats.commerce && bootStats.commerce.treasuryAddress === wa.commerce.treasuryAddress,
+    '/api/stats.commerce mirrors the public token+treasury config', bootStats.commerce);
+  ok(bootStats.fees && bootStats.fees.shopBps === 5000 && bootStats.fees.parcelBps > 0,
+    '/api/stats reports the live fee knobs (this suite forces shop=5000bps)', bootStats.fees);
 
   // --------------------------------------------------------------------------
   section('REWARDS — a real harvest grants pending STRM, not just materials');
@@ -265,6 +277,8 @@ class Client {
 
   const stats = await getStats(port);
   ok(stats.treasury && stats.treasury.wood === 2, '/api/stats now reports the real treasury balance the fee generated', stats.treasury);
+  ok(stats.treasuryWallet === wa.commerce.treasuryAddress,
+    'fee revenue and the on-chain treasury wallet are both visible on /api/stats', stats.treasuryWallet);
 
   mustLive();
   ok(mustLive(), 'the server never exited during the whole suite');

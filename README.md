@@ -187,25 +187,33 @@ trade (`src/trade.js` — gifting/barter, not a priced marketplace) deliberately
 nothing; taking a cut of a gift is a different, worse product decision. `/api/stats`
 reports the treasury's running total across both fee sources.
 
-The token contract is configured in `src/token-config.js` (Robinhood Chain `4663`).
+The token + treasury are configured in `src/token-config.js` (Robinhood Chain `4663`).
+See `.env.example` for overrides.
 
-Placeholder CA (replace soon):
+| | Address |
+|--|--|
+| Placeholder token CA (replace soon) | `0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7` |
+| Treasury wallet (public) | `0xE8896562619Fe0276d65952b51dcC11C17b8C144` |
 
-`0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7`
-
-Override without code changes:
+The treasury **private key** is not in this repo. It lives in the operator Obsidian vault:
+`Obsidian/STRATUM/Treasury-SECRET.md`. For a live host, load it as
+`STRATUM_CLAIM_SIGNER_KEY` (never commit `.env`).
 
 ```
 STRATUM_TOKEN_ADDRESS=0x…
+STRATUM_TREASURY_ADDRESS=0xE8896562619Fe0276d65952b51dcC11C17b8C144
 STRATUM_CHAIN_ID=4663
 STRATUM_RPC_URL=https://rpc.mainnet.chain.robinhood.com
 STRATUM_TOKEN_SYMBOL=STRM
+# STRATUM_CLAIM_SIGNER_KEY=…   # from Obsidian only
 ```
 
 Connect a wallet in the HUD to switch to Robinhood Chain and read on-chain `balanceOf`
 (read-only — `public/wallet.js` never signs or sends a transaction). Pending STRM accrues
 in a server ledger (`token_ledger`); a **CLAIM STRM** button in the HUD sends it toward
 settlement, but read the next section before assuming that means a payout happens.
+`/api/stats` exposes both the soft fee vault (`treasury`) and the on-chain wallet
+(`treasuryWallet` / `commerce`) for operators — the HUD does not show the treasury address.
 
 ### The claim pipeline — real, but deliberately not settling anything yet
 

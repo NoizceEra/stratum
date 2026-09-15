@@ -12,25 +12,59 @@ function check(name, cond) {
 // ---- token-config ----
 check('tc-defaults-chain', TC.DEFAULTS.chainId === 4663);
 check('tc-defaults-ca', TC.DEFAULTS.tokenAddress.toLowerCase() === '0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7');
+check('tc-defaults-treasury', TC.DEFAULTS.treasuryAddress.toLowerCase() === '0xe8896562619fe0276d65952b51dcc11c17b8c144');
 check('tc-defaults-placeholder', TC.DEFAULTS.placeholder === true);
 check('tc-defaults-symbol', TC.DEFAULTS.symbol === 'STRM');
 check('tc-frozen', Object.isFrozen(TC.DEFAULTS));
 check('tc-isAddr-ok', TC.isAddr('0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7'));
 check('tc-isAddr-bad', TC.isAddr('not-an-address') === false);
 check('tc-public-has-ca', TC.publicConfig().tokenAddress === TC.DEFAULTS.tokenAddress);
+check('tc-public-has-treasury', TC.publicConfig().treasuryAddress === TC.DEFAULTS.treasuryAddress);
+check('tc-public-no-key-field', !('privateKey' in TC.publicConfig()) && !('signerKey' in TC.publicConfig()));
+check('tc-treasury-link', TC.explorerTreasuryLink().indexOf(TC.DEFAULTS.treasuryAddress) >= 0);
 
 var enved = TC.withEnv({
   STRATUM_TOKEN_ADDRESS: '0x1111111111111111111111111111111111111111',
+  STRATUM_TREASURY_ADDRESS: '0x2222222222222222222222222222222222222222',
   STRATUM_CHAIN_ID: '4663',
   STRATUM_TOKEN_SYMBOL: 'GOLDX',
   STRATUM_TOKEN_DECIMALS: '9'
 });
 check('tc-env-address', enved.tokenAddress === '0x1111111111111111111111111111111111111111');
+check('tc-env-treasury', enved.treasuryAddress === '0x2222222222222222222222222222222222222222');
 check('tc-env-clears-placeholder', enved.placeholder === false);
 check('tc-env-symbol', enved.symbol === 'GOLDX');
 check('tc-env-decimals', enved.decimals === 9);
 check('tc-env-bad-addr-ignored', TC.withEnv({ STRATUM_TOKEN_ADDRESS: 'nope' }).tokenAddress === TC.DEFAULTS.tokenAddress);
 check('tc-explorer-link', TC.explorerTokenLink().indexOf(TC.DEFAULTS.tokenAddress) >= 0);
+
+var CA = require('./src/chain-adapter.js');
+check('ca-not-configured-empty', CA.isConfigured({}) === false);
+check('ca-describe-missing', (function () {
+  var d = CA.describe({});
+  return d.signerPresent === false && d.treasuryConfigured === false && d.settlementImplemented === false;
+})());
+check('ca-describe-with-key-presence-only', (function () {
+  // Dummy hex key for shape/presence checks ONLY — never the real treasury key.
+  var dummyKey = '0x' + 'ab'.repeat(32);
+  var d = CA.describe({
+    STRATUM_CLAIM_RPC_URL: 'https://rpc.mainnet.chain.robinhood.com',
+    STRATUM_CLAIM_TOKEN_ADDR: TC.DEFAULTS.tokenAddress,
+    STRATUM_TREASURY_ADDRESS: TC.DEFAULTS.treasuryAddress,
+    STRATUM_CLAIM_SIGNER_KEY: dummyKey
+  });
+  // Key presence is visible as a boolean — the key value must never appear in describe()
+  var blob = JSON.stringify(d);
+  return d.signerPresent === true && d.treasuryConfigured === true && d.rpcConfigured === true &&
+    d.tokenConfigured === true && d.settlementImplemented === false &&
+    CA.isConfigured({
+      STRATUM_CLAIM_RPC_URL: 'https://rpc.mainnet.chain.robinhood.com',
+      STRATUM_CLAIM_TOKEN_ADDR: TC.DEFAULTS.tokenAddress,
+      STRATUM_TREASURY_ADDRESS: TC.DEFAULTS.treasuryAddress,
+      STRATUM_CLAIM_SIGNER_KEY: dummyKey
+    }) === false &&
+    blob.indexOf('abababab') === -1;
+})());
 
 // ---- rewards ----
 check('actions-4', R.ACTIONS.length === 4);
