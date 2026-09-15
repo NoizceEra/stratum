@@ -253,10 +253,16 @@
     <div class="lbcol"><h2>KILLS</h2><div id="lb-kills" class="lbempty">LOADING…</div></div>
     <div class="lbcol"><h2>LEVEL</h2><div id="lb-level" class="lbempty">LOADING…</div></div>
   </div>
-  <div class="disc" style="margin-top:4px">[L] CLOSE</div>
-</div>
+    <div class="disc" style="margin-top:4px">[L] CLOSE</div>
+  </div>
 
-<div id="wardrobe">
+  <div id="parcels">
+    <div class="disc">PARCELS — <button id="parcels-tab-mine" class="ptab active">MY DEEDS</button> <button id="parcels-tab-browse" class="ptab">BROWSE</button></div>
+    <div id="parcels-content"></div>
+    <div class="disc" style="margin-top:4px">[P] CLOSE</div>
+  </div>
+
+  <div id="wardrobe">
   <div class="disc">WARDROBE</div>
   <div class="wsec">
     <h2>PALETTE</h2>
@@ -294,6 +300,7 @@
     <button type="button" id="pb-map">MAP</button>
     <button type="button" id="pb-travel">TRAVEL</button>
     <button type="button" id="pb-craft">CRAFT</button>
+    <button type="button" id="pb-parcels">DEEDS</button>
     <button type="button" id="pb-wardrobe">WEAR</button>
     <button type="button" id="pb-lb">TOP</button>
     <button type="button" id="pb-zin">+</button>

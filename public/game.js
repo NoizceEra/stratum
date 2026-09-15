@@ -1092,22 +1092,65 @@
       }
       case 'map': if (m.map === S.map && m.d) { S.mapDensity = b64ToBytes(m.d); drawMap(); } break;
       case 'emote': {
-        if (m.err || !m.id) break;                       // a rejected send of our own — nothing to show
-        // reuse the existing floating-combat-text system as the speech-bubble overlay:
-        // it already renders text that rises and fades near a world position for ~1.25s,
-        // which is exactly "a couple of seconds near the avatar" — no new renderer needed.
-        var ex2 = m.x, ey2 = m.y;
-        if (m.key !== S.key) {
-          var rr2 = S.remotes.get(m.key);
-          if (rr2) { ex2 = rr2.x; ey2 = rr2.y; }
-        } else { ex2 = S.x; ey2 = S.y; }
-        float(ex2, ey2 - 0.6, EMOTE_LABEL[m.id] || m.id, '#cfe8ff', 0);
-        break;
-      }
-      case 'pong': break;
-      default: break;                                     // unknown → ignore, never throw
-    }
-  }
+              if (m.err || !m.id) break;                       // a rejected send of our own — nothing to show
+              // reuse the existing floating-combat-text system as the speech-bubble overlay:
+              // it already renders text that rises and fades near a world position for ~1.25s,
+              // which is exactly "a couple of seconds near the avatar" — no new renderer needed.
+              var ex2 = m.x, ey2 = m.y;
+              if (m.key !== S.key) {
+                var rr2 = S.remotes.get(m.key);
+                if (rr2) { ex2 = rr2.x; ey2 = rr2.y; }
+              } else { ex2 = S.x; ey2 = S.y; }
+              float(ex2, ey2 - 0.6, EMOTE_LABEL[m.id] || m.id, '#cfe8ff', 0);
+              break;
+            }
+            case 'parcel-minted': {
+              if (m.err) { toast(m.err.toUpperCase()); sfx('deny'); break; }
+              toast('DEED MINTED: ' + (m.deed && m.deed.name || '').toUpperCase(), true);
+              sfx('craft');
+              break;
+            }
+            case 'parcel-listed': {
+              if (m.err) { toast(m.err.toUpperCase()); sfx('deny'); break; }
+              toast('LISTED FOR SALE', true);
+              sfx('ui');
+              break;
+            }
+            case 'parcel-bought': {
+              if (m.err) { toast(m.err.toUpperCase()); sfx('deny'); break; }
+              toast('DEED PURCHASED: ' + (m.deed && m.deed.name || '').toUpperCase(), true);
+              if (m.inv) S.inv = m.inv;
+              if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+              sfx('craft');
+              break;
+            }
+            case 'parcel-cancelled': {
+              if (m.err) { toast(m.err.toUpperCase()); sfx('deny'); break; }
+              toast('LISTING CANCELLED');
+              sfx('ui');
+              break;
+            }
+            case 'parcel-browse': {
+              if (m.err) { toast(m.err.toUpperCase()); break; }
+              renderParcelsBrowse(m.list);
+              break;
+            }
+            case 'parcel-mine': {
+              if (m.err) { toast(m.err.toUpperCase()); break; }
+              S.parcelCache = {};
+              (m.list || []).forEach(function (d) { S.parcelCache[d.id] = d; });
+              renderParcelsMine(m.list);
+              break;
+            }
+            case 'parcel-sold': {
+              toast('YOUR DEED SOLD: ' + (m.priceQty || 0) + ' ' + itemName(m.priceItem).toUpperCase() + ' (fee ' + (m.fee || 0) + ')', true);
+              sfx('craft');
+              break;
+            }
+            case 'pong': break;
+            default: break;                                     // unknown → ignore, never throw
+          }
+        }
 
   function applyNode(a) {
     if (!a || a.length < 4) return;
@@ -1258,12 +1301,13 @@
     unlockAudio();
     if (k === 'm') { toggleMap(); sfx('ui'); e.preventDefault(); return; }
     if (k === 't') { toggleTravel(); sfx('ui'); e.preventDefault(); return; }
-    if (k === 'c') { toggleCraft(); e.preventDefault(); return; }
-    if (k === 'i') { toggleIdle(); e.preventDefault(); return; }
-    if (k === 'l') { toggleLeaderboard(); sfx('ui'); e.preventDefault(); return; }
-    if (k === 'k') { toggleWardrobe(); sfx('ui'); e.preventDefault(); return; }
-    if (k === 'g') { toggleEmoteWheel(); e.preventDefault(); return; }
-    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); if (S.wardrobeOpen) closeWardrobe(); if (emoteWheelOpen) closeEmoteWheel(); return; }
+        if (k === 'c') { toggleCraft(); e.preventDefault(); return; }
+        if (k === 'i') { toggleIdle(); e.preventDefault(); return; }
+        if (k === 'l') { toggleLeaderboard(); sfx('ui'); e.preventDefault(); return; }
+        if (k === 'k') { toggleWardrobe(); sfx('ui'); e.preventDefault(); return; }
+        if (k === 'p') { toggleParcels(); sfx('ui'); e.preventDefault(); return; }
+        if (k === 'g') { toggleEmoteWheel(); e.preventDefault(); return; }
+        if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); if (S.wardrobeOpen) closeWardrobe(); if (S.parcelsOpen) closeParcels(); if (emoteWheelOpen) closeEmoteWheel(); return; }
     if (e.key === '+' || e.key === '=') { S.zoom = Math.min(3, S.zoom * 2); e.preventDefault(); return; }
     if (e.key === '-' || e.key === '_') { S.zoom = Math.max(0.5, S.zoom / 2); e.preventDefault(); return; }
     var n = parseInt(e.key, 10);
@@ -1391,18 +1435,19 @@
   cv.addEventListener('touchcancel', canvasTapEnd);
 
   (function wirePad() {
-    function tap(id, fn) {
-      var b = document.getElementById(id);
-      if (b) b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); fn(); });
-    }
-    tap('pb-map', toggleMap);
-    tap('pb-travel', toggleTravel);
-    tap('pb-craft', toggleCraft);
-    tap('pb-wardrobe', toggleWardrobe);
-    tap('pb-lb', toggleLeaderboard);
-    tap('pb-zin', function () { S.zoom = Math.min(3, S.zoom * 2); });
-    tap('pb-zout', function () { S.zoom = Math.max(0.5, S.zoom / 2); });
-  })();
+      function tap(id, fn) {
+        var b = document.getElementById(id);
+        if (b) b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); fn(); });
+      }
+      tap('pb-map', toggleMap);
+      tap('pb-travel', toggleTravel);
+      tap('pb-craft', toggleCraft);
+      tap('pb-parcels', toggleParcels);
+      tap('pb-wardrobe', toggleWardrobe);
+      tap('pb-lb', toggleLeaderboard);
+      tap('pb-zin', function () { S.zoom = Math.min(3, S.zoom * 2); });
+      tap('pb-zout', function () { S.zoom = Math.max(0.5, S.zoom / 2); });
+    })();
 
   var lastPaint = 0;
   function doAction() {
@@ -1863,17 +1908,123 @@
     }
     ac.innerHTML = acHtml;
     Array.prototype.forEach.call(ac.children, function (el) {
-      el.addEventListener('click', function () {
-        if (el.dataset.unlocked !== '1') { sfx('deny'); return; }
-        var slot = el.dataset.slot, id = el.dataset.id;
-        // clicking an already-equipped accessory takes it off; otherwise it's equipped
-        var o = {}; o[slot] = (S[slot] === id) ? null : id;
-        sendLook(o); sfx('ui');
-      });
-    });
-  }
+          el.addEventListener('click', function () {
+            if (el.dataset.unlocked !== '1') { sfx('deny'); return; }
+            var slot = el.dataset.slot, id = el.dataset.id;
+            // clicking an already-equipped accessory takes it off; otherwise it's equipped
+            var o = {}; o[slot] = (S[slot] === id) ? null : id;
+            sendLook(o); sfx('ui');
+          });
+        });
+      }
 
-  // ---------- emote wheel ---------------------------------------------------
+      // ---------- parcels (deed marketplace) ------------------------------------
+      // Two tabs: MY DEEDS (parcel-mine response) and BROWSE (parcel-browse response).
+      // Both re-render from wire data — no local state except the open tab.
+      function toggleParcels() {
+        if (!S.ready) return;
+        S.parcelsOpen = !S.parcelsOpen;
+        document.getElementById('parcels').classList.toggle('on', S.parcelsOpen);
+        if (S.parcelsOpen) {
+          S.parcelsTab = S.parcelsTab || 'mine';
+          buildParcelsContent();
+          if (window.StratumHud) window.StratumHud.noteAction();
+        }
+      }
+      function closeParcels() {
+        S.parcelsOpen = false;
+        document.getElementById('parcels').classList.remove('on');
+      }
+      function buildParcelsContent() {
+        if (!S.parcelsOpen) return;
+        var wrap = document.getElementById('parcels-content');
+        var tab = S.parcelsTab || 'mine';
+        document.getElementById('parcels-tab-mine').classList.toggle('active', tab === 'mine');
+        document.getElementById('parcels-tab-browse').classList.toggle('active', tab === 'browse');
+
+        if (tab === 'mine') {
+          send({ t: 'parcel-mine' });
+        } else {
+          send({ t: 'parcel-browse', map: S.map });
+        }
+      }
+      function renderParcelsMine(list) {
+        var wrap = document.getElementById('parcels-content');
+        if (!list || !list.length) {
+          wrap.innerHTML = '<div class="mcard"><div class="ds">NO DEEDS YET — CLAIM LAND, THEN [P] → MINT A DEED</div></div>';
+          return;
+        }
+        var html = '<div class="ptabs">';
+        list.forEach(function (d) {
+          var listed = d.listed ? '<span class="badge listed">LISTED ' + d.listing.priceQty + ' ' + itemName(d.listing.priceItem).toUpperCase() + '</span>' : '<span class="badge">UNLISTED</span>';
+          var bbox = d.bbox ? (d.bbox.w + 'x' + d.bbox.h + ' tiles') : (d.tiles + ' tiles');
+          var mapName = (window.Terrain && window.Terrain.MAPS && window.Terrain.MAPS[d.map]) ? window.Terrain.MAPS[d.map].name : 'MAP ' + d.map;
+          html += '<div class="mcard">' +
+            '<div class="nm">' + (d.name || 'Unnamed').toUpperCase() + ' ' + listed + '</div>' +
+            '<div class="tier">' + mapName + ' · ' + bbox + '</div>' +
+            '<div class="cost can">ID ' + d.id.slice(0, 8) + '…</div>';
+          if (d.listed) {
+            html += '<button class="btn cancel" data-cancel="' + d.id + '">CANCEL LISTING</button>';
+          } else {
+            html += '<button class="btn list" data-list="' + d.id + '">LIST FOR SALE</button>';
+          }
+          html += '</div>';
+        });
+        html += '</div>';
+        wrap.innerHTML = html;
+        Array.prototype.forEach.call(wrap.querySelectorAll('button.list'), function (el) {
+          el.addEventListener('click', function () { openListModal(el.dataset.list); });
+        });
+        Array.prototype.forEach.call(wrap.querySelectorAll('button.cancel'), function (el) {
+          el.addEventListener('click', function () { send({ t: 'parcel-cancel', id: el.dataset.cancel }); buildParcelsContent(); });
+        });
+      }
+      function renderParcelsBrowse(list) {
+        var wrap = document.getElementById('parcels-content');
+        if (!list || !list.length) {
+          wrap.innerHTML = '<div class="mcard"><div class="ds">NO LISTINGS ON THIS MAP.</div></div>';
+          return;
+        }
+        var html = '<div class="ptabs">';
+        list.forEach(function (l) {
+          var bbox = l.bbox ? (l.bbox.w + 'x' + l.bbox.h + ' tiles') : (l.tiles + ' tiles');
+          html += '<div class="mcard">' +
+            '<div class="nm">' + (l.name || 'Unnamed').toUpperCase() + '</div>' +
+            '<div class="tier">' + l.tiles + ' tiles · ' + bbox + '</div>' +
+            '<div class="cost">' + l.priceQty + ' ' + itemName(l.priceItem).toUpperCase() + '</div>' +
+            '<div class="ds">SELLER: ' + (l.seller ? T.keyTag(l.seller) || l.seller.slice(0, 8) : '?') + '</div>' +
+            '<button class="btn buy" data-buy="' + l.id + '">BUY DEED</button>' +
+            '</div>';
+        });
+        html += '</div>';
+        wrap.innerHTML = html;
+        Array.prototype.forEach.call(wrap.querySelectorAll('button.buy'), function (el) {
+          el.addEventListener('click', function () { send({ t: 'parcel-buy', id: el.dataset.buy }); closeParcels(); });
+        });
+      }
+      function openListModal(deedId) {
+        // Simple inline prompt using the existing toast/input pattern
+        var wrap = document.getElementById('parcels-content');
+        var deed = S.parcelCache && S.parcelCache[deedId];
+        wrap.innerHTML = '<div class="mcard"><div class="nm">LIST ' + (deed ? deed.name : 'DEED').toUpperCase() + '</div>' +
+          '<div class="tier">PRICE ITEM</div>' +
+          '<input type="text" id="parcel-price-item" placeholder="gold, wood, ore, herb, crystal…" style="width:100%;padding:8px;margin:4px 0;background:#1a1812;color:#e8e6df;border:1px solid #3a362c;border-radius:4px">' +
+          '<div class="tier">PRICE QUANTITY</div>' +
+          '<input type="number" id="parcel-price-qty" placeholder="1" min="1" max="1000000" style="width:100%;padding:8px;margin:4px 0;background:#1a1812;color:#e8e6df;border:1px solid #3a362c;border-radius:4px">' +
+          '<button class="btn" id="parcel-confirm-list">CONFIRM LIST</button> ' +
+          '<button class="btn" id="parcel-cancel-modal">BACK</button></div>';
+        document.getElementById('parcel-confirm-list').addEventListener('click', function () {
+          var item = document.getElementById('parcel-price-item').value.trim().toLowerCase();
+          var qty = parseInt(document.getElementById('parcel-price-qty').value, 10);
+          if (item && qty > 0) {
+            send({ t: 'parcel-list', id: deedId, priceItem: item, priceQty: qty });
+            closeParcels();
+          }
+        });
+        document.getElementById('parcel-cancel-modal').addEventListener('click', function () { buildParcelsContent(); });
+      }
+
+      // ---------- emote wheel ---------------------------------------------------
   // A fixed, tiny set of canned gestures — never freeform text (STRATUM has no chat, by
   // design; see ROADMAP.md's no-chat non-goal). The server validates `id` against the
   // exact same allowlist independently, so this list existing here is only ever a
