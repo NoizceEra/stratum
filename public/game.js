@@ -1307,7 +1307,7 @@
         if (k === 'k') { toggleWardrobe(); sfx('ui'); e.preventDefault(); return; }
         if (k === 'p') { toggleParcels(); sfx('ui'); e.preventDefault(); return; }
         if (k === 'g') { toggleEmoteWheel(); e.preventDefault(); return; }
-        if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); if (S.wardrobeOpen) closeWardrobe(); if (S.parcelsOpen) closeParcels(); if (emoteWheelOpen) closeEmoteWheel(); return; }
+        if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); if (S.wardrobeOpen) closeWardrobe(); if (S.parcelsOpen) closeParcels(); if (emoteWheelOpen) closeEmoteWheel(); if (S.menuSheetOpen) closeMenuSheet(); return; }
     if (e.key === '+' || e.key === '=') { S.zoom = Math.min(3, S.zoom * 2); e.preventDefault(); return; }
     if (e.key === '-' || e.key === '_') { S.zoom = Math.max(0.5, S.zoom / 2); e.preventDefault(); return; }
     var n = parseInt(e.key, 10);
@@ -1434,19 +1434,74 @@
   cv.addEventListener('touchend', canvasTapEnd);
   cv.addEventListener('touchcancel', canvasTapEnd);
 
+  // ---------- menu sheet (touch) --------------------------------------------
+  // One entry point instead of seven stacked buttons — see #menu-sheet in index.html.
+  // Desktop never opens this; it keeps its direct keybinds in #hud-bl.
+  var MENU_ACTIONS = {
+    map: toggleMap, travel: toggleTravel, craft: toggleCraft, idle: toggleIdle,
+    parcels: toggleParcels, wardrobe: toggleWardrobe, leaderboard: toggleLeaderboard
+  };
+  function toggleMenuSheet() {
+    if (!S.ready) return;
+    S.menuSheetOpen = !S.menuSheetOpen;
+    document.getElementById('menu-sheet').classList.toggle('on', S.menuSheetOpen);
+  }
+  function closeMenuSheet() {
+    S.menuSheetOpen = false;
+    document.getElementById('menu-sheet').classList.remove('on');
+  }
+
   (function wirePad() {
       function tap(id, fn) {
         var b = document.getElementById(id);
         if (b) b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); fn(); });
       }
-      tap('pb-map', toggleMap);
-      tap('pb-travel', toggleTravel);
-      tap('pb-craft', toggleCraft);
-      tap('pb-parcels', toggleParcels);
-      tap('pb-wardrobe', toggleWardrobe);
-      tap('pb-lb', toggleLeaderboard);
+      tap('pb-menu', toggleMenuSheet);
       tap('pb-zin', function () { S.zoom = Math.min(3, S.zoom * 2); });
       tap('pb-zout', function () { S.zoom = Math.max(0.5, S.zoom / 2); });
+
+      var sheet = document.getElementById('menu-sheet');
+      if (sheet) {
+        sheet.addEventListener('click', function (e) {
+          var row = e.target.closest ? e.target.closest('.mcard[data-act]') : null;
+          if (row) {
+            var fn = MENU_ACTIONS[row.dataset.act];
+            closeMenuSheet();
+            if (fn) fn();
+          } else if (e.target === sheet) {
+            closeMenuSheet();               // tapped the dimmed background, not a row
+          }
+        });
+      }
+
+      // hud-br: collapsed on touch by default (see CSS) — this toggle is the only way
+      // to reach the wallet/combat/achievement detail there on a phone.
+      var moreBtn = document.getElementById('hud-br-toggle');
+      if (moreBtn) {
+        moreBtn.addEventListener('click', function (e) {
+          e.preventDefault(); e.stopPropagation();
+          var panel = document.getElementById('hud-br');
+          var open = panel.classList.toggle('expanded');
+          moreBtn.textContent = open ? 'LESS ▴' : 'MORE ▾';
+        });
+      }
+
+      // Every full-screen menu now opens ONLY from #menu-sheet on touch — there is no
+      // longer a dedicated physical button per panel to tap a second time and close it
+      // (that used to be how pb-craft/pb-map/etc worked). Tapping the dimmed background
+      // of whichever one is open is the replacement: same gesture every overlay already
+      // uses to dismiss, no new UI, just wiring it in for each panel.
+      var TAP_OUTSIDE_CLOSE = {
+        map: toggleMap, nodes: closeTravel, craft: closeCraft, idle: closeIdle,
+        leaderboard: closeLeaderboard, wardrobe: closeWardrobe, parcels: closeParcels
+      };
+      Object.keys(TAP_OUTSIDE_CLOSE).forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('click', function (e) {
+          if (e.target === el) TAP_OUTSIDE_CLOSE[id]();
+        });
+      });
     })();
 
   var lastPaint = 0;

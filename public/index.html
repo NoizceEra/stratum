@@ -59,7 +59,7 @@
   #toast.on{opacity:1}
   #toast.good{background:rgba(30,80,40,.92);border-color:rgba(120,220,140,.5)}
   #gate{position:fixed;inset:0;background:radial-gradient(circle at 50% 42%,#14161d,#070810 72%);
-    display:flex;align-items:center;justify-content:center;z-index:20}
+    display:flex;align-items:center;justify-content:center;z-index:70}
   #gate .box{width:min(600px,92vw);text-align:center}
   #gate h1{font-size:30px;letter-spacing:.5em;margin-left:.5em}
   #gate p{color:var(--dim);margin-top:14px;line-height:1.9;font-size:11.5px}
@@ -123,6 +123,24 @@
   .lbrow.me{color:var(--gold)}
   .lbrow.me .lbv{color:var(--gold)}
   .lbempty{color:var(--dim);font-size:11px;padding:4px 0}
+  /* parcels (deed marketplace) overlay — same full-screen pattern as every other menu.
+     This was missing entirely: #parcels rendered as a plain in-flow block with no
+     display:none, so it sat permanently visible on the page — a large source of the
+     reported mobile clutter, independent of anything below. */
+  #parcels{position:fixed;inset:0;z-index:15;background:rgba(5,6,9,.95);display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:10px}
+  #parcels.on{display:flex}
+  #parcels-content{display:flex;flex-direction:column;gap:8px;max-height:68vh;overflow-y:auto;width:min(560px,86vw)}
+  .ptab{font:inherit;letter-spacing:.1em;color:var(--dim);background:transparent;
+    border:1px solid var(--rule);padding:3px 9px;cursor:pointer;margin-left:6px}
+  .ptab.active{color:var(--gold);border-color:var(--gold)}
+  /* menu sheet — touch's single entry point to every on-demand panel (see #pad below).
+     Same full-screen-overlay pattern as everything else; .mcard rows are reused as-is. */
+  #menu-sheet{position:fixed;inset:0;z-index:65;background:rgba(5,6,9,.95);display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:10px}
+  #menu-sheet.on{display:flex}
+  #menu-rows{display:flex;flex-direction:column;gap:7px;width:min(320px,84vw)}
+  #menu-rows .mcard{width:100%;padding:13px 16px;text-align:center}
   /* inventory chips — flex gap so resources are spaced without a leading indent */
   #h-inv{display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end}
   #h-inv .chip{margin-left:0}
@@ -186,7 +204,7 @@
   <div class="big gold" id="h-pct">0.0000%</div>
   <div class="k" id="h-claimed">0 / 1,048,576</div>
   <div style="margin-top:7px"><span class="k">remain</span> <span class="v" id="h-remain">1,048,576</span></div>
-  <div class="k" style="margin-top:7px;font-size:10px">[M] map · [T] travel</div>
+  <div class="k kbdhint" style="margin-top:7px;font-size:10px">[M] map · [T] travel</div>
 </div>
 
 <div id="hud-quest" class="panel">
@@ -204,21 +222,27 @@
 <div id="hud-br" class="panel">
   <div class="k">carried</div>
   <div style="margin-top:3px" id="h-inv">—</div>
-  <div style="margin-top:7px">
-    <span class="k">gold</span> <span class="v gold" id="h-gold">0</span>
-    <span class="k" style="margin-left:8px" id="h-token-sym">STRM</span>
-    <span class="v" id="h-token-pending">0</span>
-    <span class="k" style="margin-left:4px;font-size:9px">pending</span>
+  <!-- On touch this whole block (gold/wallet/combat/achievements) starts collapsed —
+       it's a lot of always-on chrome for a phone screen, and none of it needs to be
+       glanceable mid-harvest the way HP/will/carried do. Desktop keeps it open, always. -->
+  <button type="button" id="hud-br-toggle">MORE ▾</button>
+  <div id="hud-br-detail">
+    <div style="margin-top:7px">
+      <span class="k">gold</span> <span class="v gold" id="h-gold">0</span>
+      <span class="k" style="margin-left:8px" id="h-token-sym">STRM</span>
+      <span class="v" id="h-token-pending">0</span>
+      <span class="k" style="margin-left:4px;font-size:9px">pending</span>
+    </div>
+    <div class="k" style="margin-top:4px;font-size:10px" id="h-token-chain">on-chain —</div>
+    <div style="margin-top:6px">
+      <button type="button" id="wallet-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">CONNECT WALLET</button>
+      <span class="k" id="h-wallet" style="margin-left:6px;font-size:10px"></span>
+    </div>
+    <div class="k" id="h-token-badge" style="margin-top:4px;font-size:9px;display:none">PLACEHOLDER CA</div>
+    <div class="k" style="margin-top:7px">slain <span class="v" id="h-kills">0</span> &nbsp; <span class="k">atk</span> <span class="v" id="h-atk">7</span></div>
+    <div class="k" style="margin-top:5px;font-size:10px" id="h-vol">—</div>
+    <div class="k" style="margin-top:5px;font-size:10px" id="h-ach">0 / 14 earned</div>
   </div>
-  <div class="k" style="margin-top:4px;font-size:10px" id="h-token-chain">on-chain —</div>
-  <div style="margin-top:6px">
-    <button type="button" id="wallet-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">CONNECT WALLET</button>
-    <span class="k" id="h-wallet" style="margin-left:6px;font-size:10px"></span>
-  </div>
-  <div class="k" id="h-token-badge" style="margin-top:4px;font-size:9px;display:none">PLACEHOLDER CA</div>
-  <div class="k" style="margin-top:7px">slain <span class="v" id="h-kills">0</span> &nbsp; <span class="k">atk</span> <span class="v" id="h-atk">7</span></div>
-  <div class="k" style="margin-top:5px;font-size:10px" id="h-vol">—</div>
-  <div class="k" style="margin-top:5px;font-size:10px" id="h-ach">0 / 14 earned</div>
 </div>
 
 <div id="toast"></div>
@@ -226,24 +250,28 @@
 <div id="map">
   <canvas id="mapcv" width="256" height="256"></canvas>
   <div class="cap" id="mapcap">WORLD MAP</div>
+  <div class="disc touchhint" style="margin-top:4px">TAP OUTSIDE TO CLOSE</div>
 </div>
 
 <div id="nodes">
   <div class="disc">TRAVEL — CHOOSE A MAP</div>
   <div id="mlist"></div>
-  <div class="disc" style="margin-top:4px">[T] CLOSE</div>
+  <div class="disc kbdhint" style="margin-top:4px">[T] CLOSE</div>
+  <div class="disc touchhint" style="margin-top:4px">TAP OUTSIDE TO CLOSE</div>
 </div>
 
 <div id="craft">
   <div class="disc">CRAFT — <span id="crafttool">FLINT TOOLS</span></div>
   <div id="craftlist"></div>
-  <div class="disc" style="margin-top:4px">[C] CLOSE</div>
+  <div class="disc kbdhint" style="margin-top:4px">[C] CLOSE</div>
+  <div class="disc touchhint" style="margin-top:4px">TAP OUTSIDE TO CLOSE</div>
 </div>
 
 <div id="idle">
   <div class="disc">STRUCTURES — pick one, then LMB your own claimed land</div>
   <div id="idlelist"></div>
-  <div class="disc" style="margin-top:4px">[I] CLOSE</div>
+  <div class="disc kbdhint" style="margin-top:4px">[I] CLOSE</div>
+  <div class="disc touchhint" style="margin-top:4px">TAP OUTSIDE TO CLOSE</div>
 </div>
 
 <div id="leaderboard">
@@ -253,13 +281,15 @@
     <div class="lbcol"><h2>KILLS</h2><div id="lb-kills" class="lbempty">LOADING…</div></div>
     <div class="lbcol"><h2>LEVEL</h2><div id="lb-level" class="lbempty">LOADING…</div></div>
   </div>
-    <div class="disc" style="margin-top:4px">[L] CLOSE</div>
+    <div class="disc kbdhint" style="margin-top:4px">[L] CLOSE</div>
+    <div class="disc touchhint" style="margin-top:4px">TAP OUTSIDE TO CLOSE</div>
   </div>
 
   <div id="parcels">
     <div class="disc">PARCELS — <button id="parcels-tab-mine" class="ptab active">MY DEEDS</button> <button id="parcels-tab-browse" class="ptab">BROWSE</button></div>
     <div id="parcels-content"></div>
-    <div class="disc" style="margin-top:4px">[P] CLOSE</div>
+    <div class="disc kbdhint" style="margin-top:4px">[P] CLOSE</div>
+    <div class="disc touchhint" style="margin-top:4px">TAP OUTSIDE TO CLOSE</div>
   </div>
 
   <div id="wardrobe">
@@ -272,7 +302,8 @@
     <h2>ACCESSORIES</h2>
     <div id="acslots"></div>
   </div>
-  <div class="disc" style="margin-top:4px">[K] CLOSE</div>
+  <div class="disc kbdhint" style="margin-top:4px">[K] CLOSE</div>
+  <div class="disc touchhint" style="margin-top:4px">TAP OUTSIDE TO CLOSE</div>
 </div>
 
 <div id="gate">
@@ -293,24 +324,49 @@
   </div>
 </div>
 
-<!-- touch controls — revealed only on touch devices (body.touch) -->
+<!-- touch controls — revealed only on touch devices (body.touch). Seven menus used to be
+     seven separate buttons stacked down the right edge; they're now one MENU button that
+     opens #menu-sheet below, which is what was actually cluttering the screen on mobile. -->
 <div id="pad">
   <div id="stick"><div id="knob"></div></div>
   <div id="pbtns">
-    <button type="button" id="pb-map">MAP</button>
-    <button type="button" id="pb-travel">TRAVEL</button>
-    <button type="button" id="pb-craft">CRAFT</button>
-    <button type="button" id="pb-parcels">DEEDS</button>
-    <button type="button" id="pb-wardrobe">WEAR</button>
-    <button type="button" id="pb-lb">TOP</button>
+    <button type="button" id="pb-menu">MENU</button>
     <button type="button" id="pb-zin">+</button>
     <button type="button" id="pb-zout">−</button>
   </div>
+</div>
+
+<!-- menu sheet — the single entry point to every on-demand panel on touch. Desktop keeps
+     its direct keybinds (see #hud-bl) and never shows this. -->
+<div id="menu-sheet">
+  <div class="disc">MENU</div>
+  <div id="menu-rows">
+    <div class="mcard" data-act="map"><span class="nm">WORLD MAP</span></div>
+    <div class="mcard" data-act="travel"><span class="nm">TRAVEL</span></div>
+    <div class="mcard" data-act="craft"><span class="nm">CRAFT</span></div>
+    <div class="mcard" data-act="idle"><span class="nm">STRUCTURES</span></div>
+    <div class="mcard" data-act="parcels"><span class="nm">DEEDS</span></div>
+    <div class="mcard" data-act="wardrobe"><span class="nm">WARDROBE</span></div>
+    <div class="mcard" data-act="leaderboard"><span class="nm">LEADERBOARD</span></div>
+  </div>
+  <div class="disc" style="margin-top:4px">TAP OUTSIDE TO CLOSE</div>
 </div>
 <style>
   #pad{display:none}
   body.touch #pad{display:block}
   body.touch #hud-bl{display:none}
+  /* desktop-only keybind reminders read as dead text on a screen with no keyboard */
+  body.touch .kbdhint{display:none}
+  .touchhint{display:none}
+  body.touch .touchhint{display:block}
+  /* hud-br: collapsed to just "carried" by default on touch, MORE ▾ reveals the rest.
+     Desktop never collapses this — the toggle button itself only exists visually there
+     because body.touch is what makes it (and the collapse) apply at all. */
+  #hud-br-toggle{display:none;font:inherit;font-size:10px;letter-spacing:.1em;color:var(--gold);
+    background:transparent;border:none;padding:6px 0 0;cursor:pointer;text-align:right;width:100%}
+  body.touch #hud-br-toggle{display:block}
+  body.touch #hud-br-detail{display:none}
+  body.touch #hud-br.expanded #hud-br-detail{display:block}
   #stick{position:fixed;left:calc(16px + env(safe-area-inset-left));bottom:calc(16px + env(safe-area-inset-bottom));
     width:138px;height:138px;border-radius:50%;
     background:radial-gradient(circle,rgba(8,10,8,.5),rgba(8,10,8,.3) 60%,rgba(8,10,8,0) 74%);
@@ -330,7 +386,12 @@
   body.touch #gate .box{width:92vw;padding:22px 18px}
   body.touch #gate .rules{font-size:12.5px}
   /* quest rail: stay clear of the stick (bottom-left) and side panels */
-  body.touch #hud-quest{max-width:min(260px,52vw);padding:6px 10px;font-size:11px}
+  /* On phone width hud-tl + hud-tr genuinely cannot share a row with a third centered
+     box — 202px + 136px of panel already exceeds a 375px screen before quest's own
+     width is added, so it was drawing on top of both corner panels. Move it into the
+     open middle of the screen (always clear: panels live in the corners, the pad lives
+     at the bottom) instead of fighting for space up top. */
+  body.touch #hud-quest{top:34%;max-width:min(260px,64vw);padding:6px 10px;font-size:11px}
   /* narrow screens: the two top panels must not collide in portrait */
   @media (max-width:560px){
     #hud-tl{min-width:0;max-width:54vw}
