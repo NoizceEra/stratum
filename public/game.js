@@ -1128,7 +1128,8 @@
     if (k === 'm') { toggleMap(); sfx('ui'); e.preventDefault(); return; }
     if (k === 't') { toggleTravel(); sfx('ui'); e.preventDefault(); return; }
     if (k === 'c') { toggleCraft(); e.preventDefault(); return; }
-    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); return; }
+    if (k === 'l') { toggleLeaderboard(); sfx('ui'); e.preventDefault(); return; }
+    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.lbOpen) closeLeaderboard(); return; }
     if (e.key === '+' || e.key === '=') { S.zoom = Math.min(3, S.zoom * 2); e.preventDefault(); return; }
     if (e.key === '-' || e.key === '_') { S.zoom = Math.max(0.5, S.zoom / 2); e.preventDefault(); return; }
     var n = parseInt(e.key, 10);
@@ -1146,7 +1147,7 @@
   cv.addEventListener('mousedown', function (e) {
     e.preventDefault();
     unlockAudio();
-    if (S.mapOpen || S.travelOpen || S.craftOpen) return;
+    if (S.mapOpen || S.travelOpen || S.craftOpen || S.lbOpen) return;
     // Act on where this click is, not on where the cursor last was: a click can arrive
     // without a preceding move (programmatic clicks, some touch/pen paths).
     var r = cv.getBoundingClientRect();
@@ -1217,7 +1218,7 @@
 
   cv.addEventListener('touchstart', function (e) {
     unlockAudio();
-    if (S.mapOpen || S.travelOpen || S.craftOpen) return;                 // overlays handle their own taps
+    if (S.mapOpen || S.travelOpen || S.craftOpen || S.lbOpen) return;                 // overlays handle their own taps
     e.preventDefault();
     if (tapId !== null) return;
     var t = e.changedTouches[0];
@@ -1263,6 +1264,7 @@
     tap('pb-map', toggleMap);
     tap('pb-travel', toggleTravel);
     tap('pb-craft', toggleCraft);
+    tap('pb-lb', toggleLeaderboard);
     tap('pb-zin', function () { S.zoom = Math.min(3, S.zoom * 2); });
     tap('pb-zout', function () { S.zoom = Math.max(0.5, S.zoom / 2); });
   })();
@@ -1549,6 +1551,41 @@
         if (el.dataset.toolup) send({ t: 'toolup' });
         else if (el.dataset.recipe) send({ t: 'craft', id: el.dataset.recipe });
       });
+    });
+  }
+
+  // ---------- leaderboard ---------------------------------------------------
+  // Read-only view of /api/leaderboard: a plain fetch, no wire protocol of its own —
+  // the game's core stat ("% of world claimed") had no comparative view until this.
+  function toggleLeaderboard() {
+    if (!S.ready) return;
+    S.lbOpen = !S.lbOpen;
+    document.getElementById('leaderboard').classList.toggle('on', S.lbOpen);
+    if (S.lbOpen) { buildLeaderboard(); if (window.StratumHud) window.StratumHud.noteAction(); }
+  }
+  function closeLeaderboard() {
+    S.lbOpen = false;
+    document.getElementById('leaderboard').classList.remove('on');
+  }
+  function lbRows(list, valKey, extra) {
+    if (!list || !list.length) return '<div class="lbempty">NOBODY YET.</div>';
+    var myTag = T.keyTag(S.key), html = '';
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i], mine = myTag && r.tag === myTag;
+      var v = r[valKey] + (extra ? ' ' + extra : '');
+      html += '<div class="lbrow' + (mine ? ' me' : '') + '"><span><span class="lbn">' + (i + 1) + '.</span> ' +
+        String(r.name || 'WANDERER') + '</span><span class="lbv">' + v + '</span></div>';
+    }
+    return html;
+  }
+  function buildLeaderboard() {
+    var landEl = document.getElementById('lb-land'), killsEl = document.getElementById('lb-kills'), levelEl = document.getElementById('lb-level');
+    fetch('/api/leaderboard').then(function (r) { return r.json(); }).then(function (d) {
+      landEl.innerHTML = lbRows(d.land, 'count');
+      killsEl.innerHTML = lbRows(d.kills, 'kills');
+      levelEl.innerHTML = lbRows(d.level, 'level');
+    }).catch(function () {
+      landEl.innerHTML = killsEl.innerHTML = levelEl.innerHTML = '<div class="lbempty">COULD NOT REACH THE WORLD.</div>';
     });
   }
 
