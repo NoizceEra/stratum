@@ -25,6 +25,7 @@ const Idle = require('./src/idle.js');
 const CU = require('./src/customization.js');
 const Shops = require('./src/shops.js');
 const Trade = require('./src/trade.js');
+const Parcels = require('./src/parcels.js');
 const TokenConfig = require('./src/token-config.js');
 const Rewards = require('./src/rewards.js');
 
@@ -92,6 +93,13 @@ const KEY_RE = /^[\x21-\x7e]{1,64}$/;                            // printable AS
 // be able to shrink one without touching the other.
 const TRADE_TTL_SCALE = envNum('STRATUM_TRADE_TTL_SCALE', 1);
 const TRADE_TTL_MS = Math.max(1, Math.round(Trade.DEFAULT_TTL_MS * TRADE_TTL_SCALE));
+// Parcel deeds: same 7-day listing TTL as trade offers (same knob — an abandoned deed
+// listing and an abandoned trade offer are the same DB-growth problem).
+const PARCEL_LISTING_TTL_MS = TRADE_TTL_MS;
+// Treasury fee on every deed sale, in basis points of the sale price. Lives here (not
+// in parcels.js) so tuning monetization is a config edit, never a module edit.
+const PARCEL_FEE_BPS = Number(process.env.STRATUM_PARCEL_FEE_BPS) >= 0
+  ? Number(process.env.STRATUM_PARCEL_FEE_BPS) | 0 : Parcels.FEE_BPS;
 // The fixed emote allowlist. No freeform text ever — see ROADMAP.md's no-chat non-goal.
 const EMOTES = ['wave', 'thanks', 'nice-place', 'gg'];
 
@@ -126,6 +134,17 @@ db.exec(`
     wantItem TEXT, wantQty INTEGER NOT NULL DEFAULT 0,
     createdAt INTEGER NOT NULL, ttlMs INTEGER NOT NULL);
   CREATE INDEX IF NOT EXISTS trade_offers_to ON trade_offers(toKey);
+  CREATE TABLE IF NOT EXISTS parcels(
+    id TEXT PRIMARY KEY, owner TEXT NOT NULL, map INTEGER NOT NULL,
+    name TEXT NOT NULL, tiles TEXT NOT NULL, createdAt INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS parcels_owner ON parcels(owner);
+  CREATE INDEX IF NOT EXISTS parcels_map ON parcels(map);
+  CREATE TABLE IF NOT EXISTS parcel_listings(
+    id TEXT PRIMARY KEY, seller TEXT NOT NULL, map INTEGER NOT NULL,
+    priceItem TEXT NOT NULL, priceQty INTEGER NOT NULL, createdAt INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS parcel_listings_map ON parcel_listings(map);
+  CREATE TABLE IF NOT EXISTS treasury(
+    item TEXT PRIMARY KEY, qty INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS token_ledger(
     k TEXT PRIMARY KEY,
     pending INTEGER NOT NULL DEFAULT 0,
@@ -297,6 +316,73 @@ const tradeOffers = new Map();    // id -> {id, from, to, giveItem, giveQty, wan
   }
   console.log(`[world] ${shopListings.size} shop listing(s) and ${tradeOffers.size} trade offer(s) restored`);
 })();
+
+/** authoritative in-memory parcel deeds + listings + treasury, mirroring the `tiles`
+ *  pattern: the DB is the durable copy, these Maps are what handlers read/write. */
+const qParcelIns = db.prepare('INSERT OR REPLACE INTO parcels(id,owner,map,name,tiles,createdAt) VALUES(?,?,?,?,?,?)');
+const qParcelDel = db.prepare('DELETE FROM parcels WHERE id=?');
+const qParcelAll = db.prepare('SELECT * FROM parcels');
+const qParcelListIns = db.prepare('INSERT OR REPLACE INTO parcel_listings(id,seller,map,priceItem,priceQty,createdAt) VALUES(?,?,?,?,?,?)');
+const qParcelListDel = db.prepare('DELETE FROM parcel_listings WHERE id=?');
+const qParcelListAll = db.prepare('SELECT * FROM parcel_listings');
+const qTreasuryAdd = db.prepare('INSERT INTO treasury(item,qty,updated) VALUES(?,?,?) ' +
+  'ON CONFLICT(item) DO UPDATE SET qty=treasury.qty+excluded.qty, updated=excluded.updated');
+const qTreasuryAll = db.prepare('SELECT item,qty FROM treasury');
+const parcels = new Map();        // id -> {id, owner, map, name, tiles:[{x,y}], createdAt}
+const parcelListings = new Map(); // id (== parcel id) -> {id, seller, map, priceItem, priceQty, createdAt}
+(function loadParcels() {
+  for (const r of qParcelAll.all()) {
+    let tiles = null;
+    try { tiles = JSON.parse(r.tiles); } catch (e) { tiles = null; }
+    const v = Parcels.validateDeed(tiles, r.name);
+    if (!v.ok) continue;                       // a corrupt row can never become a sellable deed
+    parcels.set(r.id, { id: r.id, owner: r.owner, map: r.map, name: v.name, tiles: v.tiles, createdAt: r.createdAt });
+  }
+  for (const r of qParcelListAll.all()) {
+    if (!parcels.has(r.id)) { qParcelListDel.run(r.id); continue; }  // listing without a deed is junk
+    parcelListings.set(r.id, { id: r.id, seller: r.seller, map: r.map, priceItem: r.priceItem, priceQty: r.priceQty, createdAt: r.createdAt });
+  }
+  console.log(`[world] ${parcels.size} parcel deed(s) and ${parcelListings.size} parcel listing(s) restored`);
+})();
+/** Set of every tile currently inside a deed: "map:x:y". Enforced at mint so two deeds
+ *  can never contain the same tile — without this, selling one deed would silently
+ *  corrupt the other. Rebuilt from `parcels` whenever deeds change. */
+function deedTileSet() {
+  const s = new Set();
+  for (const d of parcels.values()) for (const t of d.tiles) s.add(d.map + ':' + t.x + ':' + t.y);
+  return s;
+}
+/** Credit the game treasury (monetization: 2.5% of every deed sale). Per-item rows so
+ *  a deed priced in any catalog item yields a fee in that same item. */
+function treasuryCredit(item, qty) {
+  if (typeof item !== 'string' || !item || !(qty > 0)) return;
+  qTreasuryAdd.run(item, qty | 0, Date.now());
+}
+/** Public treasury totals for /api/stats — amounts only, no player data. */
+function treasuryTotals() {
+  const out = {};
+  for (const r of qTreasuryAll.all()) out[r.item] = r.qty | 0;
+  return out;
+}
+/** Remove one tile from every deed containing it (called on tile release). A deed
+ *  reduced to zero tiles dissolves; a dissolved listing just delists (nothing was
+ *  ever escrowed away — the deed is a view, so there is nothing to return). */
+function deedsDropTile(map, x, y) {
+  const k = map + ':' + x + ':' + y;
+  for (const [id, d] of [...parcels]) {
+    if (d.map !== map) continue;
+    const kept = d.tiles.filter(t => (t.x + ':' + t.y) !== (x + ':' + y));
+    if (kept.length === d.tiles.length) continue;
+    if (!kept.length) {
+      parcels.delete(id);
+      qParcelDel.run(id);
+      if (parcelListings.has(id)) { parcelListings.delete(id); qParcelListDel.run(id); }
+    } else {
+      d.tiles = kept;
+      qParcelIns.run(id, d.owner, d.map, d.name, JSON.stringify(kept), d.createdAt);
+    }
+  }
+}
 
 /** Credit `qty` of `item` to player `key`, whether they are online right now or not.
  *  Online: straight into their live inventory (same shape `gain()` uses elsewhere).
@@ -819,6 +905,7 @@ function cleanText(v, max) {
 const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup',
   'build-structure', 'collect-structure', 'set-look',
   'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote',
+  'parcel-mint', 'parcel-list', 'parcel-buy', 'parcel-cancel', 'parcel-browse', 'parcel-mine',
   'wallet-link']);
 
 function onMessage(c, msg) {
@@ -1423,6 +1510,160 @@ function onMessage(c, msg) {
       if (offer.giveQty > 0) gain(c, offer.giveItem, offer.giveQty);
       stateSave(c);
       c.send({ t: 'trade-cancelled', id, returned: { [offer.giveItem]: offer.giveQty }, inv: c.inv });
+      break;
+    }
+
+    // ---- parcel deeds: user-priced land market, settled by the system ----
+    // A deed is a named view over the minter's own contiguous claimed tiles. Minting
+    // moves nothing (no escrow — the owner keeps everything until an atomic sale).
+    case 'parcel-mint': {
+      if (!c.ready || c.dead) return;
+      const raw = Array.isArray(msg.tiles) ? msg.tiles : null;
+      if (!raw || raw.length > Parcels.MAX_DEED_TILES) return c.send({ t: 'parcel-minted', err: 'bad tiles' });
+      const clean = [];
+      for (const t of raw) {
+        const x = inBounds(t && t.x, W), y = inBounds(t && t.y, H);
+        if (x === null || y === null) return c.send({ t: 'parcel-minted', err: 'bounds' });
+        clean.push({ x, y });
+      }
+      const v = Parcels.validateDeed(clean, msg.name);
+      if (!v.ok) return c.send({ t: 'parcel-minted', err: v.error });
+      // every tile must be claimed land owned by the minter, on the map they stand on
+      for (const t of v.tiles) {
+        const tile = tiles.get(c.map + ':' + (t.y * W + t.x));
+        if (!tile || tile.owner !== c.key) return c.send({ t: 'parcel-minted', err: 'not all tiles are your land' });
+      }
+      // no tile may already sit inside another deed — otherwise one sale corrupts two deeds
+      const taken = deedTileSet();
+      for (const t of v.tiles) {
+        if (taken.has(c.map + ':' + t.x + ':' + t.y)) return c.send({ t: 'parcel-minted', err: 'tile already in a deed' });
+      }
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      const deed = { id, owner: c.key, map: c.map, name: v.name, tiles: v.tiles, createdAt: now };
+      parcels.set(id, deed);
+      qParcelIns.run(id, c.key, c.map, v.name, JSON.stringify(v.tiles), now);
+      c.send({ t: 'parcel-minted', id, deed: { id, map: c.map, name: v.name, tiles: v.tiles, bbox: Parcels.bbox(v.tiles) } });
+      break;
+    }
+
+    case 'parcel-list': {
+      if (!c.ready || c.dead) return;
+      const id = cleanText(msg.id, 64);
+      const deed = parcels.get(id);
+      if (!deed) return c.send({ t: 'parcel-listed', id, err: 'no such deed' });
+      if (deed.owner !== c.key) return c.send({ t: 'parcel-listed', id, err: 'not your deed' });
+      const priceItem = cleanText(msg.priceItem, 32);
+      const priceQty = clampInt(msg.priceQty, 1, Parcels.MAX_QTY, -1);
+      const v = Parcels.validListing(priceItem, priceQty);
+      if (!v.ok) return c.send({ t: 'parcel-listed', id, err: v.error });
+      const knownItem = (k) => ECO.RESOURCES.indexOf(k) !== -1 || !!ECO.itemOf(k) || k === 'gold';
+      if (!knownItem(priceItem)) return c.send({ t: 'parcel-listed', id, err: 'unknown price item' });
+      const now = Date.now();
+      const listing = { id, seller: c.key, map: deed.map, priceItem, priceQty, createdAt: now };
+      parcelListings.set(id, listing);
+      qParcelListIns.run(id, c.key, deed.map, priceItem, priceQty, now);
+      c.send({ t: 'parcel-listed', id, listing });
+      break;
+          }
+
+          case 'parcel-buy': {
+      if (!c.ready || c.dead) return;
+      const id = cleanText(msg.id, 64);
+      const listing = parcelListings.get(id);
+      if (!listing) return c.send({ t: 'parcel-bought', id, err: 'no such listing' });
+      if (listing.map !== c.map) return c.send({ t: 'parcel-bought', id, err: 'wrong map' });
+      if (listing.seller === c.key) return c.send({ t: 'parcel-bought', id, err: 'cannot buy your own listing' });
+      // must be within REACH of the parcel's bounding box center (or any tile in it)
+      const deed = parcels.get(id);
+      if (!deed) return c.send({ t: 'parcel-bought', id, err: 'deed missing' });
+      // check reach to bbox center
+      const bb = Parcels.bbox(deed.tiles);
+      if (!bb) return c.send({ t: 'parcel-bought', id, err: 'bad deed' });
+      const cx = bb.x0 + (bb.w - 1) / 2, cy = bb.y0 + (bb.h - 1) / 2;
+      const bdx = cx - c.x, bdy = cy - c.y;
+      if (bdx * bdx + bdy * bdy > REACH * REACH) return c.send({ t: 'parcel-bought', id, err: 'out of reach' });
+      const res = Parcels.swapDeed(c.inv, listing.priceItem, listing.priceQty, PARCEL_FEE_BPS);
+      if (!res.ok) return c.send({ t: 'parcel-bought', id, err: res.error });
+      // atomic: buyer pays, deed + all tiles flip, seller gets price-fee, treasury gets fee
+      c.inv = res.buyerInv;
+      // flip ownership of all tiles in the deed
+      for (const t of deed.tiles) {
+        const key = deed.map + ':' + (t.y * W + t.x);
+        const tile = tiles.get(key);
+        if (tile) {
+          tile.owner = c.key;
+          tiles.set(key, tile);
+          qTile.run(deed.map, t.x, t.y, tile.m, c.key, Date.now());
+        }
+      }
+      // transfer deed ownership
+      deed.owner = c.key;
+      qParcelIns.run(deed.id, c.key, deed.map, deed.name, JSON.stringify(deed.tiles), deed.createdAt);
+      // delist
+      parcelListings.delete(id);
+      qParcelListDel.run(id);
+      // credit seller (price - fee) and treasury (fee)
+      creditPlayer(listing.seller, listing.priceItem, res.sellerGets);
+      treasuryCredit(listing.priceItem, res.treasuryGets);
+      stateSave(c);
+      c.send({ t: 'parcel-bought', id, priceItem: listing.priceItem, priceQty: listing.priceQty, fee: res.treasuryGets, deed: { id: deed.id, name: deed.name, map: deed.map, bbox: Parcels.bbox(deed.tiles) }, inv: c.inv });
+      notifyPlayer(listing.seller, { t: 'parcel-sold', id, buyer: c.key, priceItem: listing.priceItem, priceQty: listing.priceQty, fee: res.treasuryGets });
+      break;
+    }
+
+    case 'parcel-cancel': {
+      if (!c.ready) return;
+      const id = cleanText(msg.id, 64);
+      const listing = parcelListings.get(id);
+      if (!listing) return c.send({ t: 'parcel-cancelled', id, err: 'no such listing' });
+      if (listing.seller !== c.key) return c.send({ t: 'parcel-cancelled', id, err: 'not your listing' });
+      parcelListings.delete(id);
+      qParcelListDel.run(id);
+      c.send({ t: 'parcel-cancelled', id });
+      break;
+    }
+
+    case 'parcel-browse': {
+      if (!c.ready) return;
+      const map = clampInt(msg.map, 0, T.MAPS.length - 1, c.map);
+      const out = [];
+      for (const listing of parcelListings.values()) {
+        if (listing.map !== map) continue;
+        const deed = parcels.get(listing.id);
+        if (!deed) continue;
+        out.push({
+          id: listing.id,
+          name: deed.name,
+          map: listing.map,
+          priceItem: listing.priceItem,
+          priceQty: listing.priceQty,
+          tiles: deed.tiles.length,
+          bbox: Parcels.bbox(deed.tiles),
+          seller: listing.seller
+        });
+      }
+      c.send({ t: 'parcel-browse', map, list: out });
+      break;
+    }
+
+    case 'parcel-mine': {
+      if (!c.ready) return;
+      const out = [];
+      for (const d of parcels.values()) {
+        if (d.owner !== c.key) continue;
+        const listing = parcelListings.get(d.id);
+        out.push({
+          id: d.id,
+          name: d.name,
+          map: d.map,
+          tiles: d.tiles.length,
+          bbox: Parcels.bbox(d.tiles),
+          listed: !!listing,
+          listing: listing ? { priceItem: listing.priceItem, priceQty: listing.priceQty, createdAt: listing.createdAt } : null
+        });
+      }
+      c.send({ t: 'parcel-mine', list: out });
       break;
     }
 
