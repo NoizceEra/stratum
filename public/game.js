@@ -592,7 +592,8 @@
     personalClaims: 0,
     craftOpens: 0,
     crafts: 0,
-    mapsSeen: {}
+    mapsSeen: {},
+    achUnlocked: 0, achTitle: null
   };
   if (S.canBuild && S.harvests < 1) S.harvests = 1; // returning builders already passed harvest
   localStorage.setItem('stratum_key', S.key);
@@ -947,6 +948,18 @@
         refreshQuest(true);
         break;
       }
+      case 'achievements':
+        S.achUnlocked = (m.unlocked && m.unlocked.length) || 0;
+        S.achTitle = m.title || null;
+        updateAchHud();
+        break;
+      case 'achievement':
+        S.achUnlocked += 1;
+        if (m.title) S.achTitle = m.title;
+        updateAchHud();
+        toast('ACHIEVEMENT: ' + m.name, true);
+        sfx('levelup');
+        break;
       case 'stats':
         S.claimed = m.claimed; S.total = m.total; S.online = m.online; S.volatile = m.volatile;
         break;
@@ -1322,6 +1335,12 @@
       if (onboardActions >= ONBOARD_ACTIONS) window.StratumHud.completeOnboarding();
     }
   };
+
+  var achEl = document.getElementById('h-ach');
+  function updateAchHud() {
+    if (!achEl) return;
+    achEl.textContent = S.achUnlocked + ' / 14 earned' + (S.achTitle ? ' · "' + S.achTitle + '"' : '');
+  }
 
   function noteMapVisit(mapId) {
     var id = mapId | 0;
@@ -2271,6 +2290,7 @@
         'beasts ' + S.volatile.monstersLive + ' · regrowing ' + S.volatile.nodesDepleted +
         ' · ' + tooln + ' tools';
     }
+    updateAchHud();
     refreshQuest(false);
     if (tlPanel) tlPanel.classList.toggle('hurt', S.hurt > 0.25);
     // target frame

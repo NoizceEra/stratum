@@ -19,6 +19,7 @@ const { DatabaseSync } = require('node:sqlite');
 const T = require('./public/terrain.js');
 const { World, ATTACK_RANGE } = require('./world.js');
 const ECO = require('./src/economy.js');
+const ACH = require('./src/achievements.js');
 
 const PORT = Number(process.env.PORT || 8090);
 const PUB = path.join(__dirname, 'public');
@@ -63,6 +64,9 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS player_state(
     k TEXT PRIMARY KEY, map INTEGER NOT NULL, x REAL NOT NULL, y REAL NOT NULL,
     hp INTEGER NOT NULL, kills INTEGER NOT NULL, inv TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS player_achievements(
+    k TEXT PRIMARY KEY, ids TEXT NOT NULL, maps TEXT NOT NULL,
+    crafts INTEGER NOT NULL DEFAULT 0, title TEXT);
 `);
 
 // migrate a pre-maps tiles table (tiles used to be keyed by x,y only)
@@ -131,6 +135,11 @@ const qPlayCount = db.prepare('SELECT COUNT(*) n FROM players');
 const qPlayLast = db.prepare('UPDATE players SET last=? WHERE k=?');
 const qState = db.prepare('INSERT OR REPLACE INTO player_state(k,map,x,y,hp,kills,inv,tool) VALUES(?,?,?,?,?,?,?,?)');
 const qStateGet = db.prepare('SELECT * FROM player_state WHERE k=?');
+const qAch = db.prepare('INSERT OR REPLACE INTO player_achievements(k,ids,maps,crafts,title) VALUES(?,?,?,?,?)');
+const qAchGet = db.prepare('SELECT * FROM player_achievements WHERE k=?');
+// achievements are keyed by player + map, so "claimed" only counts what THIS player owns
+// on the map they are currently standing on — the tiles_owner index makes this cheap.
+const qClaimCount = db.prepare('SELECT COUNT(*) n FROM tiles WHERE map=? AND owner=?');
 
 const world = new World(db);
 
@@ -288,6 +297,7 @@ server.on('upgrade', (req, socket) => {
     id: nextId++, sock: socket, ip, key: null, name: null, hue: 0, map: 0,
     x: 0, y: 0, hp: PLAYER_HP, maxHp: PLAYER_HP, kills: 0, atk: BASE_ATK,
     inv: { wood: 0, ore: 0, herb: 0, crystal: 0 }, tool: 0, atkBoost: 0,
+    achIds: new Set(), achMaps: new Set(), achCrafts: 0, achTitle: null,
     energy: ENERGY_MAX, subs: new Set(), sent: new Set(),
     ready: false, lastMove: Date.now(), dead: false,
     gone: false, bad: 0, lastRx: Date.now(), tokenAt: Date.now(), tokens: MSG_BURST, dropped: 0,
@@ -431,6 +441,39 @@ function gearBonus(inv, kind) {
 function stateSave(c) {
   qState.run(c.key, c.map, Math.round(c.x), Math.round(c.y), Math.round(c.hp), c.kills, JSON.stringify(c.inv), c.tool | 0);
 }
+
+// ---------- achievements ----------------------------------------------------
+function achSave(c) {
+  qAch.run(c.key, JSON.stringify([...c.achIds]), JSON.stringify([...c.achMaps]), c.achCrafts | 0, c.achTitle || null);
+}
+/** Current per-player stats snapshot achievements.js's predicates run against. */
+function achStats(c) {
+  return {
+    kills: c.kills | 0,
+    level: world.hunter(c).level,
+    claimed: qClaimCount.get(c.map, c.key).n,
+    crafts: c.achCrafts | 0,
+    tools: c.tool | 0,
+    maps: c.achMaps.size
+  };
+}
+/** Re-evaluate achievements against current stats and unlock anything newly earned:
+ *  persist it, tell the client, and surface the newest title as "current". */
+function checkAchievements(c) {
+  if (!c.ready || !c.key) return;
+  const stats = achStats(c);
+  const gained = ACH.evaluate([...c.achIds], stats);
+  if (!gained.length) return;
+  for (const id of gained) {
+    c.achIds.add(id);
+    const a = ACH.achievementById(id);
+    if (!a) continue;
+    const title = ACH.titleFor(id);
+    if (title) c.achTitle = title;                 // a player can hold many; the newest shows
+    c.send({ t: 'achievement', id: a.id, name: a.name, desc: a.desc, title: title || null });
+  }
+  achSave(c);
+}
 function sendVitals(c, extra) {
   const o = { t: 'vitals', hp: Math.round(c.hp), maxHp: c.maxHp, inv: c.inv, kills: c.kills, atk: c.atk, tool: c.tool | 0, level: world.hunter(c).level };
   if (extra) Object.assign(o, extra);
@@ -508,6 +551,17 @@ function onMessage(c, msg) {
       c.atkBoost = gearBonus(c.inv, 'weapon');
       c.energy = ENERGY_MAX;
 
+      const ast = qAchGet.get(key);
+      if (ast) {
+        try { c.achIds = new Set(JSON.parse(ast.ids)); } catch (e) { c.achIds = new Set(); }
+        try { c.achMaps = new Set(JSON.parse(ast.maps)); } catch (e) { c.achMaps = new Set(); }
+        c.achCrafts = ast.crafts | 0;
+        c.achTitle = ast.title || null;
+      } else {
+        c.achIds = new Set(); c.achMaps = new Set(); c.achCrafts = 0; c.achTitle = null;
+      }
+      c.achMaps.add(c.map);                          // arriving anywhere counts as visiting it
+
       c.send({
         t: 'welcome', id: c.id, key, name, hue, map: c.map, x: c.x, y: c.y,
         hp: Math.round(c.hp), maxHp: c.maxHp, atk: c.atk, inv: c.inv, kills: c.kills,
@@ -525,8 +579,12 @@ function onMessage(c, msg) {
         energy: c.energy, energyMax: ENERGY_MAX, reach: REACH, attackRange: ATTACK_RANGE,
         claimed: countClaims(c.map), total: W * H, online: live(), mapGrid: MAPGRID
       });
+      // returning players get their unlocked state without a round-trip; a fresh
+      // arrival's stats (e.g. having now "visited" their spawn map) are checked right after.
+      c.send({ t: 'achievements', unlocked: [...c.achIds], title: c.achTitle });
       setView(c, c.x, c.y);
       world.activate(c.map, c.x, c.y);
+      checkAchievements(c);
       console.log(`[net] ${name} joined map ${c.map} at ${Math.round(c.x)},${Math.round(c.y)} (${live()} online)`);
       break;
     }
@@ -571,7 +629,9 @@ function onMessage(c, msg) {
       });
       setView(c, c.x, c.y);
       world.activate(id, c.x, c.y);
+      c.achMaps.add(id);
       stateSave(c);
+      checkAchievements(c);
       console.log(`[net] ${c.name} travelled to #${id} ${def.name}`);
       break;
     }
@@ -632,6 +692,7 @@ function onMessage(c, msg) {
         if (pcost) { const paid = ECO.applyCost(c.inv, pcost); if (paid) c.inv = paid; }
         stateSave(c);
         c.send({ t: 'you', x, y, m, claimed: countClaims(c.map), energy: c.energy, inv: c.inv });
+        if (!cur) checkAchievements(c);        // only a NEW claim can move the claimed-count needle
       }
       break;
     }
@@ -672,6 +733,7 @@ function onMessage(c, msg) {
         gain(c, r.loot, 1);
         stateSave(c);
         c.send({ t: 'combat', id: r.id, killed: true, name: r.name, loot: r.loot, kills: c.kills, atk: c.atk, inv: c.inv, level: world.hunter(c).level });
+        checkAchievements(c);                  // kills track AND level (XP is only awarded here)
       } else {
         c.send({ t: 'combat', id: r.id, killed: false, name: r.name, hp: r.hp, maxHp: r.maxHp });
       }
@@ -688,9 +750,11 @@ function onMessage(c, msg) {
       if (!res.ok) return c.send({ t: 'crafted', err: res.error, id });
       c.inv = res.inv;
       c.atkBoost = gearBonus(c.inv, 'weapon');
+      c.achCrafts = (c.achCrafts | 0) + 1;
       stateSave(c);
       sendVitals(c);
       c.send({ t: 'crafted', id, item: res.item, count: res.count, inv: c.inv, atkBoost: c.atkBoost });
+      checkAchievements(c);
       break;
     }
 
@@ -710,6 +774,7 @@ function onMessage(c, msg) {
       stateSave(c);
       sendVitals(c);
       c.send({ t: 'tooled', tool: next, name: tier.name, inv: c.inv });
+      checkAchievements(c);
       break;
     }
 
@@ -821,7 +886,7 @@ every(5000, 'stats tick', () => {
 
 every(20000, 'state flush', () => {
   const now = Date.now();
-  for (const c of clients.values()) if (c.ready && c.key) { qPlayLast.run(now, c.key); stateSave(c); }
+  for (const c of clients.values()) if (c.ready && c.key) { qPlayLast.run(now, c.key); stateSave(c); achSave(c); }
 });
 
 // Idle sweep: sockets that have gone quiet are closed. This is what defeats slowloris —
@@ -870,7 +935,7 @@ function shutdown(sig) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n[world] ${sig} — sealing world…`);
-  try { for (const c of clients.values()) if (c.ready && c.key) stateSave(c); }
+  try { for (const c of clients.values()) if (c.ready && c.key) { stateSave(c); achSave(c); } }
   catch (e) { console.log('[err] shutdown state flush:', e && e.message); }
   try {
     for (const c of clients.values()) {
