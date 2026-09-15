@@ -21,6 +21,8 @@ const { World, ATTACK_RANGE } = require('./world.js');
 const ECO = require('./src/economy.js');
 const Drops = require('./src/drops.js');
 const ACH = require('./src/achievements.js');
+const Shops = require('./src/shops.js');
+const Trade = require('./src/trade.js');
 
 const PORT = Number(process.env.PORT || 8090);
 const PUB = path.join(__dirname, 'public');
@@ -54,6 +56,14 @@ const HS_IDLE_MS = envNum('STRATUM_HS_IDLE_MS', 15000);          // silence allo
 const IDLE_MS = envNum('STRATUM_IDLE_MS', 90000);                // silence allowed after hello
 const WS_PING_MS = envNum('STRATUM_WS_PING_MS', 20000);          // keepalive ping cadence
 const KEY_RE = /^[\x21-\x7e]{1,64}$/;                            // printable ASCII player keys only
+// Trade offers use the same "scale the clock down for tests" trick world.js's respawn
+// timers already use (STRATUM_RESPAWN_SCALE) — a separate knob because a trade TTL
+// (days) and a node respawn (seconds) are wildly different magnitudes and a test should
+// be able to shrink one without touching the other.
+const TRADE_TTL_SCALE = envNum('STRATUM_TRADE_TTL_SCALE', 1);
+const TRADE_TTL_MS = Math.max(1, Math.round(Trade.DEFAULT_TTL_MS * TRADE_TTL_SCALE));
+// The fixed emote allowlist. No freeform text ever — see ROADMAP.md's no-chat non-goal.
+const EMOTES = ['wave', 'thanks', 'nice-place', 'gg'];
 
 // ---------- persistence ----------------------------------------------------
 const db = new DatabaseSync(DBFILE);
@@ -69,6 +79,17 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS player_achievements(
     k TEXT PRIMARY KEY, ids TEXT NOT NULL, maps TEXT NOT NULL,
     crafts INTEGER NOT NULL DEFAULT 0, title TEXT);
+  CREATE TABLE IF NOT EXISTS shop_listings(
+    id TEXT PRIMARY KEY, seller TEXT NOT NULL, map INTEGER NOT NULL, x INTEGER NOT NULL,
+    y INTEGER NOT NULL, item TEXT NOT NULL, qty INTEGER NOT NULL, priceItem TEXT NOT NULL,
+    priceQty INTEGER NOT NULL, createdAt INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS shop_listings_seller ON shop_listings(seller);
+  CREATE TABLE IF NOT EXISTS trade_offers(
+    id TEXT PRIMARY KEY, fromKey TEXT NOT NULL, toKey TEXT NOT NULL,
+    giveItem TEXT NOT NULL, giveQty INTEGER NOT NULL,
+    wantItem TEXT, wantQty INTEGER NOT NULL DEFAULT 0,
+    createdAt INTEGER NOT NULL, ttlMs INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS trade_offers_to ON trade_offers(toKey);
 `);
 
 // migrate a pre-maps tiles table (tiles used to be keyed by x,y only)
@@ -154,6 +175,55 @@ const qAchGet = db.prepare('SELECT * FROM player_achievements WHERE k=?');
 // achievements are keyed by player + map, so "claimed" only counts what THIS player owns
 // on the map they are currently standing on — the tiles_owner index makes this cheap.
 const qClaimCount = db.prepare('SELECT COUNT(*) n FROM tiles WHERE map=? AND owner=?');
+
+// ---------- shops + trade persistence ---------------------------------------
+const qShopIns = db.prepare('INSERT OR REPLACE INTO shop_listings(id,seller,map,x,y,item,qty,priceItem,priceQty,createdAt) VALUES(?,?,?,?,?,?,?,?,?,?)');
+const qShopDel = db.prepare('DELETE FROM shop_listings WHERE id=?');
+const qShopAll = db.prepare('SELECT * FROM shop_listings');
+const qTradeIns = db.prepare('INSERT OR REPLACE INTO trade_offers(id,fromKey,toKey,giveItem,giveQty,wantItem,wantQty,createdAt,ttlMs) VALUES(?,?,?,?,?,?,?,?,?)');
+const qTradeDel = db.prepare('DELETE FROM trade_offers WHERE id=?');
+const qTradeAll = db.prepare('SELECT * FROM trade_offers');
+
+/** authoritative in-memory shop listings and trade offers, mirroring the `tiles` pattern:
+ *  the DB is the durable copy, this Map is what every handler reads and writes against. */
+const shopListings = new Map();   // id -> {id, seller, map, x, y, item, qty, priceItem, priceQty, createdAt}
+const tradeOffers = new Map();    // id -> {id, from, to, giveItem, giveQty, wantItem, wantQty, createdAt, ttlMs}
+(function loadShopsAndTrades() {
+  for (const r of qShopAll.all()) {
+    shopListings.set(r.id, { id: r.id, seller: r.seller, map: r.map, x: r.x, y: r.y, item: r.item, qty: r.qty, priceItem: r.priceItem, priceQty: r.priceQty, createdAt: r.createdAt });
+  }
+  for (const r of qTradeAll.all()) {
+    tradeOffers.set(r.id, { id: r.id, from: r.fromKey, to: r.toKey, giveItem: r.giveItem, giveQty: r.giveQty, wantItem: r.wantItem || null, wantQty: r.wantQty | 0, createdAt: r.createdAt, ttlMs: r.ttlMs });
+  }
+  console.log(`[world] ${shopListings.size} shop listing(s) and ${tradeOffers.size} trade offer(s) restored`);
+})();
+
+/** Credit `qty` of `item` to player `key`, whether they are online right now or not.
+ *  Online: straight into their live inventory (same shape `gain()` uses elsewhere).
+ *  Offline: read-modify-write their persisted row through the same qState/stateSave
+ *  machinery the rest of the server uses to checkpoint a connected player — this is the
+ *  "seller/offerer may be offline" case both shops and trade require. A missing state row
+ *  should not happen (only a player who has connected before can own a listing or send a
+ *  trade offer to begin with) but is handled defensively rather than assumed away. */
+function creditPlayer(key, item, qty) {
+  for (const c of clients.values()) {
+    if (c.ready && c.key === key) { gain(c, item, qty); stateSave(c); return; }
+  }
+  const st = qStateGet.get(key);
+  if (!st) return;
+  let inv;
+  try { inv = JSON.parse(st.inv); } catch (e) { inv = {}; }
+  if (!inv || typeof inv !== 'object') inv = {};
+  inv[item] = (inv[item] || 0) + qty;
+  qState.run(key, st.map, st.x, st.y, st.hp, st.kills, JSON.stringify(inv), st.tool);
+}
+
+/** Tell `key` something happened to their shop/trade, but only if they are online right
+ *  now — an offline player already got their goods via creditPlayer() above and will see
+ *  the result of that the next time they play; there is nothing to push to a closed socket. */
+function notifyPlayer(key, obj) {
+  for (const c of clients.values()) if (c.ready && c.key === key) { c.send(obj); return; }
+}
 
 const world = new World(db);
 
@@ -567,7 +637,8 @@ function cleanText(v, max) {
 // The complete set of things a client may say. Anything else is ignored on sight: the
 // server never dispatches a type it does not know, so a new type cannot reach any code
 // path by accident.
-const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup']);
+const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup',
+  'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -853,6 +924,186 @@ function onMessage(c, msg) {
       break;
     }
 
+    // ---- shops: sell from your own claimed land, DB-escrowed, no direct scam surface ----
+    case 'shop-list': {
+      if (!c.ready || c.dead) return;
+      const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
+      if (x === null || y === null) return c.send({ t: 'shop-listed', err: 'bounds' });
+      const rdx = x - c.x, rdy = y - c.y;
+      if (rdx * rdx + rdy * rdy > REACH * REACH) return c.send({ t: 'shop-listed', err: 'out of reach' });
+      const tile = tiles.get(c.map + ':' + (y * W + x));
+      if (!tile || tile.owner !== c.key) return c.send({ t: 'shop-listed', err: 'not your land' });
+
+      const item = cleanText(msg.item, 32);
+      const priceItem = cleanText(msg.priceItem, 32);
+      const qty = clampInt(msg.qty, 1, Shops.MAX_QTY, -1);
+      const priceQty = clampInt(msg.priceQty, 1, Shops.MAX_QTY, -1);
+      const v = Shops.validListing(item, qty, priceItem, priceQty);
+      if (!v.ok) return c.send({ t: 'shop-listed', err: v.error });
+      // Only real catalog entries may be listed or priced — a made-up key would let a
+      // player "sell" an item that doesn't exist and be paid in one that doesn't either.
+      const knownItem = (k) => ECO.RESOURCES.indexOf(k) !== -1 || !!ECO.itemOf(k);
+      if (!knownItem(item)) return c.send({ t: 'shop-listed', err: 'unknown item' });
+      if (!knownItem(priceItem)) return c.send({ t: 'shop-listed', err: 'unknown price item' });
+
+      const escrowed = Shops.escrow(c.inv, item, qty);
+      if (!escrowed) return c.send({ t: 'shop-listed', err: 'not enough ' + item });
+      c.inv = escrowed;                        // the goods leave live inventory THE MOMENT the listing exists
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      const listing = { id, seller: c.key, map: c.map, x, y, item, qty, priceItem, priceQty, createdAt: now };
+      shopListings.set(id, listing);
+      qShopIns.run(id, c.key, c.map, x, y, item, qty, priceItem, priceQty, now);
+      stateSave(c);
+      c.send({ t: 'shop-listed', id, listing, inv: c.inv });
+      break;
+    }
+
+    case 'shop-buy': {
+      if (!c.ready || c.dead) return;
+      const id = cleanText(msg.id, 64);
+      const listing = shopListings.get(id);
+      if (!listing) return c.send({ t: 'shop-bought', id, err: 'no such listing' });
+      if (listing.map !== c.map) return c.send({ t: 'shop-bought', id, err: 'wrong map' });
+      const bdx = listing.x - c.x, bdy = listing.y - c.y;
+      if (bdx * bdx + bdy * bdy > REACH * REACH) return c.send({ t: 'shop-bought', id, err: 'out of reach' });
+      if (listing.seller === c.key) return c.send({ t: 'shop-bought', id, err: 'cannot buy your own listing' });
+      const buyQty = clampInt(msg.qty, 1, Shops.MAX_QTY, 1);
+      const res = Shops.buy(listing, c.inv, buyQty);
+      if (!res.ok) return c.send({ t: 'shop-bought', id, err: res.error });
+
+      // one atomic step: buyer's payment leaves, the seller's already-escrowed goods
+      // arrive, the seller's payment is credited (online or not) — never partially.
+      c.inv = res.buyerInv;
+      listing.qty = res.remainingQty;
+      if (listing.qty <= 0) {
+        shopListings.delete(id);
+        qShopDel.run(id);
+      } else {
+        qShopIns.run(id, listing.seller, listing.map, listing.x, listing.y, listing.item, listing.qty, listing.priceItem, listing.priceQty, listing.createdAt);
+      }
+      creditPlayer(listing.seller, listing.priceItem, res.cost);
+      stateSave(c);
+      c.send({ t: 'shop-bought', id, bought: buyQty, item: listing.item, cost: res.cost, priceItem: listing.priceItem, remainingQty: listing.qty, inv: c.inv });
+      notifyPlayer(listing.seller, { t: 'shop-sold', id, buyer: c.key, item: listing.item, qty: buyQty, cost: res.cost, priceItem: listing.priceItem });
+      break;
+    }
+
+    case 'shop-cancel': {
+      if (!c.ready) return;
+      const id = cleanText(msg.id, 64);
+      const listing = shopListings.get(id);
+      if (!listing) return c.send({ t: 'shop-cancelled', id, err: 'no such listing' });
+      if (listing.seller !== c.key) return c.send({ t: 'shop-cancelled', id, err: 'not your listing' });
+      shopListings.delete(id);
+      qShopDel.run(id);
+      // whatever was still in escrow — sold or not — returns to the seller. A seller
+      // cancelling can only ever be the one connected right now (sending this message
+      // requires a live socket), so this credits them directly rather than via creditPlayer.
+      if (listing.qty > 0) gain(c, listing.item, listing.qty);
+      stateSave(c);
+      c.send({ t: 'shop-cancelled', id, returned: { [listing.item]: listing.qty }, inv: c.inv });
+      break;
+    }
+
+    // ---- direct player trade: addressed offers only, escrowed both ways ----
+    case 'trade-offer': {
+      if (!c.ready || c.dead) return;
+      const to = (typeof msg.to === 'string') ? msg.to.slice(0, 64) : '';
+      if (!to || !KEY_RE.test(to)) return c.send({ t: 'trade-offered', err: 'bad recipient' });
+      if (to === c.key) return c.send({ t: 'trade-offered', err: 'cannot trade with yourself' });
+      // Never trust the client's bare claim of who this is for: the key must belong to a
+      // player who has actually connected before — the same qPlayGet lookup 'hello'
+      // itself relies on as the one source of truth for "this key is a real player".
+      if (!qPlayGet.get(to)) return c.send({ t: 'trade-offered', err: 'unknown player' });
+
+      const giveItem = cleanText(msg.giveItem, 32);
+      const giveQty = clampInt(msg.giveQty, 1, 1000000, -1);
+      const wantItemRaw = cleanText(msg.wantItem, 32);
+      const wantQtyRaw = clampInt(msg.wantQty, 1, 1000000, -1);
+      const v = Trade.validOffer(giveItem, giveQty, wantItemRaw || null, wantItemRaw ? wantQtyRaw : 0);
+      if (!v.ok) return c.send({ t: 'trade-offered', err: v.error });
+
+      const knownItem2 = (k) => ECO.RESOURCES.indexOf(k) !== -1 || !!ECO.itemOf(k);
+      if (!knownItem2(giveItem)) return c.send({ t: 'trade-offered', err: 'unknown item' });
+      if (v.wantItem && !knownItem2(v.wantItem)) return c.send({ t: 'trade-offered', err: 'unknown want item' });
+
+      const escrowed = Trade.escrowGive(c.inv, giveItem, giveQty);
+      if (!escrowed) return c.send({ t: 'trade-offered', err: 'not enough ' + giveItem });
+      c.inv = escrowed;                        // A's give-side leaves live inventory THE MOMENT the offer exists
+
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      const offer = { id, from: c.key, to, giveItem, giveQty, wantItem: v.wantItem, wantQty: v.wantQty, createdAt: now, ttlMs: TRADE_TTL_MS };
+      tradeOffers.set(id, offer);
+      qTradeIns.run(id, c.key, to, giveItem, giveQty, v.wantItem, v.wantQty, now, TRADE_TTL_MS);
+      stateSave(c);
+      c.send({ t: 'trade-offered', id, offer, inv: c.inv });
+      notifyPlayer(to, { t: 'trade-incoming', id, offer });
+      break;
+    }
+
+    case 'trade-accept': {
+      if (!c.ready || c.dead) return;
+      const id = cleanText(msg.id, 64);
+      const offer = tradeOffers.get(id);
+      if (!offer) return c.send({ t: 'trade-accepted', id, err: 'no such offer' });
+      if (offer.to !== c.key) return c.send({ t: 'trade-accepted', id, err: 'not addressed to you' });
+      const now = Date.now();
+      if (Trade.expired(offer, now)) {
+        // lazily swept here too, not only on the slow tick: an acceptor should never hear
+        // "no such offer" when the real reason is "too late" — the escrow return is
+        // identical either way, so this reuses the exact expiry-return path below.
+        tradeOffers.delete(id);
+        qTradeDel.run(id);
+        if (offer.giveQty > 0) creditPlayer(offer.from, offer.giveItem, offer.giveQty);
+        return c.send({ t: 'trade-accepted', id, err: 'expired' });
+      }
+      const res = Trade.accept(offer, c.inv);
+      if (!res.ok) return c.send({ t: 'trade-accepted', id, err: res.error });
+
+      // one atomic step: whatever B owes leaves B, A's already-escrowed gift/give arrives
+      // in B, and A is credited (online or not) — never partially, per Trade.accept's contract.
+      c.inv = res.accepterInv;
+      tradeOffers.delete(id);
+      qTradeDel.run(id);
+      if (res.paid > 0) creditPlayer(offer.from, offer.wantItem, res.paid);
+      stateSave(c);
+      const paidOut = res.paid > 0 ? { [offer.wantItem]: res.paid } : null;
+      c.send({ t: 'trade-accepted', id, received: { [offer.giveItem]: offer.giveQty }, paid: paidOut, inv: c.inv });
+      notifyPlayer(offer.from, { t: 'trade-completed', id, by: c.key, paid: paidOut });
+      break;
+    }
+
+    case 'trade-cancel': {
+      if (!c.ready) return;
+      const id = cleanText(msg.id, 64);
+      const offer = tradeOffers.get(id);
+      if (!offer) return c.send({ t: 'trade-cancelled', id, err: 'no such offer' });
+      if (offer.from !== c.key) return c.send({ t: 'trade-cancelled', id, err: 'not your offer' });
+      tradeOffers.delete(id);
+      qTradeDel.run(id);
+      // only the offerer can cancel, and cancelling requires a live socket, so this
+      // credits the (necessarily online) caller directly rather than via creditPlayer.
+      if (offer.giveQty > 0) gain(c, offer.giveItem, offer.giveQty);
+      stateSave(c);
+      c.send({ t: 'trade-cancelled', id, returned: { [offer.giveItem]: offer.giveQty }, inv: c.inv });
+      break;
+    }
+
+    // ---- emote wheel: fixed allowlist, never freeform text (no-chat non-goal) ----
+    case 'emote': {
+      if (!c.ready || c.dead) return;
+      const id = cleanText(msg.id, 24);
+      if (EMOTES.indexOf(id) === -1) return c.send({ t: 'emote', err: 'unknown emote' });
+      for (const o of clients.values()) {
+        if (!o.ready || o.map !== c.map) continue;
+        if (Math.abs(o.x - c.x) > 80 || Math.abs(o.y - c.y) > 80) continue;
+        o.send({ t: 'emote', key: c.key, name: c.name, x: c.x, y: c.y, id });
+      }
+      break;
+    }
+
     case 'map': {
       if (!c.ready) return;
       // Never densFor() an id the world does not have: that would allocate a fresh grid
@@ -965,6 +1216,20 @@ every(100, 'presence tick', () => {
 every(5000, 'drop sweep', () => {
   const gone = world.sweepExpiredDrops(Date.now());
   for (const g of gone) broadcastDropGone(g.map, g.x, g.y);
+});
+
+// trade offer TTL sweep: an offer nobody accepted in time returns its escrow to the
+// offerer (online or not) — same lazy/periodic-sweep shape as the drop-sweep above,
+// applied to trade_offers instead of the drops table.
+every(5000, 'trade sweep', () => {
+  const now = Date.now();
+  for (const [id, offer] of [...tradeOffers]) {
+    if (!Trade.expired(offer, now)) continue;
+    tradeOffers.delete(id);
+    qTradeDel.run(id);
+    if (offer.giveQty > 0) creditPlayer(offer.from, offer.giveItem, offer.giveQty);
+    notifyPlayer(offer.from, { t: 'trade-expired', id, returned: { [offer.giveItem]: offer.giveQty } });
+  }
 });
 
 every(5000, 'stats tick', () => {
