@@ -30,6 +30,7 @@ const W = T.W, H = T.H, CHUNK = T.CHUNK;
 const REACH = 6;
 const COST = 1, RELEASE_COST = 0, ENERGY_MAX = 240, REGEN_MS = 80;
 const VIEW_RADIUS = 2;
+const LB_N = 20;    // /api/leaderboard: top-N per ranking. Never the whole world.
 const MAPGRID = 256, MAPSTEP = W / MAPGRID;
 const B64 = 'base64';
 const PLAYER_HP = 100, BASE_ATK = 7;
@@ -105,6 +106,17 @@ function densFor(map) {
 const claimCounts = new Map();           // mapId -> count
 function bumpClaim(map, d) { claimCounts.set(map, (claimCounts.get(map) || 0) + d); }
 function countClaims(map) { return claimCounts.get(map) || 0; }
+// Per-owner tile count, ACROSS ALL MAPS, kept in lockstep the same way claimCounts is —
+// this is what /api/leaderboard's land ranking reads. Account-wide rather than per-map:
+// the leaderboard's job is one comparative "who owns the most land" score, and a player
+// who spreads claims across three maps is not less of a land-holder than one who piles
+// them on a single map. A per-map breakdown is a trivial follow-up (key it "map:owner"
+// instead) if that's ever wanted, but isn't needed for a v1 read-only board.
+const ownerCounts = new Map();           // playerKey -> tile count
+function bumpOwner(owner, d) {
+  const n = (ownerCounts.get(owner) || 0) + d;
+  if (n <= 0) ownerCounts.delete(owner); else ownerCounts.set(owner, n);
+}
 (function loadTiles() {
   const rows = db.prepare('SELECT map, x, y, m, owner FROM tiles').all();
   for (const r of rows) {
@@ -114,6 +126,7 @@ function countClaims(map) { return claimCounts.get(map) || 0; }
     const i = (((r.y / MAPSTEP) | 0) * MAPGRID) + ((r.x / MAPSTEP) | 0);
     if (d[i] < 255) d[i]++;
     bumpClaim(r.map, 1);
+    bumpOwner(r.owner, 1);
   }
   const total = W * H;
   console.log(`[world] ${rows.length} owned tiles restored across ${claimCounts.size} map(s)`);
@@ -160,6 +173,35 @@ const server = http.createServer((req, res) => {
       volatile: world.stats(),
       spawn: T.spawnPoint(0)
     }, null, 2);
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(body);
+  }
+
+  if (p === '/api/leaderboard') {
+    // Land: sort the already-maintained per-owner counter — O(distinct owners), never a
+    // scan of `tiles` (1,048,576 tiles/map). `ownerCounts` includes owners who are not
+    // currently online, because it is seeded from the durable `tiles` table at boot and
+    // kept live by the same increments as `claimCounts`; a name lookup per top-N owner
+    // (qPlayGet) covers players who logged off between claiming and this request.
+    const land = [...ownerCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, LB_N)
+      .map(([owner, count]) => {
+        const row = qPlayGet.get(owner);
+        return { name: (row && row.name) || 'WANDERER', tag: T.keyTag(owner), count };
+      });
+
+    // Kills/level: world.hunters is the existing live progression table — reused as-is,
+    // same non-reversible key tag world.stats() already publishes. This is in-memory only
+    // (players who haven't connected since the last restart won't appear), matching the
+    // precedent /api/stats already sets for `volatile.hunters`.
+    const hunters = world.stats().hunters;
+    const kills = hunters.slice().sort((a, b) => b.kills - a.kills).slice(0, LB_N)
+      .map(h => ({ name: h.name || 'WANDERER', tag: h.k, kills: h.kills, level: h.level }));
+    const level = hunters.slice().sort((a, b) => (b.level - a.level) || (b.xp - a.xp)).slice(0, LB_N)
+      .map(h => ({ name: h.name || 'WANDERER', tag: h.k, level: h.level, xp: h.xp }));
+
+    const body = JSON.stringify({ land, kills, level }, null, 2);
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(body);
   }
@@ -616,6 +658,7 @@ function onMessage(c, msg) {
         const d = densFor(c.map), i = (((y / MAPSTEP) | 0) * MAPGRID) + ((x / MAPSTEP) | 0);
         if (d[i] > 0) d[i]--;
         bumpClaim(c.map, -1);
+        bumpOwner(c.key, -1);
         broadcastTile(c.map, cx, cy, x, y, -1, '');
         c.send({ t: 'unclaim', x, y, claimed: countClaims(c.map) });
       } else {
@@ -625,6 +668,7 @@ function onMessage(c, msg) {
           const d = densFor(c.map), i = (((y / MAPSTEP) | 0) * MAPGRID) + ((x / MAPSTEP) | 0);
           if (d[i] < 255) d[i]++;
           bumpClaim(c.map, 1);
+          bumpOwner(c.key, 1);
         }
         broadcastTile(c.map, cx, cy, x, y, m, c.key);
         c.energy -= COST;

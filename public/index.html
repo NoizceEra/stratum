@@ -101,6 +101,19 @@
   #craft .cost{color:var(--dim);font-size:10.5px;margin-top:3px}
   #craft .cant{color:#e08070}
   #craft .can{color:#9dc98a}
+  /* leaderboard overlay — same full-screen pattern as #nodes/#craft/#map */
+  #leaderboard{position:fixed;inset:0;z-index:15;background:rgba(5,6,9,.95);display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:10px}
+  #leaderboard.on{display:flex}
+  #lbwrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:center;width:min(760px,92vw);max-height:70vh;overflow-y:auto}
+  .lbcol{width:min(230px,86vw)}
+  .lbcol h2{font-size:11px;letter-spacing:.16em;color:var(--gold);font-weight:400;margin-bottom:6px}
+  .lbrow{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:11px}
+  .lbrow .lbn{color:var(--dim);min-width:1.4em}
+  .lbrow .lbv{color:var(--ink)}
+  .lbrow.me{color:var(--gold)}
+  .lbrow.me .lbv{color:var(--gold)}
+  .lbempty{color:var(--dim);font-size:11px;padding:4px 0}
   /* inventory chips — flex gap so resources are spaced without a leading indent */
   #h-inv{display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end}
   #h-inv .chip{margin-left:0}
@@ -156,7 +169,7 @@
   <span class="k">WASD</span> walk &nbsp;
   <span class="k">LMB</span> strike / harvest / build &nbsp;
   <span class="k">RMB</span> give back<br>
-  <span class="k">1-0</span> material &nbsp; <span class="k">M</span> map &nbsp; <span class="k">T</span> travel &nbsp; <span class="k">C</span> craft &nbsp; <span class="k">+/-</span> zoom
+  <span class="k">1-0</span> material &nbsp; <span class="k">M</span> map &nbsp; <span class="k">T</span> travel &nbsp; <span class="k">C</span> craft &nbsp; <span class="k">L</span> leaderboard &nbsp; <span class="k">+/-</span> zoom
 </div>
 
 <div id="hud-br" class="panel">
@@ -185,6 +198,16 @@
   <div class="disc" style="margin-top:4px">[C] CLOSE</div>
 </div>
 
+<div id="leaderboard">
+  <div class="disc">LEADERBOARD — TOP 20</div>
+  <div id="lbwrap">
+    <div class="lbcol"><h2>LAND</h2><div id="lb-land" class="lbempty">LOADING…</div></div>
+    <div class="lbcol"><h2>KILLS</h2><div id="lb-kills" class="lbempty">LOADING…</div></div>
+    <div class="lbcol"><h2>LEVEL</h2><div id="lb-level" class="lbempty">LOADING…</div></div>
+  </div>
+  <div class="disc" style="margin-top:4px">[L] CLOSE</div>
+</div>
+
 <div id="gate">
   <div class="box">
     <h1>STRATUM</h1>
@@ -208,6 +231,7 @@
     <button type="button" id="pb-map">MAP</button>
     <button type="button" id="pb-travel">TRAVEL</button>
     <button type="button" id="pb-craft">CRAFT</button>
+    <button type="button" id="pb-lb">TOP</button>
     <button type="button" id="pb-zin">+</button>
     <button type="button" id="pb-zout">−</button>
   </div>
