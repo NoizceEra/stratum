@@ -415,6 +415,7 @@ class World {
       m.hp = 0;
       m.state = 0;                                // DEAD: leaves the wire, arms the reset
       m.ripe = now + m.respawnMs * RS;
+      const kx = m.x, ky = m.y;                    // where it actually died, before the corpse goes home
       m.x = m.hx; m.y = m.hy;                      // the corpse goes home to reset
       m.mode = MODE.DEAD; m.phase = PHASE.IDLE;
       m.dashUntil = 0; m.charging = false; m.target = null;
@@ -428,7 +429,8 @@ class World {
         ok: true, killed: true, name: m.sp.kind, form: m.sp.form, tier: m.sp.tier,
         loot: loot.primary, lootAll: loot.grants, xp, ripe: m.ripe,
         level: h.level, levelUp: h.level > before,
-        dmg, crit: roll.crit, type, dmgType: m.sp.dmgType, id: m.id
+        dmg, crit: roll.crit, type, dmgType: m.sp.dmgType, id: m.id,
+        x: r1(kx), y: r1(ky)                        // kill location, for proximity-credit fan-out (light grouping)
       };
     }
     return {

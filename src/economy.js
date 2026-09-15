@@ -219,7 +219,18 @@
     hide_vest: { id: 'hide_vest', name: 'hide vest', kind: 'armour', tier: 0, damageBonus: 0, mitigation: 2, stack: 10 },
     copper_plate: { id: 'copper_plate', name: 'copper plate', kind: 'armour', tier: 1, damageBonus: 0, mitigation: 5, stack: 10 },
     iron_mail: { id: 'iron_mail', name: 'iron mail', kind: 'armour', tier: 2, damageBonus: 0, mitigation: 9, stack: 10 },
-    steel_aegis: { id: 'steel_aegis', name: 'steel aegis', kind: 'armour', tier: 3, damageBonus: 0, mitigation: 14, stack: 10 }
+    steel_aegis: { id: 'steel_aegis', name: 'steel aegis', kind: 'armour', tier: 3, damageBonus: 0, mitigation: 14, stack: 10 },
+
+    // ---- cozy decor (ROADMAP_COZY.md §3) -----------------------------------
+    // Furniture/decor for a claimed plot. Placing these on the world grid the way
+    // build materials go down (T.PALETTE) would mean new tile ids, client renderer
+    // work and a placement protocol of their own — real scope beyond this pass, so
+    // for now they are craftable-but-not-yet-placeable inventory keepsakes, same as
+    // any other crafted item, ready for a placement system to pick up later without
+    // any of THIS data needing to change shape.
+    garden_bench: { id: 'garden_bench', name: 'garden bench', kind: 'decor', tier: 0, damageBonus: 0, mitigation: 0, stack: 10 },
+    planter_box: { id: 'planter_box', name: 'planter box', kind: 'decor', tier: 0, damageBonus: 0, mitigation: 0, stack: 10 },
+    lantern_post: { id: 'lantern_post', name: 'lantern post', kind: 'decor', tier: 1, damageBonus: 0, mitigation: 0, stack: 10 }
   });
 
   /**
@@ -234,7 +245,12 @@
     { id: 'r_iron_axe', output: { item: 'iron_axe', count: 1 }, inputs: { wood: 4, ore: 5, herb: 2 }, tier: 2 },
     { id: 'r_iron_mail', output: { item: 'iron_mail', count: 1 }, inputs: { wood: 3, ore: 6 }, tier: 2 },
     { id: 'r_steel_blade', output: { item: 'steel_blade', count: 1 }, inputs: { wood: 4, ore: 7, crystal: 3 }, tier: 3 },
-    { id: 'r_steel_aegis', output: { item: 'steel_aegis', count: 1 }, inputs: { ore: 8, herb: 3, crystal: 4 }, tier: 3 }
+    { id: 'r_steel_aegis', output: { item: 'steel_aegis', count: 1 }, inputs: { ore: 8, herb: 3, crystal: 4 }, tier: 3 },
+
+    // ---- cozy decor (ROADMAP_COZY.md §3) -----------------------------------
+    { id: 'r_garden_bench', output: { item: 'garden_bench', count: 1 }, inputs: { wood: 3, herb: 1 }, tier: 0 },
+    { id: 'r_planter_box', output: { item: 'planter_box', count: 1 }, inputs: { wood: 2, herb: 2 }, tier: 0 },
+    { id: 'r_lantern_post', output: { item: 'lantern_post', count: 1 }, inputs: { wood: 2, ore: 2, crystal: 1 }, tier: 1 }
   ]);
 
   /** The recipe with this id, or null. */

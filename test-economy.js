@@ -218,10 +218,30 @@ t('recipes cover weapons (damage bonus) and armour (damage mitigation)', () => {
     kinds[it.kind] = (kinds[it.kind] || 0) + 1;
     if (it.kind === 'weapon') assert(it.damageBonus > 0, it.id + ' is a weapon with no damage bonus');
     else if (it.kind === 'armour') assert(it.mitigation > 0, it.id + ' is armour with no mitigation');
+    // 'decor' (ROADMAP_COZY §3): purely cosmetic craftables, so neither combat stat applies.
+    else if (it.kind === 'decor') assert(it.damageBonus === 0 && it.mitigation === 0, it.id + ' is decor but carries a combat stat');
     else throw new Error(it.id + ' has unknown kind ' + it.kind);
   }
   assert(kinds.weapon > 0, 'no weapon recipes');
   assert(kinds.armour > 0, 'no armour recipes');
+});
+
+t('cozy decor items are additive: craftable, additional-XP-free at the economy layer, no combat stats (ROADMAP_COZY §3)', () => {
+  const decorIds = Object.keys(Eco.ITEMS).filter(id => Eco.ITEMS[id].kind === 'decor');
+  assert(decorIds.length >= 3, 'expected at least 3 cozy decor items, got ' + decorIds.length);
+  for (const id of decorIds) {
+    const it = Eco.ITEMS[id];
+    assert(it.damageBonus === 0 && it.mitigation === 0, id + ' should be purely cosmetic');
+    const rec = Eco.RECIPES.find(r => r.output.item === id);
+    assert(rec, id + ' has no recipe');
+    const inv = yieldFullInv(1);
+    const res = Eco.craft(rec.id, inv);
+    assert(res.ok === true, 'decor recipe ' + rec.id + ' failed to craft from real yields: ' + res.error);
+    assert(res.item === id && res.count === rec.output.count, 'decor craft returned the wrong item/count for ' + rec.id);
+  }
+  // untouched: the original 8 weapon/armour recipes are still exactly as they were.
+  const combatRecipes = Eco.RECIPES.filter(r => Eco.ITEMS[r.output.item].kind !== 'decor');
+  assert(combatRecipes.length === 8, 'weapon/armour recipe count changed — this task must not touch existing balance');
 });
 
 t('no recipe needs a resource no node can yield, and each input is within a few harvests', () => {
