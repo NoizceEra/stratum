@@ -1061,7 +1061,10 @@
 
   /** One button, context-sensitive: strike a beast, else harvest, else build. */
   function contextAction(x, y) {
-    var mon = monAt(x, y);
+    // Sanctuary maps have no click-to-attack — proximity alone resolves ambient combat
+    // server-side, so a creature there is not a valid click target at all; a click over
+    // one falls through to whatever's under it (a node, a drop, or bare ground to build).
+    var mon = isSanctuary() ? null : monAt(x, y);
     if (mon) {
       var d = Math.hypot(mon.x - S.x, mon.y - S.y);
       if (d > S.attackRange + 1) return toast('TOO FAR TO STRIKE');
@@ -1099,6 +1102,9 @@
     }
     tryPlace(x, y, PALETTE[S.sel]);
   }
+
+  /** Is the map the player is currently on Sanctuary-toned (ambient combat, no click-to-attack)? */
+  function isSanctuary() { return T.toneOf(S.map) === 'sanctuary'; }
 
   function monAt(x, y) {
     var best = null, bd = 1.35, cx = x + 0.5, cy = y + 0.5;
@@ -1905,7 +1911,9 @@
         var hx = Math.round(ox + t.x * s), hy = Math.round(oy + t.y * s);
         var dxx = t.x - S.x, dyy = t.y - S.y, inReach = (dxx * dxx + dyy * dyy) <= S.reach * S.reach;
         var cur = S.edits.get(tk(t.x, t.y)), mine = !cur || cur.owner === S.key;
-        var mon = monAt(t.x, t.y);
+        // No attack-colour reticle on Sanctuary ground — clicking a creature there does
+        // nothing to click, so it should not be highlighted as a strike target either.
+        var mon = isSanctuary() ? null : monAt(t.x, t.y);
         var nd = S.nodes.get(nkN(t.x, t.y));
         if (mon) { S.target = mon; S.targetUntil = Date.now() + 300; }
         var col2 = mon ? (Math.hypot(mon.x - S.x, mon.y - S.y) <= S.attackRange + 1 ? 'rgba(255,120,90,.95)' : 'rgba(230,180,70,.9)')

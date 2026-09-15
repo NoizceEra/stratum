@@ -27,7 +27,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const T = require('./public/terrain.js');
-const { World, ATTACK_RANGE, MODE, PHASE } = require('./world.js');
+const { World, ATTACK_RANGE, MODE, PHASE, MON_DEAGGRO } = require('./world.js');
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -101,6 +101,35 @@ function coastPoint(map) {
   return null;
 }
 function median(a) { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1]; }
+
+/**
+ * Mirrors world.js's old (pre-cozy-pivot) tick() monster loop — every live monster gets
+ * one stepMonster() call — but calls stepMonster() DIRECTLY rather than through tick(),
+ * which now branches Sanctuary maps to ambientTick() instead. The archetype tests below
+ * (kiter retreat, brute charge, pack call, wind-up dodge, shoreline chase) are about
+ * stepMonster's own AI, not about which production map currently carries which tone —
+ * map 1 is the only Frontier map and does not have every archetype (no kiter, no brute).
+ * Returns {hits:[], calls:[]}, the same shape tick() returns those two fields as.
+ *
+ * Gates on MON_DEAGGRO exactly like tick() does — several archetype scenarios share one
+ * long-lived World across sections, and without this gate a monster far from the CURRENT
+ * section's player would still get stepped (and its state churned by Math.random() idle
+ * wander, cooldowns, etc.) every time an EARLIER section called simStep for someone else.
+ */
+function simStep(w, players, now) {
+  const out = { hits: [], calls: [] };
+  for (const m of w.monsters.values()) {
+    if (m.state !== 1) continue;
+    let seen = false;
+    for (const p of players) {
+      if (p.dead || p.map !== m.map) continue;
+      if (Math.abs(p.x - m.x) < MON_DEAGGRO && Math.abs(p.y - m.y) < MON_DEAGGRO) { seen = true; break; }
+    }
+    if (!seen) continue;
+    w.stepMonster(m, players, now, out);
+  }
+  return out;
+}
 
 function simSection() {
   section('DATA CONTRACT — terrain.js stays dependency-free and additive');
@@ -183,7 +212,7 @@ function simSection() {
     const p = mkPlayer(kiter.x + 1.2, kiter.y, 0, 'SIM-KITER');
     const d0 = 1.2;
     let d = d0;
-    for (let i = 0; i < 40; i++) { w0.tick([p], Date.now() + i * 100); d = Math.hypot(kiter.x - p.x, kiter.y - p.y); }
+    for (let i = 0; i < 40; i++) { simStep(w0, [p], Date.now() + i * 100); d = Math.hypot(kiter.x - p.x, kiter.y - p.y); }
     ok(d >= kiter.sp.keepAway * 0.9 && d > d0 + 1, 'kiter (' + kiter.sp.kind + ') backs off to its stand-off range when closed on',
       { from: d0, to: +d.toFixed(2), keepAway: kiter.sp.keepAway });
   }
@@ -198,7 +227,7 @@ function simSection() {
     let maxStep = 0, sawWindup = false, sawDash = false;
     let prev = { x: brute.x, y: brute.y };
     for (let i = 0; i < 140; i++) {
-      w0.tick([p], Date.now() + i * 100);
+      simStep(w0, [p], Date.now() + i * 100);
       const step = Math.hypot(brute.x - prev.x, brute.y - prev.y);
       if (brute.phase === PHASE.WINDUP) sawWindup = true;
       if (step > base * 1.8) sawDash = true;
@@ -225,7 +254,7 @@ function simSection() {
     const allyDist = Math.hypot(called[0].x - p.x, called[0].y - p.y);
     let callEvents = [];
     for (let i = 0; i < 4; i++) {
-      const ev = w0.tick([p], Date.now() + i * 100);
+      const ev = simStep(w0, [p], Date.now() + i * 100);
       if (ev.calls && ev.calls.length) callEvents = callEvents.concat(ev.calls);
     }
     const got = called[0].mode === MODE.CHASE && called[0].calledBy === pack.id;
@@ -269,7 +298,7 @@ function simSection() {
     const p = mkPlayer(A.x + 1.2, A.y, 0, 'SIM-DODGE');
     let frozen = null, dodged = true, sawTell = false;
     for (let i = 0; i < 40 && !sawTell; i++) {
-      const ev = w0.tick([p], Date.now() + i * 100);
+      const ev = simStep(w0, [p], Date.now() + i * 100);
       for (const h of ev.hits) if (h.id === A.id) { /* never mind, we want the tell first */ }
       if (A.phase === PHASE.WINDUP) { sawTell = true; frozen = { x: A.x, y: A.y }; }
     }
@@ -279,7 +308,7 @@ function simSection() {
       const away = dryOffset(0, A.x, A.y, 30) || { x: A.x + 30, y: A.y };
       p.x = away.x; p.y = away.y;                       // step out of reach mid-tell
       for (let i = 0; i < 8; i++) {
-        const ev = w0.tick([p], Date.now() + 4000 + i * 100);
+        const ev = simStep(w0, [p], Date.now() + 4000 + i * 100);
         for (const h of ev.hits) if (h.id === A.id) dodged = false;
       }
       ok(stillFrozen, 'the attacker is rooted while winding up — the tell is the dodge window');
@@ -289,7 +318,7 @@ function simSection() {
     const pc = mkPlayer(C.x + 1.2, C.y, 0, 'SIM-STAND');
     let landed = false;
     for (let i = 0; i < 40; i++) {
-      const ev = w0.tick([pc], Date.now() + i * 100);
+      const ev = simStep(w0, [pc], Date.now() + i * 100);
       for (const h of ev.hits) if (h.id === C.id) landed = true;
     }
     ok(landed, 'standing still through the same wind-up takes the hit (the control case)');
@@ -326,7 +355,7 @@ function simSection() {
     const home = { x: bait.hx, y: bait.hy };
     let travel = 0, prev = { x: bait.x, y: bait.y };
     for (let i = 0; i < 300; i++) {
-      ww.tick([p], Date.now() + i * 100);
+      simStep(ww, [p], Date.now() + i * 100);
       if (bait.mode === MODE.CHASE) chased++;
       travel += Math.hypot(bait.x - prev.x, bait.y - prev.y);
       prev = { x: bait.x, y: bait.y };
@@ -728,18 +757,36 @@ async function liveSection() {
     const wa = await A.waitFor(m => m.t === 'welcome', 10000);
     B.send({ t: 'hello', key: KEY_B, name: 'BYSTANDER' });
     const wb = await B.waitFor(m => m.t === 'welcome', 10000);
-    const map = wa.map;
+    let map = wa.map;
     A.map = map; B.map = map;
     ok(wa.world.w === 1024 && wa.world.h === 1024 && wa.maps.length === 3, 'a 1024x1024 world with 3 maps', wa.world);
+
+    // Everything below is click-to-strike Frontier combat (wind-ups, aggro, leash, real
+    // danger) — the cozy pivot made the spawn map (0) Sanctuary, where creatures use
+    // ambient combat instead and 'attack' is refused. Move the attacker onto the one
+    // Frontier map (1) before picking a target; the bystander stays behind on Sanctuary
+    // ground, which is fine — it never fights either way.
+    A.send({ t: 'travel', map: 1 });
+    const arrA = await A.waitNew(x => x.t === 'arrived' && x.map === 1, 5000);
+    ok(arrA && arrA.map === 1, 'A travelled to the Frontier map for combat testing', arrA && arrA.map);
+    map = (arrA && arrA.map) || 1;
+    A.map = map;
 
     // ---- pick a target by the world's own generator ----------------------
     const p0 = await A.posReady(8000);
     const homes = T.homesNear(map, Math.round(p0.x), Math.round(p0.y), 3);
     ok(homes.length >= 8, homes.length + ' monster homes generated around the spawn');
+    // Prefer a tank whose den is not inside a pack hunter's call radius — map 1 (the
+    // Frontier target for this section) has a pack archetype (CINDER_HOUND) that was
+    // absent from the old default test map, and a duel fought inside its call radius
+    // gets interrupted by allies again and again, which is its own (working-as-designed)
+    // behaviour but not what THIS section means to exercise.
+    const packHomes = homes.filter(h => h.sp.role === 'pack');
+    const farFromPacks = h => packHomes.every(pk => Math.hypot(h.x - pk.x, h.y - pk.y) > ((pk.sp.pack && pk.sp.pack.callRadius) || 20) + 10);
     const tanks = homes.map(h => Object.assign({ d: Math.hypot(h.x - p0.x, h.y - p0.y) }, h))
       .filter(h => h.sp.role === 'tank')
       .sort((a, b) => a.d - b.d);
-    const tankHome = tanks[0] || null;
+    const tankHome = tanks.find(farFromPacks) || tanks[0] || null;
     const swarmHome = homes.map(h => Object.assign({ d: Math.hypot(h.x - p0.x, h.y - p0.y) }, h))
       .filter(h => h.sp.role === 'swarm' && h.sp.speed >= 2.4 && h.d < 95 &&
         (!tankHome || Math.hypot(h.x - tankHome.x, h.y - tankHome.y) > 25))
@@ -801,22 +848,30 @@ async function liveSection() {
 
     // ---- KILL CYCLES: damage variance, crits, loot, XP, respawn ----------
     const st = { hp: res.entry[5], rolls: [] };
-    let firstKill = null, killCount = 0, lootOk = true, lootDetail = [], respawnTimes = [], respawnHomeOk = true;
+    let firstKill = null, killCount = 0, lootOk = true, lootChecked = 0, lootDetail = [], respawnTimes = [], respawnHomeOk = true;
     let invBefore = A.inv();
     for (let cycle = 0; cycle < 4 && st.rolls.length < 30; cycle++) {
       const m0 = A.monById(tankId);
       if (m0) st.hp = m0[5];                  // full HP on (re)spawn
       const t0 = Date.now();
+      const deathsBefore = A.deaths;          // Frontier map 1 has neighbours that can
       const out1 = await duel(A, tankId, st, 45000);
       if (!out1.killed) { note('duel ' + (cycle + 1) + ' ran out of time after ' + ((Date.now() - t0) / 1000).toFixed(0) + 's'); break; }
       killCount++;
       if (!firstKill) firstKill = out1.msg;
       const inv = out1.msg.inv;
-      if (inv && invBefore) {
+      // A death mid-duel (another nearby Frontier creature landing a blow) halves raw
+      // resources and resets the baseline — a legitimate inventory drop, not a sign the
+      // kill itself granted no loot, so an inv-delta comparison across one is inconclusive.
+      const diedMidDuel = A.deaths !== deathsBefore;
+      if (inv && invBefore && !diedMidDuel) {
         const gained = Object.keys(inv).filter(k => inv[k] > (invBefore[k] || 0));
         const legal = gained.length > 0 && gained.every(k => tankHome.sp.lootTable.some(e => e.item === k));
         if (!legal) lootOk = false;
+        lootChecked++;
         lootDetail.push(gained.map(k => '+' + (inv[k] - invBefore[k]) + ' ' + k).join(' '));
+      } else if (diedMidDuel) {
+        lootDetail.push('(died mid-duel — inv baseline reset, skipped)');
       }
       invBefore = inv;
 
@@ -838,6 +893,7 @@ async function liveSection() {
     ok(killCount >= 1, 'repeated attacks killed the creature ' + killCount + ' time(s)');
     ok(st.rolls.length >= 8, 'collected ' + st.rolls.length + ' damage rolls off the wire');
     ok(!!firstKill, 'the server reported the kill on the wire', firstKill && { name: firstKill.name, loot: firstKill.loot });
+    ok(lootChecked > 0, 'at least one kill was clean enough to check its loot delta (' + lootChecked + '/' + killCount + ')', lootDetail);
     ok(lootOk, 'loot was granted to the killer on death', lootDetail);
     ok(respawnTimes.length > 0 && respawnTimes.every(t => t >= 500 && t <= 20000),
       'the respawn clock fired in observable seconds with STRATUM_RESPAWN_SCALE=0.02: ' + respawnTimes.map(t => (t / 1000).toFixed(1) + 's').join(', '),

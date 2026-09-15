@@ -279,6 +279,12 @@ function stats() {
   ok(revived.state === 1, 'THE NODE RESET — it came back on its own timer', { x: revived.x, y: revived.y });
 
   section('VOLATILE LAYER — monsters fight and reset');
+  // Click-to-strike only works on Frontier maps: the cozy pivot made map 0 (where A just
+  // travelled back to, above) Sanctuary, so creatures there use ambient combat instead
+  // and 'attack' is refused. Hop to map 1 (Frontier) for this section.
+  a.send({ t: 'travel', map: 1 });
+  await a.waitNew(m => m.t === 'arrived' && m.map === 1, 5000);
+  await sleep(400);                       // let the post-travel position/mons settle
   ok(a.monsters().length > 0, 'A is being told about nearby creatures', a.monsters().length);
   const killed = await a.hunt(30000);
   ok(killed && killed.killed === true, 'A slew a creature', killed && killed.name);

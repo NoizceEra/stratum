@@ -27,6 +27,7 @@
  */
 const T = require('./public/terrain.js');
 const Drops = require('./src/drops.js');
+const AmbientCombat = require('./src/ambient-combat.js');
 
 const VIEW_CHUNKS = 3;          // chunk radius of nodes materialised around a player
 const MON_ACTIVATE = 3;         // chunk radius of monster homes materialised
@@ -240,7 +241,8 @@ class World {
             dashUntil: 0, dashVX: 0, dashVY: 0, dashSpeed: 0,
             wx: e[0] + 0.5, wy: e[1] + 0.5, wUntil: 0,
             slide: Math.random() < 0.5 ? -1 : 1, blocked: 0,
-            lastAtk: 0, lastHitAt: 0, target: null, hits: 0, taken: 0, calledBy: 0
+            lastAtk: 0, lastHitAt: 0, target: null, hits: 0, taken: 0, calledBy: 0,
+            ambientTicks: Object.create(null)          // Sanctuary only: playerKey -> lastTickAt
           };
           this.monsters.set(k, m);
           this.monById.set(m.id, m);
@@ -412,22 +414,11 @@ class World {
     }
 
     if (m.hp <= 0) {
-      m.hp = 0;
-      m.state = 0;                                // DEAD: leaves the wire, arms the reset
-      m.ripe = now + m.respawnMs * RS;
-      m.x = m.hx; m.y = m.hy;                      // the corpse goes home to reset
-      m.mode = MODE.DEAD; m.phase = PHASE.IDLE;
-      m.dashUntil = 0; m.charging = false; m.target = null;
-      this.totalKills++;
-      const loot = this.grantLoot(m, player);
-      h.kills = player.kills | 0;
-      const before = h.level;
-      const xp = m.sp.xp | 0;
-      this.awardXp(player, xp);
+      const kr = this.killMonster(m, player, now);
       return {
         ok: true, killed: true, name: m.sp.kind, form: m.sp.form, tier: m.sp.tier,
-        loot: loot.primary, lootAll: loot.grants, xp, ripe: m.ripe,
-        level: h.level, levelUp: h.level > before,
+        loot: kr.loot.primary, lootAll: kr.loot.grants, xp: kr.xp, ripe: kr.ripe,
+        level: kr.level, levelUp: kr.levelUp,
         dmg, crit: roll.crit, type, dmgType: m.sp.dmgType, id: m.id
       };
     }
@@ -435,6 +426,30 @@ class World {
       ok: true, killed: false, name: m.sp.kind, hp: m.hp, maxHp: m.maxHp,
       dmg, crit: roll.crit, type, id: m.id
     };
+  }
+
+  /**
+   * Kill bookkeeping shared by every path that can end a monster's life: Frontier's
+   * attack() swing, and Sanctuary's ambient tick (ambientTick, below). Arms the DEAD
+   * state (respawn timer, corpse sent home) and grants loot + XP through the same
+   * machinery either path uses. Returns {loot, xp, level, levelUp, ripe} for a caller
+   * that wants to report the kill on the wire.
+   */
+  killMonster(m, player, now) {
+    m.hp = 0;
+    m.state = 0;                                  // DEAD: leaves the wire, arms the reset
+    m.ripe = now + m.respawnMs * RS;
+    m.x = m.hx; m.y = m.hy;                        // the corpse goes home to reset
+    m.mode = MODE.DEAD; m.phase = PHASE.IDLE;
+    m.dashUntil = 0; m.charging = false; m.target = null;
+    this.totalKills++;
+    const loot = this.grantLoot(m, player);
+    const h = this.hunter(player);
+    h.kills = player.kills | 0;
+    const before = h.level;
+    const xp = m.sp.xp | 0;
+    this.awardXp(player, xp);
+    return { loot, xp, level: h.level, levelUp: h.level > before, ripe: m.ripe };
   }
 
   /** A monster lands one blow on a player (rolls variance + crit, applies resistance). */
@@ -575,6 +590,17 @@ class World {
 
     // ---- idle: drift around home -------------------------------------------
     m.mode = MODE.IDLE;
+    this.idleWander(m, now);
+  }
+
+  /**
+   * Idle drift around home — no target, no threat, just a light wander. Shared by
+   * Frontier's stepMonster (its idle fallback, above) and Sanctuary's ambientTick
+   * (below), which never runs the rest of stepMonster's aggro/leash/wind-up machinery
+   * at all: this is the only movement a Sanctuary creature ever does.
+   */
+  idleWander(m, now) {
+    const sp = m.sp;
     if (now > m.wUntil) {
       m.wUntil = now + 2000 + Math.random() * 6000;
       const a = Math.random() * Math.PI * 2, r = 1 + Math.random() * WANDER_R;
@@ -585,13 +611,57 @@ class World {
     if (L > 0.3 && !this.stepDir(m, m.wx - m.x, m.wy - m.y, Math.min(sp.speed * 0.05, L))) m.wUntil = 0;
   }
 
+  /**
+   * Sanctuary maps skip stepMonster's aggro/leash/wind-up state machine entirely — see
+   * ROADMAP_COZY.md's ambient-combat section. A creature here just idles near home
+   * (idleWander) and loses a slow trickle of HP to whichever nearby players are due a
+   * tick, per src/ambient-combat.js. `simHp` holds each player's hp as already spent by
+   * earlier ambient hits in THIS tick() call, so several creatures ticking the same
+   * player in one 100ms pass still respect the module's HP floor cumulatively, not just
+   * pairwise (the floor is only ever enforced against one creature's own math otherwise).
+   * Kills push onto `kills` for the caller (server.js) to report and award like a
+   * Frontier kill — same killMonster() bookkeeping either way.
+   */
+  ambientTick(m, players, now, out, kills, simHp) {
+    m.mode = MODE.IDLE;
+    m.phase = PHASE.IDLE;
+    this.idleWander(m, now);
+    if (m.state !== 1) return;                    // defensive: idleWander never kills it
+
+    const tune = AmbientCombat.TUNE;
+    for (const p of players) {
+      if (p.dead || p.map !== m.map) continue;
+      if (!AmbientCombat.inRange(p, m, tune.range)) continue;
+      const last = m.ambientTicks[p.key];
+      if (!AmbientCombat.tickReady(last, now, tune.tickMs)) continue;
+      m.ambientTicks[p.key] = now;
+
+      const pHp = simHp.has(p.key) ? simHp.get(p.key) : p.hp;
+      const r = AmbientCombat.resolveTick({ hp: pHp, maxHp: p.maxHp }, { hp: m.hp, maxHp: m.maxHp });
+      m.hp = r.creature.hp;
+      m.lastHitAt = now;
+      simHp.set(p.key, r.player.hp);
+
+      const delta = pHp - r.player.hp;             // the floor may have already zeroed this
+      if (delta > 0 && out) {
+        out.hits.push({ key: p.key, dmg: delta, name: m.sp.kind, id: m.id, crit: false, type: m.sp.dmgType || T.DEFAULT_DMG_TYPE, x: r1(m.x), y: r1(m.y) });
+      }
+      if (r.creatureDied) {
+        const kr = this.killMonster(m, p, now);
+        if (kills) kills.push({ key: p.key, id: m.id, name: m.sp.kind, loot: kr.loot.primary, lootAll: kr.loot.grants, xp: kr.xp, level: kr.level, levelUp: kr.levelUp });
+        break;                                     // dead: no more pairs to tick against it
+      }
+    }
+  }
+
   // ---------- tick ---------------------------------------------------------
   /**
    * Advance monsters and node resets. Returns {nodeRevived:[...], monsterDead:[...],
    * hits:[{key, dmg, name}]} for the server to relay.
    */
   tick(players, now) {
-    const revived = [], hits = [], respawned = [], calls = [];
+    const revived = [], hits = [], respawned = [], calls = [], ambientKills = [];
+    const simHp = new Map();      // Sanctuary only: playerKey -> hp already spent this tick
 
     // node resets
     for (const [sk, st] of this.nodeState) {
@@ -640,14 +710,20 @@ class World {
       if (!seen) continue;
 
       // a wounded creature that nobody has touched for a while knits itself back up
+      // (both tones share this — Sanctuary creatures just never take enough of a beating
+      // to need it faster, per ambient-combat.js's TUNE.creatureRegenPerMs comment)
       if (m.hp < m.maxHp && m.lastHitAt && now - m.lastHitAt > REGEN_DELAY_MS) {
         m.hp = Math.min(m.maxHp, m.hp + Math.max(1, Math.round(m.maxHp / 100)));
       }
 
-      this.stepMonster(m, players, now, out);
+      if (T.toneOf(m.map) === 'sanctuary') {
+        this.ambientTick(m, players, now, out, ambientKills, simHp);
+      } else {
+        this.stepMonster(m, players, now, out);
+      }
     }
 
-    return { revived, hits, respawned, calls };
+    return { revived, hits, respawned, calls, ambientKills };
   }
 
   /**
@@ -688,4 +764,4 @@ class World {
   }
 }
 
-module.exports = { World, ATTACK_RANGE, MON_SEND_RANGE, MODE, PHASE, PLAYER_SWING_MS, RS };
+module.exports = { World, ATTACK_RANGE, MON_SEND_RANGE, MODE, PHASE, PLAYER_SWING_MS, RS, MON_DEAGGRO };
