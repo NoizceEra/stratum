@@ -59,25 +59,25 @@
 
   var ACHIEVEMENTS = deepFreeze([
     // ---- kills (3) ----
-    { id: 'first-blood', name: 'First Blood', desc: 'Slay your first foe.', tier: 0, check: atLeast('kills', 1) },
-    { id: 'skirmisher', name: 'Skirmisher', desc: 'Slay 25 foes.', tier: 1, check: atLeast('kills', 25) },
-    { id: 'slayer', name: 'Slayer', desc: 'Slay 100 foes.', tier: 3, title: 'Slayer', check: atLeast('kills', 100) },
+    { id: 'first-blood', name: 'First Blood', desc: 'Put down your first hostile — Stratum noticed you first.', tier: 0, check: atLeast('kills', 1) },
+    { id: 'skirmisher', name: 'Skirmisher', desc: 'Put down 25 hostiles. The frontier is thinning.', tier: 1, check: atLeast('kills', 25) },
+    { id: 'slayer', name: 'Slayer', desc: 'Put down 100 hostiles. Stratum knows your name now.', tier: 3, title: 'Slayer', check: atLeast('kills', 100) },
     // ---- level (2) ----
-    { id: 'rising', name: 'Rising', desc: 'Reach level 5.', tier: 1, check: atLeast('level', 5) },
-    { id: 'ascendant', name: 'Ascendant', desc: 'Reach level 10.', tier: 3, title: 'Ascendant', check: atLeast('level', 10) },
+    { id: 'rising', name: 'Rising', desc: 'Reach colonist rank 5.', tier: 1, check: atLeast('level', 5) },
+    { id: 'ascendant', name: 'Ascendant', desc: 'Reach colonist rank 10.', tier: 3, title: 'Ascendant', check: atLeast('level', 10) },
     // ---- land claimed (2) ----
-    { id: 'homesteader', name: 'Homesteader', desc: 'Claim 25 tiles on the current map.', tier: 1, check: atLeast('claimed', 25) },
-    { id: 'land-baron', name: 'Land Baron', desc: 'Claim 100 tiles on the current map.', tier: 2, title: 'Land Baron', check: atLeast('claimed', 100) },
+    { id: 'homesteader', name: 'Homesteader', desc: 'Stake 25 plots in one sector — this is a real colony now.', tier: 1, check: atLeast('claimed', 25) },
+    { id: 'land-baron', name: 'Land Baron', desc: 'Stake 100 plots in one sector.', tier: 2, title: 'Land Baron', check: atLeast('claimed', 100) },
     // ---- crafts (2) ----
-    { id: 'tinkerer', name: 'Tinkerer', desc: 'Complete 5 crafts.', tier: 0, check: atLeast('crafts', 5) },
-    { id: 'artificer', name: 'Artificer', desc: 'Complete 25 crafts.', tier: 2, check: atLeast('crafts', 25) },
+    { id: 'tinkerer', name: 'Tinkerer', desc: 'Fabricate 5 items. Earth-issue gear only gets you so far.', tier: 0, check: atLeast('crafts', 5) },
+    { id: 'artificer', name: 'Artificer', desc: 'Fabricate 25 items.', tier: 2, check: atLeast('crafts', 25) },
     // ---- tool tier (3) ----
-    { id: 'copper-hands', name: 'Copper Hands', desc: 'Reach tool tier 1.', tier: 0, check: atLeast('tools', 1) },
-    { id: 'iron-will', name: 'Iron Will', desc: 'Reach tool tier 2.', tier: 1, check: atLeast('tools', 2) },
-    { id: 'master-smith', name: 'Master Smith', desc: 'Reach tool tier 3.', tier: 3, title: 'Master Smith', check: atLeast('tools', 3) },
+    { id: 'copper-hands', name: 'Copper Hands', desc: 'Refit to copper tools.', tier: 0, check: atLeast('tools', 1) },
+    { id: 'iron-will', name: 'Iron Will', desc: 'Refit to iron tools.', tier: 1, check: atLeast('tools', 2) },
+    { id: 'master-smith', name: 'Master Smith', desc: 'Refit to steel tools — top of the line, this far from Earth.', tier: 3, title: 'Master Smith', check: atLeast('tools', 3) },
     // ---- travel (2) ----
-    { id: 'wayfarer', name: 'Wayfarer', desc: 'Visit map 1.', tier: 1, check: atLeast('maps', 1) },
-    { id: 'far-wanderer', name: 'Far Wanderer', desc: 'Visit map 2.', tier: 2, title: 'Far Wanderer', check: atLeast('maps', 2) }
+    { id: 'wayfarer', name: 'Wayfarer', desc: 'Chart a second sector of Stratum.', tier: 1, check: atLeast('maps', 1) },
+    { id: 'far-wanderer', name: 'Far Wanderer', desc: 'Chart a third sector of Stratum.', tier: 2, title: 'Far Wanderer', check: atLeast('maps', 2) }
   ]);
 
   // ======================================================================

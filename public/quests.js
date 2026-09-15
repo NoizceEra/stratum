@@ -104,44 +104,44 @@
   var QUESTS = deepFreeze([
     {
       id: 'harvest',
-      title: 'First Harvest',
-      hint: 'Walk to a tree or ore seam and LMB to harvest.',
+      title: 'First Extraction',
+      hint: 'Walk to a tree or ore seam and LMB to extract it — Earth is waiting on that ore.',
       check: atLeast('harvests', 1)
     },
     {
       id: 'claim',
-      title: 'Claim Land',
-      hint: 'LMB on empty ground to claim a tile — it is yours forever.',
+      title: 'Stake a Claim',
+      hint: 'LMB on open ground to stake it — it is your colony plot forever.',
       check: atLeast('claimed', 1)
     },
     {
       id: 'kill',
-      title: 'First Kill',
-      hint: 'Find a beast and defeat it with LMB.',
+      title: 'Clear the Ground',
+      hint: 'Stratum has native fauna. Find one and put it down with LMB.',
       check: atLeast('kills', 1)
     },
     {
       id: 'craft',
-      title: 'Open Craft',
-      hint: 'Press C to open the craft menu.',
+      title: 'Fabricate Gear',
+      hint: 'Press C to open the fabricator — see what you can build from what you extracted.',
       check: anyAtLeast(['craftOpens', 'crafts'], 1)
     },
     {
       id: 'upgrade',
-      title: 'Upgrade Tools',
-      hint: 'In craft, buy Copper Tools (3 wood + 2 ore).',
+      title: 'Better Tools',
+      hint: 'In the fabricator, build Copper Tools (3 wood + 2 ore) — Earth-issue flint won’t last.',
       check: atLeast('tools', 1)
     },
     {
       id: 'travel',
-      title: 'Travel Onward',
-      hint: 'Press T and travel to another map.',
+      title: 'Chart New Ground',
+      hint: 'Press T and transport to another sector of Stratum.',
       check: anyAtLeast(['mapsVisited', 'maps'], 1)
     },
     {
       id: 'level',
-      title: 'Level Up',
-      hint: 'Keep fighting until you reach level 2.',
+      title: 'Prove Yourself',
+      hint: 'Keep clearing hostiles until you reach colonist rank 2.',
       check: atLeast('level', 2)
     }
   ]);

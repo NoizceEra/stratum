@@ -1630,7 +1630,7 @@
     document.body.classList.add('quests-done');
   }
   if (!window.Quests) {
-    if (questTitleEl) questTitleEl.textContent = 'FIRST HARVEST';
+    if (questTitleEl) questTitleEl.textContent = 'FIRST EXTRACTION';
     if (questHintEl) questHintEl.textContent = 'Walk to a tree or ore seam and LMB';
   }
   window.StratumHud = {

@@ -77,10 +77,13 @@
       cost: { wood: 6, herb: 3 },
       produces: 'honey', ratePerMs: 1 / (45 * 1000), capacity: 20      // ~1 honey / 45s, caps at 20
     },
+    // The kiln is the colony's actual mission payoff: it's the only structure that turns
+    // raw ore into the silver Earth sent these colonists to extract in the first place.
+    // Everything else on this table is colony upkeep; this is why the colony exists.
     kiln: {
       id: 'kiln', name: 'kiln', tier: 1,
       cost: { wood: 4, ore: 6 },
-      produces: 'refined_ore', ratePerMs: 1 / (60 * 1000), capacity: 16 // ~1 refined ore / 60s, caps at 16
+      produces: 'silver', ratePerMs: 1 / (60 * 1000), capacity: 16 // ~1 silver / 60s, caps at 16
     },
     still: {
       id: 'still', name: 'still', tier: 1,

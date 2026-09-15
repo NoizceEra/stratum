@@ -7,6 +7,24 @@ Browser client, zero dependencies. `npm start` and you're playing.
 
 ---
 
+## The story
+
+Earth's silver is gone. You're one of the first off-world colonists sent to find more —
+dropped onto Stratum, an untouched, unmapped planet, with orders to extract, terraform and
+build. Every tile you claim is a plot in the colony you're founding. Every tree, ore seam
+and crystal vein you strip is raw material Earth is waiting on. Every creature you put down
+is one less thing standing between the colony and the ground it needs.
+
+There's no story campaign and no NPCs handing out quests — the fiction is the *reason* for
+every mechanic already in the game, not a layer on top of it. Land scarcity is colonization
+pressure. The volatile layer resetting is the planet being genuinely alive, not a quarry you
+can empty. A kiln turning ore into silver (`src/idle.js`) is the actual point of the mission,
+not a random crafting recipe. The first-session quest chain (`public/quests.js`) is the
+onboarding briefing every new colonist gets. Achievements (`src/achievements.js`) are a
+colonist's service record.
+
+---
+
 ## The idea
 
 Most persistent-world games solve the content problem by resetting, and solve griefing with
@@ -56,15 +74,15 @@ a persistent world needs a long-lived process and a database. Railway/Fly/a VPS 
 | `T` | travel between maps |
 | `+` / `-` | zoom |
 
-### Maps
+### Maps (sectors)
 
 | # | Name | Character |
 |---|---|---|
-| 0 | THE FIRST ACRE | Verdant and open. Where everyone starts. |
-| 1 | ASHEN HOLLOW | Broken rock, shallow soil, heavy ore. Almost nothing grows — bring your own timber. |
-| 2 | THE SUNKEN SHELF | Islands and shallows. Land is scarce here, and contested. |
+| 0 | THE FIRST ACRE | Landing Zone Alpha. Verdant and open — every colonist's first foothold. |
+| 1 | ASHEN HOLLOW | A volcanic mining district. Broken rock, shallow soil, heavy ore — bring your own timber. |
+| 2 | THE SUNKEN SHELF | A flooded coastal claim. Islands and shallows; solid ground is scarce and contested. |
 
-Land does **not** leak between maps. The same coordinates on two maps are two different tiles.
+Land does **not** leak between sectors. The same coordinates on two maps are two different tiles.
 
 ---
 

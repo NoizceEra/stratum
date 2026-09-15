@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>STRATUM — one world, permanently marked</title>
+<title>STRATUM — Earth needs silver</title>
 <style>
   :root{
     --ink:#e8e6df; --dim:#8b8578; --gold:#c9a55c; --bg:#0b0c10;
@@ -208,8 +208,8 @@
 </div>
 
 <div id="hud-quest" class="panel">
-  <div id="quest-title">CLAIM A TILE</div>
-  <div id="quest-hint">LMB on empty ground</div>
+  <div id="quest-title">STAKE A CLAIM</div>
+  <div id="quest-hint">LMB on open ground</div>
 </div>
 
 <div id="hud-bl" class="panel">
@@ -309,17 +309,21 @@
 <div id="gate">
   <div class="box">
     <h1>STRATUM</h1>
-    <p>One finite world per map. Each 1,048,576 tiles. They never expand.</p>
+    <p>Earth's silver is gone. You're one of the first colonists sent to find more —
+      one finite world per map, 1,048,576 tiles each, never expanding. Whatever you
+      build here is what Stratum becomes.</p>
     <div class="rules">
-      <b>The land is permanent.</b> What you place, you own — nobody can ever overwrite it.<br>
-      <b>The wilderness is a commons.</b> Anyone may build on unclaimed terrain.<br>
-      <b>The provisions reset.</b> Ore, timber, herbs and beasts come back on their own timers.<br>
-      <b>You can only give land back</b> — you can never take it from another.<br>
+      <b>Your claim is permanent.</b> What you place, you own — nobody can ever overwrite it.<br>
+      <b>The frontier is unclaimed.</b> Anyone may build on unstaked ground.<br>
+      <b>The planet provides.</b> Ore, timber, herb and beast come back on their own —
+        Stratum isn't a quarry you empty, it's a world you settle.<br>
+      <b>You can only release a claim</b> — you can never take one from another colonist.<br>
+      <b>Refine what you mine.</b> A kiln turns ore into silver — the reason Earth sent you.<br>
       <b>Commerce.</b> Mining and crafting earn gold and STRM on Robinhood Chain.
     </div>
-    <input id="name-in" maxlength="18" placeholder="YOUR NAME" autocomplete="off">
+    <input id="name-in" maxlength="18" placeholder="COLONIST NAME" autocomplete="off">
     <div id="gateswatch"></div>
-    <button id="enter-btn">ENTER THE WORLD</button>
+    <button id="enter-btn">BEGIN THE DESCENT</button>
     <div class="err" id="gate-err"></div>
   </div>
 </div>

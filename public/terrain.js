@@ -43,19 +43,19 @@
   var MAPS = [
     {
       id: 0, name: 'THE FIRST ACRE', tier: 1, seed: 1337, tone: 'sanctuary',
-      desc: 'Verdant and open. Where everyone starts and everything is built.',
+      desc: 'Landing Zone Alpha. Verdant and open — the first foothold every colonist gets on Stratum.',
       params: { water: 0.44, ridge: 0.30, scale: 0.035, tree: 0.50, moist: 0.53, ore: 0.72, oreR: 0.78 },
       nodes: { tree: 0.25, ore: 0.30, herb: 0.10, crystal: 0.004 }
     },
     {
       id: 1, name: 'ASHEN HOLLOW', tier: 2, seed: 4242, tone: 'frontier',
-      desc: 'Broken rock and shallow soil. Almost nothing grows; everything is under it.',
+      desc: 'A volcanic mining district. Broken rock and shallow soil — everything worth having is buried, and it will not come easily.',
       params: { water: 0.40, ridge: 0.85, scale: 0.050, tree: 0.60, moist: 0.80, ore: 0.58, oreR: 0.62 },
       nodes: { tree: 0.35, ore: 0.07, herb: 0.015, crystal: 0.010 }
     },
     {
       id: 2, name: 'THE SUNKEN SHELF', tier: 2, seed: 9001, tone: 'sanctuary',
-      desc: 'Islands, shallows and salt. Land is scarce here, and contested.',
+      desc: 'A flooded coastal claim. Islands, shallows and salt — solid ground is scarce here, and every colonist wants some.',
       params: { water: 0.52, ridge: 0.26, scale: 0.016, tree: 0.45, moist: 0.45, ore: 0.70, oreR: 0.72 },
       nodes: { tree: 0.15, ore: 0.35, herb: 0.20, crystal: 0.030 }
     }
