@@ -35,21 +35,26 @@
    *   ore    – ore threshold (lower = more ore)
    *   oreR   – ore threshold inside rock
    */
+  // `tone` is the cozy-pivot flag (ROADMAP_COZY.md, Phase 0): 'sanctuary' maps will run
+  // the gentle ambient-combat model once it's wired in (src/ambient-combat.js), 'frontier'
+  // maps keep today's click/wind-up/dodge combat untouched. Adding the field here is a
+  // pure data change — nothing branches on it yet, so behavior is identical either way
+  // until the systems that actually read `tone` land.
   var MAPS = [
     {
-      id: 0, name: 'THE FIRST ACRE', tier: 1, seed: 1337,
+      id: 0, name: 'THE FIRST ACRE', tier: 1, seed: 1337, tone: 'sanctuary',
       desc: 'Verdant and open. Where everyone starts and everything is built.',
       params: { water: 0.44, ridge: 0.30, scale: 0.035, tree: 0.50, moist: 0.53, ore: 0.72, oreR: 0.78 },
       nodes: { tree: 0.25, ore: 0.30, herb: 0.10, crystal: 0.004 }
     },
     {
-      id: 1, name: 'ASHEN HOLLOW', tier: 2, seed: 4242,
+      id: 1, name: 'ASHEN HOLLOW', tier: 2, seed: 4242, tone: 'frontier',
       desc: 'Broken rock and shallow soil. Almost nothing grows; everything is under it.',
       params: { water: 0.40, ridge: 0.85, scale: 0.050, tree: 0.60, moist: 0.80, ore: 0.58, oreR: 0.62 },
       nodes: { tree: 0.35, ore: 0.07, herb: 0.015, crystal: 0.010 }
     },
     {
-      id: 2, name: 'THE SUNKEN SHELF', tier: 2, seed: 9001,
+      id: 2, name: 'THE SUNKEN SHELF', tier: 2, seed: 9001, tone: 'sanctuary',
       desc: 'Islands, shallows and salt. Land is scarce here, and contested.',
       params: { water: 0.52, ridge: 0.26, scale: 0.016, tree: 0.45, moist: 0.45, ore: 0.70, oreR: 0.72 },
       nodes: { tree: 0.15, ore: 0.35, herb: 0.20, crystal: 0.030 }
@@ -57,6 +62,11 @@
   ];
   var MAP0 = MAPS[0];
   function mapDef(id) { return MAPS[id] || MAP0; }
+  /** The cozy-pivot ruleset for a map: 'sanctuary' or 'frontier'. Unknown ids default to
+   *  'frontier' — never silently soften an id nobody recognises. Checks the raw table
+   *  directly rather than through mapDef(), which falls back to MAP0 for unknown ids and
+   *  would otherwise leak MAP0's tone onto every bogus id. */
+  function toneOf(id) { var d = MAPS[id]; return (d && d.tone === 'sanctuary') ? 'sanctuary' : 'frontier'; }
 
   // ---- deterministic integer hash (identical in every JS engine) ----------
   function hash2(x, y, s) {
@@ -487,7 +497,7 @@
     ID: ID, PALETTE: PALETTE, MAPS: MAPS, NODE_KINDS: NODE_KINDS, SPECIES: SPECIES,
     DAMAGE_TYPES: DAMAGE_TYPES, DEFAULT_DMG_TYPE: DEFAULT_DMG_TYPE,
     COMBAT: COMBAT, LEVEL: LEVEL, TIER_RESPAWN_MUL: TIER_RESPAWN_MUL,
-    isPlaceable: isPlaceable, mapDef: mapDef, kindById: kindById,
+    isPlaceable: isPlaceable, mapDef: mapDef, toneOf: toneOf, kindById: kindById,
     hash2: hash2, r01: r01, fbm: fbm,
     elevation: elevation, elevationFor: elevationFor,
     baseType: baseType, baseTypeFor: baseTypeFor,

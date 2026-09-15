@@ -104,5 +104,12 @@ console.log('landfrac map0=' + lf[0].toFixed(3) + ' map1=' + lf[1].toFixed(3) + 
 check('character map2 scarcest land', lf[2] < lf[0] && lf[2] < lf[1],
   'map2=' + lf[2].toFixed(3));
 
+// cozy pivot (ROADMAP_COZY.md, Phase 0): the tone flag exists and resolves correctly,
+// including for an id nobody generated a map for.
+check('map0 tone sanctuary', T.toneOf(0) === 'sanctuary');
+check('map1 tone frontier', T.toneOf(1) === 'frontier');
+check('map2 tone sanctuary', T.toneOf(2) === 'sanctuary');
+check('unknown map defaults frontier, not MAP0 leakage', T.toneOf(99) === 'frontier');
+
 console.log(failures === 0 ? 'ALL GEOGRAPHY CHECKS PASSED' : failures + ' CHECK(S) FAILED');
 process.exit(failures === 0 ? 0 : 1);
