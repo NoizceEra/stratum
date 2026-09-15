@@ -39,20 +39,20 @@
     {
       id: 0, name: 'THE FIRST ACRE', tier: 1, seed: 1337,
       desc: 'Verdant and open. Where everyone starts and everything is built.',
-      params: { water: 0.30, ridge: 0.50, scale: 0.010, tree: 0.70, moist: 0.53, ore: 0.72, oreR: 0.78 },
-      nodes: { tree: 0.20, ore: 0.30, herb: 0.012, crystal: 0.004 }
+      params: { water: 0.44, ridge: 0.30, scale: 0.035, tree: 0.50, moist: 0.53, ore: 0.72, oreR: 0.78 },
+      nodes: { tree: 0.25, ore: 0.30, herb: 0.10, crystal: 0.004 }
     },
     {
       id: 1, name: 'ASHEN HOLLOW', tier: 2, seed: 4242,
       desc: 'Broken rock and shallow soil. Almost nothing grows; everything is under it.',
-      params: { water: 0.24, ridge: 0.74, scale: 0.013, tree: 0.97, moist: 0.80, ore: 0.58, oreR: 0.62 },
-      nodes: { tree: 0.02, ore: 0.07, herb: 0.010, crystal: 0.010 }
+      params: { water: 0.40, ridge: 0.85, scale: 0.050, tree: 0.60, moist: 0.80, ore: 0.58, oreR: 0.62 },
+      nodes: { tree: 0.35, ore: 0.07, herb: 0.015, crystal: 0.010 }
     },
     {
       id: 2, name: 'THE SUNKEN SHELF', tier: 2, seed: 9001,
       desc: 'Islands, shallows and salt. Land is scarce here, and contested.',
       params: { water: 0.52, ridge: 0.26, scale: 0.016, tree: 0.45, moist: 0.45, ore: 0.70, oreR: 0.72 },
-      nodes: { tree: 0.02, ore: 0.35, herb: 0.030, crystal: 0.030 }
+      nodes: { tree: 0.15, ore: 0.35, herb: 0.20, crystal: 0.030 }
     }
   ];
   var MAP0 = MAPS[0];
@@ -154,8 +154,26 @@
   function spawnPoint(mapId) {
     mapId = mapId | 0;
     var cx = W >> 1, cy = H >> 1;
-    var PREFER = [ID.GRASS, ID.GRASSDARK, ID.DIRT, ID.SAND];
-    var sponsor = null, fallback = null;
+    // Soft land first (first-glance trees); dirt/sand only as fallback.
+    var SOFT = [ID.GRASS, ID.GRASSDARK];
+    var HARD = [ID.DIRT, ID.SAND];
+    var soft = null, hardTree = null, hard = null, fallback = null;
+    function dryPad(x, y) {
+      for (var dy = -2; dy <= 2; dy++)
+        for (var dx = -2; dx <= 2; dx++) {
+          var n = baseTypeFor(mapId, x + dx, y + dy);
+          if (n === ID.WATER || n === ID.VOID) return false;
+        }
+      return true;
+    }
+    function hasTreeNear(x, y) {
+      for (var dy = -12; dy <= 12; dy++)
+        for (var dx = -12; dx <= 12; dx++) {
+          if (dx * dx + dy * dy > 144) continue;
+          if (nodeAt(mapId, x + dx, y + dy) === 'TREE') return true;
+        }
+      return false;
+    }
     for (var r = 0; r < 320; r += 2) {
       for (var a = 0; a < 64; a++) {
         var t = (a / 64) * Math.PI * 2;
@@ -163,19 +181,23 @@
         var b = baseTypeFor(mapId, x, y);
         if (b === ID.WATER || b === ID.VOID) continue;
         if (!fallback) fallback = { x: x, y: y };
-        if (PREFER.indexOf(b) >= 0) {
-          var ok = true;
-          for (var dy = -2; dy <= 2 && ok; dy++)
-            for (var dx = -2; dx <= 2; dx++) {
-              var n = baseTypeFor(mapId, x + dx, y + dy);
-              if (n === ID.WATER || n === ID.VOID) { ok = false; break; }
-            }
-          if (ok) return { x: x, y: y };
-          if (!sponsor) sponsor = { x: x, y: y };
+        var isSoft = SOFT.indexOf(b) >= 0, isHard = HARD.indexOf(b) >= 0;
+        if (!isSoft && !isHard) continue;
+        if (!dryPad(x, y)) {
+          if (isSoft && !soft) soft = { x: x, y: y };
+          continue;
+        }
+        var nearTree = hasTreeNear(x, y);
+        if (isSoft) {
+          if (nearTree) return { x: x, y: y };
+          if (!soft) soft = { x: x, y: y };
+        } else {
+          if (nearTree && !hardTree) hardTree = { x: x, y: y };
+          if (!hard) hard = { x: x, y: y };
         }
       }
     }
-    return sponsor || fallback || { x: cx, y: cy };
+    return hardTree || soft || hard || fallback || { x: cx, y: cy };
   }
 
   // ---- resource nodes -----------------------------------------------------

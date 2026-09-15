@@ -584,9 +584,25 @@
     faceX: 0, faceY: 1, moving: 0, walk: 0, joy: null,
     swingT: -1, swingA: 0, swingDX: 1, swingDY: 0,
     shake: 0, hurt: 0, death: -1, dt: 0.016, hudAt: 0,
-    target: null, targetUntil: 0
+    target: null, targetUntil: 0,
+    // harvest-first onboarding: block place until first successful harvest (or prior unlock)
+    harvests: 0,
+    canBuild: localStorage.getItem('stratum_can_build') === '1',
+    // first-session quest counters (personal — not world claim %)
+    personalClaims: 0,
+    craftOpens: 0,
+    crafts: 0,
+    mapsSeen: {}
   };
+  if (S.canBuild && S.harvests < 1) S.harvests = 1; // returning builders already passed harvest
   localStorage.setItem('stratum_key', S.key);
+  function unlockBuild() {
+    if (S.canBuild) return;
+    S.canBuild = true;
+    try { localStorage.setItem('stratum_can_build', '1'); } catch (e) {}
+    var sel = document.getElementById('h-sel');
+    if (sel) sel.textContent = 'building: ' + MATNAME[PALETTE[S.sel]];
+  }
   function newKey() {
     var a = new Uint8Array(16);
     crypto.getRandomValues(a);
@@ -681,9 +697,11 @@
         S.catalog = m.catalog || null;
         S.claimed = m.claimed; S.total = m.total; S.online = m.online;
         if (S.maps && S.maps.length) setMapName();
+        noteMapVisit(S.map);
         buildHotbar();
         document.getElementById('h-name').textContent = m.name;
         document.getElementById('gate').style.display = 'none';
+        refreshQuest(true);
         break;
 
       case 'arrived':
@@ -692,7 +710,9 @@
         S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
         S.claimed = m.claimed; S.total = m.total;
         setMapName(); closeTravel(); closeCraft();
+        noteMapVisit(S.map);
         toast('ARRIVED — ' + m.name, true);
+        refreshQuest(true);
         break;
 
       case 'chunk': {
@@ -726,7 +746,13 @@
         if (m.inv) S.inv = m.inv;
         S.edits.set(yk, { m: m.m, owner: S.key });
         setLamp(yk, m.m);
+        S.personalClaims += 1;
+        if (window.StratumHud) {
+          window.StratumHud.markSeenClaimStats();
+          window.StratumHud.noteAction();
+        }
         if (m.x === Math.round(S.x) && m.y === Math.round(S.y)) puff(m.x, m.y, '#e8e6cf', 6, 1.4);
+        refreshQuest(true);
         break;
       }
       case 'node': applyNode([m.x, m.y, m.kind, m.state, m.ripeSec]); break;
@@ -737,10 +763,14 @@
         if (nd && m.state === 0) { nd.state = 0; nd.until = Date.now() + (m.ripeSec || 0) * 1000; }
         if (m.inv) S.inv = m.inv;
         if (m.gains) {
+          S.harvests += 1;
+          unlockBuild();
+          if (window.StratumHud) window.StratumHud.noteAction();
           for (var y2 in m.gains) float(m.x, m.y, '+' + m.gains[y2] + ' ' + y2, '#c9e08a', 0);
           var ndc = NODECLR[m.kind] || '#c9e08a';
           puff(m.x + 0.5, m.y + 0.3, ndc, 7, 1.8);
           sfx('harvest');
+          refreshQuest(true);
         } else if (m.partial) {
           float(m.x, m.y, 'struck', '#cbbf9a', 0);
           puff(m.x + 0.5, m.y + 0.3, '#cbbf9a', 3, 1.2);
@@ -823,6 +853,8 @@
           } else {
             sfx('die');
           }
+          if (window.StratumHud) window.StratumHud.noteAction();
+          refreshQuest(true);
           if (mm) {
             float(mm.rx, mm.ry - 0.4, 'SLAIN', mm.pal.hex, 2);
             burst(mm.rx, mm.ry, mm.pal, 16, 2.6);
@@ -886,14 +918,19 @@
         S.hp = m.hp; S.maxHp = m.maxHp; S.inv = m.inv; S.kills = m.kills; S.atk = m.atk;
         if (typeof m.tool === 'number') S.tool = m.tool;
         if (typeof m.level === 'number' && m.level > (S.level || 1)) { S.level = m.level; sfx('levelup'); }
+        else if (typeof m.level === 'number' && m.level > 0) S.level = m.level;
         if (S.craftOpen) buildCraft();
+        refreshQuest(true);
         break;
       case 'crafted': {
         if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
         if (m.inv) S.inv = m.inv;
+        S.crafts += 1;
         toast('CRAFTED: ' + String(m.item || '').toUpperCase(), true);
         sfx('craft');
         if (S.craftOpen) buildCraft();
+        if (window.StratumHud) window.StratumHud.noteAction();
+        refreshQuest(true);
         break;
       }
       case 'tooled': {
@@ -906,6 +943,8 @@
         toast(String(m.name || '').toUpperCase() + ' TOOLS', true);
         sfx('levelup');
         if (S.craftOpen) buildCraft();
+        if (window.StratumHud) window.StratumHud.noteAction();
+        refreshQuest(true);
         break;
       }
       case 'stats':
@@ -1012,6 +1051,10 @@
     if (nd && nd.state === 0) {
       var left = Math.max(0, Math.ceil((nd.until - Date.now()) / 1000));
       return toast('REGROWING — ' + left + 's');
+    }
+    // Harvest-first: empty ground does not place until the player has harvested once.
+    if (!S.canBuild) {
+      return toast('LOOK FOR TREES AND SEAMS — LMB HARVESTS');
     }
     tryPlace(x, y, PALETTE[S.sel]);
   }
@@ -1244,6 +1287,84 @@
   // inventory chips are rebuilt from a reused array — no per-update allocation
   var INV_KEYS = ['wood', 'ore', 'herb', 'crystal'], INV_HTML = [];
   function invChip(r) { INV_HTML.push('<span class="chip">' + r + ' ' + (this[r] || 0) + '</span>'); }
+
+  // ---- first-session progressive disclosure (integrator / quests.js hooks) ----
+  // body.onboarding       — no localStorage stratum_onboard_done
+  // body.seen-claim-stats — full #hud-tr opacity while still onboarding
+  // body.quests-done      — hides #hud-quest; set with completeOnboarding()
+  // window.StratumHud.markSeenClaimStats() | completeOnboarding() | setQuest(t,h) | noteAction()
+  var ONBOARD_ACTIONS = 12, onboardActions = 0;
+  var questTitleEl = document.getElementById('quest-title');
+  var questHintEl = document.getElementById('quest-hint');
+  if (!localStorage.getItem('stratum_onboard_done')) {
+    document.body.classList.add('onboarding');
+  } else {
+    document.body.classList.add('quests-done');
+  }
+  if (!window.Quests) {
+    if (questTitleEl) questTitleEl.textContent = 'FIRST HARVEST';
+    if (questHintEl) questHintEl.textContent = 'Walk to a tree or ore seam and LMB';
+  }
+  window.StratumHud = {
+    markSeenClaimStats: function () { document.body.classList.add('seen-claim-stats'); },
+    completeOnboarding: function () {
+      localStorage.setItem('stratum_onboard_done', '1');
+      document.body.classList.remove('onboarding');
+      document.body.classList.add('quests-done');
+    },
+    setQuest: function (title, hint) {
+      if (questTitleEl) questTitleEl.textContent = title || '';
+      if (questHintEl) questHintEl.textContent = hint || '';
+    },
+    noteAction: function () {
+      if (!document.body.classList.contains('onboarding')) return;
+      onboardActions++;
+      if (onboardActions >= ONBOARD_ACTIONS) window.StratumHud.completeOnboarding();
+    }
+  };
+
+  function noteMapVisit(mapId) {
+    var id = mapId | 0;
+    if (!S.mapsSeen[id]) S.mapsSeen[id] = 1;
+  }
+  function mapsVisitedCount() {
+    var n = 0, k;
+    for (k in S.mapsSeen) if (Object.prototype.hasOwnProperty.call(S.mapsSeen, k)) n++;
+    // "visit another map" means leaving the starter — count maps beyond the first
+    return Math.max(0, n - 1);
+  }
+  function questStats() {
+    return {
+      harvests: S.harvests | 0,
+      claimed: S.personalClaims | 0,
+      kills: S.kills | 0,
+      craftOpens: S.craftOpens | 0,
+      crafts: S.crafts | 0,
+      tools: S.tool | 0,
+      maps: mapsVisitedCount(),
+      mapsVisited: mapsVisitedCount(),
+      level: S.level | 0
+    };
+  }
+  var lastQuestId = '';
+  function refreshQuest(announce) {
+    if (!window.Quests || !window.StratumHud) return;
+    if (document.body.classList.contains('quests-done')) return;
+    var stats = questStats();
+    if (window.Quests.isComplete(stats)) {
+      window.StratumHud.setQuest('THE WORLD IS YOURS', 'Land never resets. Provisions always do.');
+      window.StratumHud.completeOnboarding();
+      if (announce) toast('FIRST SESSION COMPLETE', true);
+      return;
+    }
+    var active = window.Quests.activeQuest(stats);
+    if (!active) return;
+    window.StratumHud.setQuest(active.title.toUpperCase(), active.hint);
+    if (announce && active.id !== lastQuestId && lastQuestId) {
+      toast('NEXT: ' + active.title.toUpperCase(), true);
+    }
+    lastQuestId = active.id;
+  }
   function buildHotbar() {
     var html = '';
     for (var i = 0; i < PALETTE.length; i++) {
@@ -1260,7 +1381,9 @@
         '<span class="n">' + (i === 9 ? '0' : String(i + 1)) + '</span></div>';
     }
     hotbar.innerHTML = html;
-    document.getElementById('h-sel').textContent = 'building: ' + MATNAME[PALETTE[S.sel]];
+    document.getElementById('h-sel').textContent = S.canBuild
+      ? ('building: ' + MATNAME[PALETTE[S.sel]])
+      : 'harvest mode';
     Array.prototype.forEach.call(hotbar.children, function (el) {
       el.addEventListener('click', function () { S.sel = +el.dataset.i; buildHotbar(); });
     });
@@ -1328,7 +1451,13 @@
     if (!S.ready) return;
     S.craftOpen = !S.craftOpen;
     document.getElementById('craft').classList.toggle('on', S.craftOpen);
-    if (S.craftOpen) { buildCraft(); sfx('ui'); }
+    if (S.craftOpen) {
+      S.craftOpens += 1;
+      buildCraft();
+      sfx('ui');
+      if (window.StratumHud) window.StratumHud.noteAction();
+      refreshQuest(true);
+    }
   }
   function closeCraft() {
     S.craftOpen = false;
@@ -1354,9 +1483,12 @@
         '<div class="tier">THE BEST THERE IS</div></div>';
     }
     var recs = S.catalog.recipes || [];
+    var onboardCraft = document.body.classList.contains('onboarding') && (S.tool | 0) === 0;
     for (i = 0; i < recs.length; i++) {
       r = recs[i];
       var locked = r.tier > (S.tool | 0);
+      // first-session craft: hide locked higher-tier recipes so the next step is obvious
+      if (onboardCraft && locked) continue;
       var afford = !locked && canPay(r.inputs);
       html += '<div class="mcard' + (locked ? ' locked' : '') + '" data-recipe="' + r.id + '">' +
         '<div class="nm">' + itemName(r.output.item).toUpperCase() +
@@ -2121,6 +2253,8 @@
     document.getElementById('h-pct').textContent = ((S.claimed / S.total) * 100).toFixed(4) + '%';
     document.getElementById('h-claimed').textContent = S.claimed.toLocaleString() + ' / ' + S.total.toLocaleString();
     document.getElementById('h-remain').textContent = (S.total - S.claimed).toLocaleString();
+    // personal claims only — world S.claimed is the map total and would unveil this on day one
+    if (S.personalClaims > 0) document.body.classList.add('seen-claim-stats');
     document.getElementById('h-kills').textContent = S.kills;
     document.getElementById('h-atk').textContent = S.atk;
     var inv = S.inv || {};
@@ -2130,13 +2264,14 @@
     for (var ck in inv) {
       if (INV_KEYS.indexOf(ck) < 0 && inv[ck] > 0) INV_HTML.push('<span class="chip">' + ck + ' ' + inv[ck] + '</span>');
     }
-    document.getElementById('h-inv').innerHTML = INV_HTML.join('');
+    document.getElementById('h-inv').innerHTML = INV_HTML.join(' ');
     if (S.volatile) {
       var tooln = toolName(S.tool | 0);
       document.getElementById('h-vol').textContent =
         'beasts ' + S.volatile.monstersLive + ' · regrowing ' + S.volatile.nodesDepleted +
         ' · ' + tooln + ' tools';
     }
+    refreshQuest(false);
     if (tlPanel) tlPanel.classList.toggle('hurt', S.hurt > 0.25);
     // target frame
     var tg = S.target;

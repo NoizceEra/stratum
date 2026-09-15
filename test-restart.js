@@ -45,7 +45,7 @@ class C {
       const t = this.buf.subarray(off, off + len).toString('utf8');
       this.buf = this.buf.subarray(off + len);
       let m; try { m = JSON.parse(t); } catch (e) { continue; }
-      if (m.t === 'chunk' && m.nodes) for (const n of m.nodes) this.nodes.push({ x: n[0], y: n[1], kind: n[2], state: n[3] });
+      if (m.t === 'chunk' && m.nodes) for (const n of m.nodes) this.nodes.push({ map: m.map, x: n[0], y: n[1], kind: n[2], state: n[3] });
       this.msgs.push(m);
       this.waiters = this.waiters.filter(w => { if (w.test(m)) { w.resolve(m); return false; } return true; });
     }
@@ -124,7 +124,10 @@ function stats() {
 
     // deplete a node — REAL timer, so it must still be regrowing after the restart
     await sleep(400);
-    const alive = c.nodes.filter(n => n.state === 1);
+    // Nodes must be filtered by MAP: the socket keeps streaming chunks from every map the
+    // player has stood on, and (513,521) is a different tile on each one. Harvesting a
+    // tile that is a node on map 0 while standing on map 2 is refused with "no node here".
+    const alive = c.nodes.filter(n => n.state === 1 && n.map === 2);
     const p = c.pos();
     alive.sort((u, v) => Math.hypot(u.x - p.x, u.y - p.y) - Math.hypot(v.x - p.x, v.y - p.y));
     const node = alive[0];
@@ -169,7 +172,7 @@ function stats() {
     c.send({ t: 'travel', map: want.node.map });
     await c.waitNew(m => m.t === 'arrived', 6000);
     await sleep(600);
-    const seen = c.nodes.filter(n => n.x === want.node.x && n.y === want.node.y)[0];
+    const seen = c.nodes.filter(n => n.map === want.node.map && n.x === want.node.x && n.y === want.node.y)[0];
     ok(seen && seen.state === 0, 'the node is delivered to the client as DEPLETED', seen);
     if (seen) {
       const left = Math.max(0, seen.ripe !== undefined ? seen.ripe : 0);

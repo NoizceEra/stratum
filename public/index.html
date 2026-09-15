@@ -101,6 +101,19 @@
   #craft .cost{color:var(--dim);font-size:10.5px;margin-top:3px}
   #craft .cant{color:#e08070}
   #craft .can{color:#9dc98a}
+  /* inventory chips — flex gap so resources are spaced without a leading indent */
+  #h-inv{display:flex;flex-wrap:wrap;gap:5px;justify-content:flex-end}
+  #h-inv .chip{margin-left:0}
+  /* first-session quest rail — top-center, sits in the gap between #hud-tl and #hud-tr */
+  #hud-quest{top:calc(10px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);
+    text-align:center;max-width:min(300px,42vw);z-index:4;pointer-events:none;padding:7px 12px}
+  #quest-title{color:var(--gold);letter-spacing:.14em;font-size:11px}
+  #quest-hint{color:var(--dim);font-size:10px;margin-top:2px;letter-spacing:.06em}
+  body.quests-done #hud-quest{display:none}
+  /* progressive disclosure — less chrome until the player has played a bit */
+  body.onboarding:not(.seen-claim-stats) #hud-tr{opacity:.35}
+  body.onboarding #hud-bl{display:none}
+  body.onboarding #h-vol{display:none}
 </style>
 </head>
 <body>
@@ -132,6 +145,11 @@
   <div class="k" id="h-claimed">0 / 1,048,576</div>
   <div style="margin-top:7px"><span class="k">remain</span> <span class="v" id="h-remain">1,048,576</span></div>
   <div class="k" style="margin-top:7px;font-size:10px">[M] map · [T] travel</div>
+</div>
+
+<div id="hud-quest" class="panel">
+  <div id="quest-title">CLAIM A TILE</div>
+  <div id="quest-hint">LMB on empty ground</div>
 </div>
 
 <div id="hud-bl" class="panel">
@@ -216,11 +234,14 @@
   body.touch #hotbar .chip{padding:9px 7px;font-size:10px}
   body.touch #gate .box{width:92vw;padding:22px 18px}
   body.touch #gate .rules{font-size:12.5px}
+  /* quest rail: stay clear of the stick (bottom-left) and side panels */
+  body.touch #hud-quest{max-width:min(260px,52vw);padding:6px 10px;font-size:11px}
   /* narrow screens: the two top panels must not collide in portrait */
   @media (max-width:560px){
     #hud-tl{min-width:0;max-width:54vw}
     #hud-tr{min-width:0;max-width:44vw}
     #hud-br{min-width:0;max-width:54vw}
+    #hud-quest{max-width:min(240px,48vw);top:calc(8px + env(safe-area-inset-top))}
     #hud-tl h1{font-size:12px;letter-spacing:.2em}
     #hud-tr .big{font-size:19px}
     .slot{width:25px;height:25px}
@@ -241,6 +262,7 @@
 
 <script src="terrain.js"></script>
 <script src="audio.js"></script>
+<script src="quests.js"></script>
 <script src="game.js"></script>
 </body>
 </html>
