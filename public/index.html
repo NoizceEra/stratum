@@ -101,6 +101,15 @@
   #craft .cost{color:var(--dim);font-size:10.5px;margin-top:3px}
   #craft .cant{color:#e08070}
   #craft .can{color:#9dc98a}
+  /* idle-structures overlay — same full-screen pattern as #craft */
+  #idle{position:fixed;inset:0;z-index:15;background:rgba(5,6,9,.95);display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:10px}
+  #idle.on{display:flex}
+  #idlelist{display:flex;flex-direction:column;gap:8px;max-height:68vh;overflow-y:auto;width:min(560px,86vw)}
+  #idle .locked{opacity:.45}
+  #idle .cost{color:var(--dim);font-size:10.5px;margin-top:3px}
+  #idle .cant{color:#e08070}
+  #idle .can{color:#9dc98a}
   /* leaderboard overlay — same full-screen pattern as #nodes/#craft/#map */
   #leaderboard{position:fixed;inset:0;z-index:15;background:rgba(5,6,9,.95);display:none;
     align-items:center;justify-content:center;flex-direction:column;gap:10px}
@@ -169,7 +178,7 @@
   <span class="k">WASD</span> walk &nbsp;
   <span class="k">LMB</span> strike / harvest / build &nbsp;
   <span class="k">RMB</span> give back<br>
-  <span class="k">1-0</span> material &nbsp; <span class="k">M</span> map &nbsp; <span class="k">T</span> travel &nbsp; <span class="k">C</span> craft &nbsp; <span class="k">L</span> leaderboard &nbsp; <span class="k">+/-</span> zoom
+  <span class="k">1-0</span> material &nbsp; <span class="k">M</span> map &nbsp; <span class="k">T</span> travel &nbsp; <span class="k">C</span> craft &nbsp; <span class="k">I</span> structures &nbsp; <span class="k">L</span> leaderboard &nbsp; <span class="k">+/-</span> zoom
 </div>
 
 <div id="hud-br" class="panel">
@@ -197,6 +206,12 @@
   <div class="disc">CRAFT — <span id="crafttool">FLINT TOOLS</span></div>
   <div id="craftlist"></div>
   <div class="disc" style="margin-top:4px">[C] CLOSE</div>
+</div>
+
+<div id="idle">
+  <div class="disc">STRUCTURES — pick one, then LMB your own claimed land</div>
+  <div id="idlelist"></div>
+  <div class="disc" style="margin-top:4px">[I] CLOSE</div>
 </div>
 
 <div id="leaderboard">

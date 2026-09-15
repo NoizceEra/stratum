@@ -21,6 +21,7 @@ const { World, ATTACK_RANGE } = require('./world.js');
 const ECO = require('./src/economy.js');
 const Drops = require('./src/drops.js');
 const ACH = require('./src/achievements.js');
+const Idle = require('./src/idle.js');
 
 const PORT = Number(process.env.PORT || 8090);
 const PUB = path.join(__dirname, 'public');
@@ -69,6 +70,12 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS player_achievements(
     k TEXT PRIMARY KEY, ids TEXT NOT NULL, maps TEXT NOT NULL,
     crafts INTEGER NOT NULL DEFAULT 0, title TEXT);
+  CREATE TABLE IF NOT EXISTS structures(
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, map INTEGER NOT NULL, x INTEGER NOT NULL,
+    y INTEGER NOT NULL, owner TEXT NOT NULL, builtAt INTEGER NOT NULL,
+    lastCollectedAt INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS structures_map ON structures(map);
+  CREATE INDEX IF NOT EXISTS structures_owner ON structures(owner);
 `);
 
 // migrate a pre-maps tiles table (tiles used to be keyed by x,y only)
@@ -143,6 +150,7 @@ function bumpOwner(owner, d) {
 
 const qTile = db.prepare('INSERT OR REPLACE INTO tiles(map,x,y,m,owner,ts) VALUES(?,?,?,?,?,?)');
 const qDel = db.prepare('DELETE FROM tiles WHERE map=? AND x=? AND y=?');
+const qStruct = db.prepare('INSERT OR REPLACE INTO structures(id,kind,map,x,y,owner,builtAt,lastCollectedAt) VALUES(?,?,?,?,?,?,?,?)');
 const qPlay = db.prepare('INSERT OR REPLACE INTO players(k,name,hue,created,last) VALUES(?,?,?,?,?)');
 const qPlayGet = db.prepare('SELECT name,hue FROM players WHERE k=?');
 const qPlayCount = db.prepare('SELECT COUNT(*) n FROM players');
@@ -154,6 +162,22 @@ const qAchGet = db.prepare('SELECT * FROM player_achievements WHERE k=?');
 // achievements are keyed by player + map, so "claimed" only counts what THIS player owns
 // on the map they are currently standing on — the tiles_owner index makes this cheap.
 const qClaimCount = db.prepare('SELECT COUNT(*) n FROM tiles WHERE map=? AND owner=?');
+
+/** authoritative in-memory idle structures: "map:y*W+x" -> {id,kind,map,x,y,owner,builtAt,lastCollectedAt}
+ *  Same key shape as `tiles` — a structure needs a claimed tile under it, so the two
+ *  addressing schemes staying identical keeps the ownership check a plain Map lookup. */
+const structures = new Map();
+function structKey(map, x, y) { return map + ':' + (y * W + x); }
+(function loadStructures() {
+  const rows = db.prepare('SELECT id,kind,map,x,y,owner,builtAt,lastCollectedAt FROM structures').all();
+  for (const r of rows) {
+    structures.set(structKey(r.map, r.x, r.y), {
+      id: r.id, kind: r.kind, map: r.map, x: r.x, y: r.y, owner: r.owner,
+      builtAt: r.builtAt, lastCollectedAt: r.lastCollectedAt
+    });
+  }
+  console.log(`[world] ${rows.length} idle structures restored`);
+})();
 
 const world = new World(db);
 
@@ -439,8 +463,23 @@ function sendChunk(c, cx, cy) {
     t: 'chunk', map, cx, cy, n: out.length / 4,
     d: Buffer.from(bytes).toString(B64), owners,
     nodes: world.nodesForChunk(map, cx, cy),
-    drops: world.dropsForChunk(map, cx, cy)
+    drops: world.dropsForChunk(map, cx, cy),
+    structures: structuresForChunk(map, cx, cy)
   });
+}
+
+/** Structures in one chunk, current fill level included — the only per-structure work
+ *  that happens outside build/collect (no background tick computes this ahead of time). */
+function structuresForChunk(map, cx, cy) {
+  const x0 = cx * CHUNK, y0 = cy * CHUNK, now = Date.now();
+  const out = [];
+  for (const s of structures.values()) {
+    if (s.map !== map || s.x < x0 || s.x >= x0 + CHUNK || s.y < y0 || s.y >= y0 + CHUNK) continue;
+    const def = Idle.structureOf(s.kind);
+    if (!def) continue;
+    out.push({ id: s.id, kind: s.kind, x: s.x, y: s.y, owner: s.owner, accrued: Idle.accrued(s, now), capacity: def.capacity, resource: def.produces });
+  }
+  return out;
 }
 
 function setView(c, tx, ty) {
@@ -466,6 +505,16 @@ function setView(c, tx, ty) {
 function broadcastTile(map, cx, cy, x, y, m, owner) {
   const k = subKey(map, cx, cy);
   for (const c of clients.values()) if (c.ready && c.subs.has(k)) c.send({ t: 'tiles', list: [[x, y, m, owner]] });
+}
+
+/** A structure was built — tell everyone nearby through the same chunk-subscription
+ *  delivery every other placed thing uses (broadcastTile/broadcastDrop). */
+function broadcastStructure(map, x, y, struct) {
+  const cx = T.chunkOf(x), cy = T.chunkOf(y), k = subKey(map, cx, cy);
+  const def = Idle.structureOf(struct.kind);
+  if (!def) return;
+  const payload = { t: 'structure', map, id: struct.id, kind: struct.kind, x, y, owner: struct.owner, accrued: 0, capacity: def.capacity, resource: def.produces };
+  for (const c of clients.values()) if (c.ready && c.subs.has(k)) c.send(payload);
 }
 
 /** A loot cache appeared (death, or a partial pickup leaving a remainder) — tell everyone nearby. */
@@ -567,7 +616,7 @@ function cleanText(v, max) {
 // The complete set of things a client may say. Anything else is ignored on sight: the
 // server never dispatches a type it does not know, so a new type cannot reach any code
 // path by accident.
-const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup']);
+const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup', 'build-structure', 'collect-structure']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -627,7 +676,11 @@ function onMessage(c, msg) {
           names: ECO.MATERIAL_NAMES.slice(),
           recipes: ECO.RECIPES.map(r => ({ id: r.id, tier: r.tier, inputs: Object.assign({}, r.inputs), output: { item: r.output.item, count: r.output.count } })),
           items: Object.assign({}, ECO.ITEMS),
-          tools: ECO.TOOL_TIERS.map(t => ({ tier: t.tier, id: t.id, name: t.name, cost: Object.assign({}, t.cost) }))
+          tools: ECO.TOOL_TIERS.map(t => ({ tier: t.tier, id: t.id, name: t.name, cost: Object.assign({}, t.cost) })),
+          structures: Object.keys(Idle.STRUCTURES).map(k => {
+            const d = Idle.STRUCTURES[k];
+            return { id: d.id, name: d.name, tier: d.tier, cost: Object.assign({}, d.cost), produces: d.produces, ratePerMs: d.ratePerMs, capacity: d.capacity };
+          })
         },
         world: { w: W, h: H, chunk: CHUNK },
         maps: T.MAPS.map(m => ({ id: m.id, name: m.name, tier: m.tier, desc: m.desc })),
@@ -850,6 +903,72 @@ function onMessage(c, msg) {
       sendVitals(c);
       c.send({ t: 'tooled', tool: next, name: tier.name, inv: c.inv });
       checkAchievements(c);
+      break;
+    }
+
+    case 'build-structure': {
+      if (!c.ready || c.dead) return;
+      const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
+      if (x === null || y === null) return c.send({ t: 'built', err: 'bounds' });
+      const kind = cleanText(msg.kind, 16);
+      const def = Idle.structureOf(kind);
+      if (!def) return c.send({ t: 'built', err: 'unknown structure', kind });
+      const dx = x - c.x, dy = y - c.y;
+      if (dx * dx + dy * dy > REACH * REACH) return c.send({ t: 'built', err: 'reach', x, y });
+      // a structure needs a claimed tile under it — this is what keeps land ownership
+      // meaningful under cozy rules even without combat/scarcity driving it.
+      const tile = tiles.get(c.map + ':' + (y * W + x));
+      if (!tile || tile.owner !== c.key) return c.send({ t: 'built', err: 'needs your own claimed land', x, y });
+      const skey = structKey(c.map, x, y);
+      if (structures.has(skey)) return c.send({ t: 'built', err: 'already built here', x, y });
+      if (def.tier > (c.tool | 0)) return c.send({ t: 'built', err: 'locked: needs better tools', kind });
+      const cost = Idle.buildCost(kind);
+      if (!cost || !ECO.canAfford(c.inv, cost)) {
+        return c.send({ t: 'built', err: 'not enough resources', need: cost, missing: cost ? ECO.missingFor(c.inv, cost) : undefined, kind });
+      }
+      const paid = ECO.applyCost(c.inv, cost);
+      if (!paid) return c.send({ t: 'built', err: 'not enough resources', need: cost, kind });
+      const now = Date.now();
+      const struct = Idle.makeStructure(skey, kind, c.map, x, y, c.key, now);
+      if (!struct) return c.send({ t: 'built', err: 'internal' });
+      c.inv = paid;
+      structures.set(skey, struct);
+      qStruct.run(struct.id, struct.kind, struct.map, struct.x, struct.y, struct.owner, struct.builtAt, struct.lastCollectedAt);
+      stateSave(c);
+      broadcastStructure(c.map, x, y, struct);
+      c.send({ t: 'built', kind, x, y, id: struct.id, inv: c.inv });
+      checkAchievements(c);
+      break;
+    }
+
+    case 'collect-structure': {
+      if (!c.ready || c.dead) return;
+      let skey;
+      if (isFin(msg.x) && isFin(msg.y)) {
+        const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
+        if (x === null || y === null) return c.send({ t: 'collected', err: 'bounds' });
+        skey = structKey(c.map, x, y);
+      } else {
+        const id = cleanText(msg.id, 64);
+        if (!id) return c.send({ t: 'collected', err: 'no structure there' });
+        skey = id;
+      }
+      const struct = structures.get(skey);
+      if (!struct || struct.map !== c.map) return c.send({ t: 'collected', err: 'no structure there' });
+      if (struct.owner !== c.key) return c.send({ t: 'collected', err: 'not yours' });
+      // Reach is enforced for consistency with every other tile-targeted interaction —
+      // a structure being passive makes it less critical (nobody else can drain it),
+      // but "walk up, collect" keeps the same loop as harvesting a node or a drop.
+      const dx = struct.x - c.x, dy = struct.y - c.y;
+      if (dx * dx + dy * dy > REACH * REACH) return c.send({ t: 'collected', err: 'reach', x: struct.x, y: struct.y });
+      const now = Date.now();
+      const res = Idle.collect(struct, c.inv, now);
+      c.inv = res.inv;
+      structures.set(skey, res.struct);
+      qStruct.run(res.struct.id, res.struct.kind, res.struct.map, res.struct.x, res.struct.y, res.struct.owner, res.struct.builtAt, res.struct.lastCollectedAt);
+      stateSave(c);
+      c.send({ t: 'collected', x: struct.x, y: struct.y, gained: res.gained, resource: res.resource, inv: c.inv });
+      if (res.gained > 0) checkAchievements(c);
       break;
     }
 

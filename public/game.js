@@ -579,6 +579,9 @@
     nodes: new Map(),          // "x,y" -> {kind,state,until,x,y}
     mons: new Map(),           // id -> {id,kind,x,y,rx,ry,hp,maxHp,hit,sw,dt,x?,pal,form}
     drops: new Map(),          // "x,y" -> {id,x,y,res,at,ttlMs}
+    structures: new Map(),     // "x,y" -> {id,kind,x,y,owner,accrued,capacity,resource}
+    placingStructure: null,    // kind selected in the [I] idle panel, armed for the next LMB
+    idleOpen: false,
     remotes: new Map(), floats: [],
     lastViewCk: '', mapOpen: false, travelOpen: false, mapDensity: null, lastEnergySync: 0,
     // presentation state
@@ -709,7 +712,7 @@
       case 'arrived':
         S.map = m.map; S.maps = m.maps; S.x = m.x; S.y = m.y;
         S.cam.x = m.x; S.cam.y = m.y;
-        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.drops.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
+        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.drops.clear(); S.structures.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
         S.claimed = m.claimed; S.total = m.total;
         setMapName(); closeTravel(); closeCraft();
         noteMapVisit(S.map);
@@ -727,6 +730,7 @@
         }
         if (m.nodes) for (var n = 0; n < m.nodes.length; n++) applyNode(m.nodes[n]);
         if (m.drops) for (var dn = 0; dn < m.drops.length; dn++) applyDrop(m.drops[dn]);
+        if (m.structures) for (var sn = 0; sn < m.structures.length; sn++) applyStructure(m.structures[sn]);
         if (S.edits.size > 400000) pruneEdits();
         break;
       }
@@ -762,6 +766,32 @@
 
       case 'drop': applyDrop(m); break;
       case 'drop-gone': S.drops.delete(nkN(m.x, m.y)); break;
+
+      case 'structure': applyStructure(m); break;
+      case 'built': {
+        if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
+        if (m.inv) S.inv = m.inv;
+        toast('BUILT: ' + String(m.kind || '').toUpperCase(), true);
+        sfx('craft');
+        if (window.StratumHud) window.StratumHud.noteAction();
+        break;
+      }
+      case 'collected': {
+        if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
+        if (m.inv) S.inv = m.inv;
+        var sk = nkN(m.x, m.y);
+        var se = S.structures.get(sk);
+        if (se) { se.accrued = 0; }
+        if (m.gained > 0) {
+          toast('COLLECTED +' + m.gained + ' ' + m.resource, true);
+          float(m.x, m.y, '+' + m.gained + ' ' + m.resource, '#c9e08a', 0);
+          sfx('harvest');
+          if (window.StratumHud) window.StratumHud.noteAction();
+        } else {
+          toast('NOTHING TO COLLECT YET');
+        }
+        break;
+      }
       case 'pickup': {
         if (m.err) { if (m.err !== 'none') toast(m.err.toUpperCase()); break; }
         if (m.inv) S.inv = m.inv;
@@ -924,7 +954,7 @@
         S.hp = m.hp; S.maxHp = m.maxHp; S.x = m.spawn.x; S.y = m.spawn.y;
         S.cam.x = S.x; S.cam.y = S.y;
         if (m.inv) S.inv = m.inv;
-        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.drops.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
+        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.drops.clear(); S.structures.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
         S.death = 0; S.hurt = 1;
         burst(S.x, S.y, { glowc: '#ffc9a8', light: '#ffe9d2' }, 22, 3);
         S.deathBy = String(m.by || 'the world').toUpperCase();
@@ -1022,6 +1052,13 @@
     if (!d || typeof d.x !== 'number' || typeof d.y !== 'number' || !d.res) return;
     S.drops.set(nkN(d.x, d.y), { id: d.id, x: d.x, y: d.y, res: d.res, at: d.at, ttlMs: d.ttlMs });
   }
+  function applyStructure(s) {
+    if (!s || typeof s.x !== 'number' || typeof s.y !== 'number' || !s.kind) return;
+    S.structures.set(nkN(s.x, s.y), {
+      id: s.id, kind: s.kind, x: s.x, y: s.y, owner: s.owner,
+      accrued: s.accrued || 0, capacity: s.capacity || 0, resource: s.resource
+    });
+  }
   function pruneEdits() {
     var keep = new Map(), lamps = new Set();
     S.edits.forEach(function (v, k) {
@@ -1080,6 +1117,26 @@
       send({ t: 'pickup', x: x, y: y });
       return;
     }
+    var st = S.structures.get(nkN(x, y));
+    if (st) {
+      var sdx = x - S.x, sdy = y - S.y;
+      if (sdx * sdx + sdy * sdy > S.reach * S.reach) return toast('OUT OF REACH — ' + S.reach + ' TILES MAX');
+      if (st.owner !== S.key) return toast(st.kind.toUpperCase() + ' — NOT YOURS');
+      faceTowards(sdx, sdy);
+      send({ t: 'collect-structure', x: x, y: y });
+      return;
+    }
+    if (S.placingStructure) {
+      var pdx = x - S.x, pdy = y - S.y;
+      var kind = S.placingStructure;
+      S.placingStructure = null;
+      if (pdx * pdx + pdy * pdy > S.reach * S.reach) return toast('OUT OF REACH — ' + S.reach + ' TILES MAX');
+      var owned = S.edits.get(tk(x, y));
+      if (!owned || owned.owner !== S.key) return toast('NEEDS YOUR OWN CLAIMED LAND');
+      faceTowards(pdx, pdy);
+      send({ t: 'build-structure', x: x, y: y, kind: kind });
+      return;
+    }
     var nd = S.nodes.get(nkN(x, y));
     if (nd && nd.state === 1) {
       var dx = x - S.x, dy = y - S.y;
@@ -1128,8 +1185,9 @@
     if (k === 'm') { toggleMap(); sfx('ui'); e.preventDefault(); return; }
     if (k === 't') { toggleTravel(); sfx('ui'); e.preventDefault(); return; }
     if (k === 'c') { toggleCraft(); e.preventDefault(); return; }
+    if (k === 'i') { toggleIdle(); e.preventDefault(); return; }
     if (k === 'l') { toggleLeaderboard(); sfx('ui'); e.preventDefault(); return; }
-    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.lbOpen) closeLeaderboard(); return; }
+    if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); return; }
     if (e.key === '+' || e.key === '=') { S.zoom = Math.min(3, S.zoom * 2); e.preventDefault(); return; }
     if (e.key === '-' || e.key === '_') { S.zoom = Math.max(0.5, S.zoom / 2); e.preventDefault(); return; }
     var n = parseInt(e.key, 10);
@@ -1550,6 +1608,48 @@
         unlockAudio();
         if (el.dataset.toolup) send({ t: 'toolup' });
         else if (el.dataset.recipe) send({ t: 'craft', id: el.dataset.recipe });
+      });
+    });
+  }
+
+  // ---------- idle structures -------------------------------------------------
+  // Same catalog-driven pattern as craft: the server ships every structure's cost/
+  // tier/rate/capacity in S.catalog.structures, so picking one just arms the next LMB
+  // click (contextAction sends 'build-structure' at whatever tile gets clicked).
+  function toggleIdle() {
+    if (!S.ready) return;
+    S.idleOpen = !S.idleOpen;
+    document.getElementById('idle').classList.toggle('on', S.idleOpen);
+    if (S.idleOpen) { buildIdleList(); sfx('ui'); if (window.StratumHud) window.StratumHud.noteAction(); }
+  }
+  function closeIdle() {
+    S.idleOpen = false;
+    document.getElementById('idle').classList.remove('on');
+  }
+  function buildIdleList() {
+    var list = document.getElementById('idlelist');
+    var defs = (S.catalog && S.catalog.structures) || [];
+    if (!defs.length) { list.innerHTML = '<div class="mcard"><div class="ds">NO STRUCTURES KNOWN YET.</div></div>'; return; }
+    var html = '';
+    for (var i = 0; i < defs.length; i++) {
+      var d = defs[i];
+      var locked = d.tier > (S.tool | 0);
+      var afford = !locked && canPay(d.cost);
+      var perMin = Math.round(d.ratePerMs * 60000 * 10) / 10;
+      html += '<div class="mcard' + (locked ? ' locked' : '') + '" data-kind="' + d.id + '">' +
+        '<div class="nm">' + d.name.toUpperCase() +
+        (locked ? ' <span class="tier">— NEEDS TIER ' + d.tier + ' TOOLS</span>' : '') + '</div>' +
+        '<div class="tier">MAKES ' + d.produces.toUpperCase() + ' — ~' + perMin + '/min, CAPS AT ' + d.capacity + '</div>' +
+        '<div class="cost ' + (afford ? 'can' : 'cant') + '">' + costText(d.cost) + '</div></div>';
+    }
+    list.innerHTML = html;
+    Array.prototype.forEach.call(list.children, function (el) {
+      el.addEventListener('click', function () {
+        if (el.classList.contains('locked')) return;
+        unlockAudio();
+        S.placingStructure = el.dataset.kind;
+        closeIdle();
+        toast('SELECT YOUR OWN CLAIMED LAND — LMB TO BUILD');
       });
     });
   }
