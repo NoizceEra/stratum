@@ -99,21 +99,26 @@ function densFor(map) {
   if (!d) { d = new Uint8Array(MAPGRID * MAPGRID); density.set(map, d); }
   return d;
 }
+// Claimed-tile count per map, kept in lockstep with every tiles.set/tiles.delete below
+// instead of being recomputed by scanning `tiles` — that scan is O(claimed tiles) and
+// used to run on nearly every placement, release, travel and the 5s stats tick.
+const claimCounts = new Map();           // mapId -> count
+function bumpClaim(map, d) { claimCounts.set(map, (claimCounts.get(map) || 0) + d); }
+function countClaims(map) { return claimCounts.get(map) || 0; }
 (function loadTiles() {
   const rows = db.prepare('SELECT map, x, y, m, owner FROM tiles').all();
-  const perMap = {};
   for (const r of rows) {
     const key = r.map + ':' + (r.y * W + r.x);
     tiles.set(key, { m: r.m, owner: r.owner, map: r.map, x: r.x, y: r.y });
     const d = densFor(r.map);
     const i = (((r.y / MAPSTEP) | 0) * MAPGRID) + ((r.x / MAPSTEP) | 0);
     if (d[i] < 255) d[i]++;
-    perMap[r.map] = (perMap[r.map] || 0) + 1;
+    bumpClaim(r.map, 1);
   }
   const total = W * H;
-  console.log(`[world] ${rows.length} owned tiles restored across ${Object.keys(perMap).length} map(s)`);
+  console.log(`[world] ${rows.length} owned tiles restored across ${claimCounts.size} map(s)`);
   for (const m of T.MAPS) {
-    const c = perMap[m.id] || 0;
+    const c = countClaims(m.id);
     console.log(`[world]   #${m.id} ${m.name}: ${c} claimed (${((c / total) * 100).toFixed(4)}%)`);
   }
 })();
@@ -143,8 +148,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/stats') {
     const bodies = {};
     for (const m of T.MAPS) {
-      let c = 0;
-      for (const t of tiles.values()) if (t.map === m.id) c++;
+      const c = countClaims(m.id);
       bodies[m.id] = { name: m.name, claimed: c, pct: +((c / (W * H)) * 100).toFixed(5) };
     }
     const body = JSON.stringify({
@@ -611,6 +615,7 @@ function onMessage(c, msg) {
         qDel.run(c.map, x, y);
         const d = densFor(c.map), i = (((y / MAPSTEP) | 0) * MAPGRID) + ((x / MAPSTEP) | 0);
         if (d[i] > 0) d[i]--;
+        bumpClaim(c.map, -1);
         broadcastTile(c.map, cx, cy, x, y, -1, '');
         c.send({ t: 'unclaim', x, y, claimed: countClaims(c.map) });
       } else {
@@ -619,6 +624,7 @@ function onMessage(c, msg) {
         if (!cur) {
           const d = densFor(c.map), i = (((y / MAPSTEP) | 0) * MAPGRID) + ((x / MAPSTEP) | 0);
           if (d[i] < 255) d[i]++;
+          bumpClaim(c.map, 1);
         }
         broadcastTile(c.map, cx, cy, x, y, m, c.key);
         c.energy -= COST;
@@ -727,11 +733,6 @@ function onMessage(c, msg) {
   }
 }
 
-function countClaims(map) {
-  let n = 0;
-  for (const t of tiles.values()) if (t.map === map) n++;
-  return n;
-}
 function broadcastNode(map, x, y, kind, state, ripeSec) {
   const cx = T.chunkOf(x), cy = T.chunkOf(y), k = subKey(map, cx, cy);
   for (const c of clients.values()) if (c.ready && c.subs.has(k)) c.send({ t: 'node', map, x, y, kind, state, ripeSec });
