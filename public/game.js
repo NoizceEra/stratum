@@ -578,6 +578,7 @@
     edits: new Map(), baseCache: new Map(), lamps: new Set(),
     nodes: new Map(),          // "x,y" -> {kind,state,until,x,y}
     mons: new Map(),           // id -> {id,kind,x,y,rx,ry,hp,maxHp,hit,sw,dt,x?,pal,form}
+    drops: new Map(),          // "x,y" -> {id,x,y,res,at,ttlMs}
     remotes: new Map(), floats: [],
     lastViewCk: '', mapOpen: false, travelOpen: false, mapDensity: null, lastEnergySync: 0,
     // presentation state
@@ -707,7 +708,7 @@
       case 'arrived':
         S.map = m.map; S.maps = m.maps; S.x = m.x; S.y = m.y;
         S.cam.x = m.x; S.cam.y = m.y;
-        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
+        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.drops.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
         S.claimed = m.claimed; S.total = m.total;
         setMapName(); closeTravel(); closeCraft();
         noteMapVisit(S.map);
@@ -724,6 +725,7 @@
           setLamp(kk, d[i + 2]);
         }
         if (m.nodes) for (var n = 0; n < m.nodes.length; n++) applyNode(m.nodes[n]);
+        if (m.drops) for (var dn = 0; dn < m.drops.length; dn++) applyDrop(m.drops[dn]);
         if (S.edits.size > 400000) pruneEdits();
         break;
       }
@@ -756,6 +758,19 @@
         break;
       }
       case 'node': applyNode([m.x, m.y, m.kind, m.state, m.ripeSec]); break;
+
+      case 'drop': applyDrop(m); break;
+      case 'drop-gone': S.drops.delete(nkN(m.x, m.y)); break;
+      case 'pickup': {
+        if (m.err) { if (m.err !== 'none') toast(m.err.toUpperCase()); break; }
+        if (m.inv) S.inv = m.inv;
+        var got = [];
+        if (m.taken) for (var tk2 in m.taken) got.push(m.taken[tk2] + ' ' + tk2);
+        toast(got.length ? 'PICKED UP ' + got.join(' + ') : 'PICKED UP', true);
+        sfx('harvest');
+        if (window.StratumHud) window.StratumHud.noteAction();
+        break;
+      }
 
       case 'harvested': {
         if (m.err) { toast(m.err.toUpperCase() + (m.wait ? ' — ' + m.wait + 's' : '')); sfx('deny'); break; }
@@ -907,7 +922,8 @@
       case 'died':
         S.hp = m.hp; S.maxHp = m.maxHp; S.x = m.spawn.x; S.y = m.spawn.y;
         S.cam.x = S.x; S.cam.y = S.y;
-        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
+        if (m.inv) S.inv = m.inv;
+        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.drops.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
         S.death = 0; S.hurt = 1;
         burst(S.x, S.y, { glowc: '#ffc9a8', light: '#ffe9d2' }, 22, 3);
         S.deathBy = String(m.by || 'the world').toUpperCase();
@@ -989,6 +1005,10 @@
       until: a[3] === 0 ? 0 : Date.now() + (a[4] || 0) * 1000
     });
   }
+  function applyDrop(d) {
+    if (!d || typeof d.x !== 'number' || typeof d.y !== 'number' || !d.res) return;
+    S.drops.set(nkN(d.x, d.y), { id: d.id, x: d.x, y: d.y, res: d.res, at: d.at, ttlMs: d.ttlMs });
+  }
   function pruneEdits() {
     var keep = new Map(), lamps = new Set();
     S.edits.forEach(function (v, k) {
@@ -1037,6 +1057,14 @@
       S.target = mon; S.targetUntil = Date.now() + 4000;
       send({ t: 'attack', id: mon.id });
       sfx('attack');
+      return;
+    }
+    var dr = S.drops.get(nkN(x, y));
+    if (dr) {
+      var ddx = x - S.x, ddy = y - S.y;
+      if (ddx * ddx + ddy * ddy > S.reach * S.reach) return toast('OUT OF REACH — ' + S.reach + ' TILES MAX');
+      faceTowards(ddx, ddy);
+      send({ t: 'pickup', x: x, y: y });
       return;
     }
     var nd = S.nodes.get(nkN(x, y));
@@ -1630,6 +1658,10 @@
     nodeN++;
     znew(nd.y + 0.5, 1, nd);
   }
+  function takeDrop(dr) {
+    if (dr.x < Z_X0 || dr.x > Z_X1 || dr.y < Z_Y0 || dr.y > Z_Y1) return;
+    znew(dr.y + 0.5, 5, dr);
+  }
   function takeMon(m) {
     var tx = m.x - m.rx, ty = m.y - m.ry, klerp = Math.min(1, S.dt * 14);
     m.rx += tx * klerp; m.ry += ty * klerp;
@@ -1758,6 +1790,7 @@
     // ---- entities, y-sorted so what is in front overlaps what is behind ----
     zi = 0; zlist.length = 0; nodeN = 0;
     S.nodes.forEach(takeNode);
+    S.drops.forEach(takeDrop);
     S.mons.forEach(takeMon);
     S.remotes.forEach(takeRemote);
     SELF.x = S.x; SELF.y = S.y;
@@ -1770,6 +1803,7 @@
       if (kk === 4) { ex = ox + S.x * s; ey = oy + S.y * s; }
       else { ex = ox + rr.rx * s; ey = oy + rr.ry * s; }
       if (kk === 1) drawNodeSprite(ex, ey, s, rr, now);
+      else if (kk === 5) drawDropSprite(ex, ey, s, now);
       else if (kk === 2) drawMonster(ex, ey, s, rr, now);
       else if (kk === 3) {
         drawAvatar(ex, ey, s, now, rr.body || '#b7c8dc', rr.trim || '#7f93a8', rr.faceX, rr.faceY, rr.walk, rr.moving, -1, 0);
@@ -1872,6 +1906,21 @@
       ctx.fillRect(Math.round(ox + p.x * s - sz / 2), Math.round(oy + p.y * s - sz / 2), Math.round(sz), Math.round(sz));
     }
     ctx.globalAlpha = 1;
+  }
+
+  // ---------- death drops (src/drops.js) -----------------------------------
+  // Deliberately minimal: a pulsing gold dot marks a loot cache. It is not the focus.
+  function drawDropSprite(x, y, s, now) {
+    var pulse = 0.72 + 0.22 * Math.sin(now * 0.006);
+    var r = s * 0.16 * pulse;
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = '#f2c94c';
+    ctx.beginPath(); ctx.arc(x, y - s * 0.08, r * 1.8, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#f2c94c';
+    ctx.beginPath(); ctx.arc(x, y - s * 0.08, r, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#8a5a1c';
+    ctx.beginPath(); ctx.arc(x, y - s * 0.08, r * 0.4, 0, TAU); ctx.fill();
   }
 
   // ---------- node sprites in the world -----------------------------------

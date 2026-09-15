@@ -26,6 +26,7 @@
  *   movement       every step is validated: no water, no void, never off the map.
  */
 const T = require('./public/terrain.js');
+const Drops = require('./src/drops.js');
 
 const VIEW_CHUNKS = 3;          // chunk radius of nodes materialised around a player
 const MON_ACTIVATE = 3;         // chunk radius of monster homes materialised
@@ -78,6 +79,96 @@ class World {
       n++;
     }
     console.log(`[volatile] ${n} depleted resource nodes still regrowing`);
+
+    // ---- death drops (src/drops.js) ---------------------------------------
+    // One drop per tile: the key IS the drop id, so a second death on the same tile
+    // before the first cache is looted or expires simply overwrites it in memory and
+    // on disk. That is a deliberate simplification — corpse stacking is not modelled.
+    this.drops = new Map();       // "map:x:y" -> {id,map,x,y,res,at,ttlMs}
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS drops(
+        id TEXT PRIMARY KEY, map INTEGER NOT NULL, x INTEGER NOT NULL, y INTEGER NOT NULL,
+        res TEXT NOT NULL, at INTEGER NOT NULL, ttl INTEGER NOT NULL);
+    `);
+    this.qDropSet = db.prepare('INSERT OR REPLACE INTO drops(id,map,x,y,res,at,ttl) VALUES(?,?,?,?,?,?,?)');
+    this.qDropDel = db.prepare('DELETE FROM drops WHERE id=?');
+    this.qDropLoaded = db.prepare('SELECT id,map,x,y,res,at,ttl FROM drops');
+
+    let nd = 0, ndExpired = 0;
+    for (const r of this.qDropLoaded.all()) {
+      let res = null;
+      try { res = JSON.parse(r.res); } catch (e) { res = null; }
+      const drop = Drops.makeDrop(r.id, String(r.map), r.x, r.y, res, r.at, r.ttl);
+      // a cache that aged out while the server was down is gone, not a free restock
+      if (!drop || Drops.expired(drop, now)) { this.qDropDel.run(r.id); ndExpired++; continue; }
+      this.drops.set(r.map + ':' + r.x + ':' + r.y, drop);
+      nd++;
+    }
+    console.log(`[volatile] ${nd} death drops restored (${ndExpired} had expired while down)`);
+  }
+
+  // ---------- death drops ---------------------------------------------------
+  /** Materialise a loot cache at (x,y) on `map` and persist it. Returns the drop, or null. */
+  addDrop(map, x, y, res, now, ttlMs) {
+    const key = map + ':' + x + ':' + y;
+    const drop = Drops.makeDrop(key, String(map), x, y, res, now, ttlMs);
+    if (!drop) return null;
+    this.drops.set(key, drop);
+    this.qDropSet.run(drop.id, map, x, y, JSON.stringify(drop.res), drop.at, drop.ttlMs);
+    return drop;
+  }
+
+  /** The live drop sitting at (x,y) on `map`, or null. */
+  dropAt(map, x, y) { return this.drops.get(map + ':' + x + ':' + y) || null; }
+
+  /** Wire-ready drops inside chunk (cx,cy) of `map` — same shape addDrop returns. */
+  dropsForChunk(map, cx, cy) {
+    const x0 = cx * T.CHUNK, y0 = cy * T.CHUNK, x1 = x0 + T.CHUNK, y1 = y0 + T.CHUNK;
+    const out = [];
+    for (const d of this.drops.values()) {
+      if (Number(d.map) !== map) continue;
+      if (d.x < x0 || d.x >= x1 || d.y < y0 || d.y >= y1) continue;
+      out.push(d);
+    }
+    return out;
+  }
+
+  /**
+   * Take what fits of the drop at (map,x,y) into `inv`. Returns Drops.pickup's shape:
+   * {ok:true, inv (NEW), taken, left} or {ok:false, reason}. A drop reduced to a
+   * remainder (stack limits left something behind) stays on the ground; an emptied
+   * or expired one is removed from memory and disk.
+   */
+  pickupDrop(map, x, y, inv, now, limits) {
+    const key = map + ':' + x + ':' + y;
+    const drop = this.drops.get(key);
+    if (!drop) return { ok: false, reason: 'none', inv };
+    const r = Drops.pickup(drop, inv, now, limits);
+    if (!r.ok) {
+      if (r.reason === 'expired') { this.drops.delete(key); this.qDropDel.run(drop.id); }
+      return r;
+    }
+    if (r.left && Drops.totalIn({ res: r.left }) > 0) {
+      const remain = { id: drop.id, map: drop.map, x: drop.x, y: drop.y, res: r.left, at: drop.at, ttlMs: drop.ttlMs };
+      this.drops.set(key, remain);
+      this.qDropSet.run(remain.id, map, x, y, JSON.stringify(remain.res), remain.at, remain.ttlMs);
+    } else {
+      this.drops.delete(key);
+      this.qDropDel.run(drop.id);
+    }
+    return r;
+  }
+
+  /** Remove every drop past its ttl. Returns [{map,x,y,id}] for the caller to broadcast. */
+  sweepExpiredDrops(now) {
+    const gone = [];
+    for (const [key, d] of this.drops) {
+      if (!Drops.expired(d, now)) continue;
+      this.drops.delete(key);
+      this.qDropDel.run(d.id);
+      gone.push({ map: Number(d.map), x: d.x, y: d.y, id: d.id });
+    }
+    return gone;
   }
 
   // ---------- lazy generation ---------------------------------------------

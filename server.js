@@ -19,6 +19,7 @@ const { DatabaseSync } = require('node:sqlite');
 const T = require('./public/terrain.js');
 const { World, ATTACK_RANGE } = require('./world.js');
 const ECO = require('./src/economy.js');
+const Drops = require('./src/drops.js');
 
 const PORT = Number(process.env.PORT || 8090);
 const PUB = path.join(__dirname, 'public');
@@ -385,7 +386,8 @@ function sendChunk(c, cx, cy) {
   c.send({
     t: 'chunk', map, cx, cy, n: out.length / 4,
     d: Buffer.from(bytes).toString(B64), owners,
-    nodes: world.nodesForChunk(map, cx, cy)
+    nodes: world.nodesForChunk(map, cx, cy),
+    drops: world.dropsForChunk(map, cx, cy)
   });
 }
 
@@ -412,6 +414,18 @@ function setView(c, tx, ty) {
 function broadcastTile(map, cx, cy, x, y, m, owner) {
   const k = subKey(map, cx, cy);
   for (const c of clients.values()) if (c.ready && c.subs.has(k)) c.send({ t: 'tiles', list: [[x, y, m, owner]] });
+}
+
+/** A loot cache appeared (death, or a partial pickup leaving a remainder) — tell everyone nearby. */
+function broadcastDrop(map, x, y, drop) {
+  const cx = T.chunkOf(x), cy = T.chunkOf(y), k = subKey(map, cx, cy);
+  for (const c of clients.values()) if (c.ready && c.subs.has(k)) c.send({ t: 'drop', map, id: drop.id, x, y, res: drop.res, at: drop.at, ttlMs: drop.ttlMs });
+}
+
+/** A loot cache is gone (fully looted or expired) — tell everyone nearby to drop it too. */
+function broadcastDropGone(map, x, y) {
+  const cx = T.chunkOf(x), cy = T.chunkOf(y), k = subKey(map, cx, cy);
+  for (const c of clients.values()) if (c.ready && c.subs.has(k)) c.send({ t: 'drop-gone', map, x, y });
 }
 
 function gain(c, what, n) { c.inv[what] = (c.inv[what] || 0) + n; }
@@ -468,7 +482,7 @@ function cleanText(v, max) {
 // The complete set of things a client may say. Anything else is ignored on sight: the
 // server never dispatches a type it does not know, so a new type cannot reach any code
 // path by accident.
-const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup']);
+const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -659,6 +673,23 @@ function onMessage(c, msg) {
       break;
     }
 
+    case 'pickup': {
+      if (!c.ready || c.dead) return;
+      const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
+      if (x === null || y === null) return;      // not a coordinate: never answered as if it were
+      const dx = x - c.x, dy = y - c.y;
+      if (dx * dx + dy * dy > REACH * REACH) return c.send({ t: 'pickup', x, y, err: 'out of reach' });
+      const r = world.pickupDrop(c.map, x, y, c.inv, Date.now(), ECO.STACK_LIMITS);
+      if (!r.ok) return c.send({ t: 'pickup', x, y, err: r.reason || 'none' });
+      c.inv = r.inv;
+      stateSave(c);
+      const rest = world.dropAt(c.map, x, y);
+      if (rest) broadcastDrop(c.map, x, y, rest);       // a remainder stayed behind (stack limits)
+      else broadcastDropGone(c.map, x, y);
+      c.send({ t: 'pickup', x, y, taken: r.taken, left: r.left, inv: c.inv });
+      break;
+    }
+
     case 'attack': {
       if (!c.ready || c.dead) return;
       const mid = clampInt(msg.id, 0, 0x7fffffff, -1);
@@ -778,12 +809,22 @@ every(100, 'world tick', () => {
       const dealt = Math.max(1, h.dmg - gearBonus(c.inv, 'armour'));
       c.hp -= dealt;
       if (c.hp <= 0) {
+        // death costs half your raw resources, spilled where you fell — gear is never touched
+        const dMap = c.map;
+        const dx2 = Math.max(0, Math.min(W - 1, Math.round(c.x)));
+        const dy2 = Math.max(0, Math.min(H - 1, Math.round(c.y)));
+        const split = Drops.dropsForDeath(c.inv);
+        c.inv = split.kept;
+        if (Drops.totalIn({ res: split.dropped }) > 0) {
+          const drop = world.addDrop(dMap, dx2, dy2, split.dropped, now, Drops.DEFAULT_TTL_MS);
+          if (drop) broadcastDrop(dMap, dx2, dy2, drop);
+        }
         c.hp = c.maxHp; c.dead = false;
         const sp = T.spawnPoint(c.map);
         c.x = sp.x; c.y = sp.y;
         c.sent.clear(); c.subs = new Set();
         stateSave(c);
-        c.send({ t: 'died', by: h.name, spawn: sp, hp: c.hp, maxHp: c.maxHp });
+        c.send({ t: 'died', by: h.name, spawn: sp, hp: c.hp, maxHp: c.maxHp, inv: c.inv });
         setView(c, c.x, c.y);
         console.log(`[net] ${c.name} was killed by ${h.name}`);
       } else {
@@ -808,6 +849,13 @@ every(100, 'presence tick', () => {
     c.send({ t: 'players', list: near, you: [Math.round(c.x * 10) / 10, Math.round(c.y * 10) / 10, c.energy] });
     c.send({ t: 'mons', map: c.map, list: world.nearby(c.map, c.x, c.y) });
   }
+});
+
+// death drops: TTL sweep. A drop nobody is near to see removed does not need to be
+// swept faster than this — the client that walks up simply never gets 'drop' for it.
+every(5000, 'drop sweep', () => {
+  const gone = world.sweepExpiredDrops(Date.now());
+  for (const g of gone) broadcastDropGone(g.map, g.x, g.y);
 });
 
 every(5000, 'stats tick', () => {
