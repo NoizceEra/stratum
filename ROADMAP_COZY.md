@@ -145,7 +145,43 @@ Everything from the original ROADMAP.md v0.5 still applies, re-scoped for cozy:
   the trade/mail system** cover "being nice to strangers" without opening a griefing
   surface. This is the cozy-game answer to the chat non-goal, not a reason to lift it.
 
-### 5. Light grouping (small, optional)
+### 5. Character customization (new — a big part of the game, not an afterthought)
+
+Today a player's whole look is one auto-hashed hue (`T.hash2(key...) % 360`) fed into
+two HSL shades (`hsl(hue,58%,62%)` body / `hsl(hue,48%,40%)` trim) inside
+`drawAvatar(...)` in game.js — no player choice, no persistence beyond that one number.
+The renderer is **fully procedural** (canvas shapes, no sprite sheets), which is the
+right news here: customization is buildable as more *parameters* into the same draw
+calls, not a new art pipeline.
+
+- **Palette, player-chosen.** At the gate (today's name-entry screen) and revisitable
+  later from a "wardrobe" panel, a player picks a body hue and a trim hue independently
+  (today they're locked to the same hue at two lightnesses) from a curated set of good-
+  looking combinations — not a raw 360° picker, which produces a lot of ugly results;
+  curate ~24-32 palettes, cheap to hand-tune, easy to extend later.
+- **Accessories/outfits as unlockable cosmetics**, layered onto the existing avatar
+  shapes (a hat silhouette, a cloak/cape trim, a scarf) — additive draw calls, not a
+  replacement geometry. This is where achievements pay off visually: extend
+  `src/achievements.js`'s existing `titleFor(id)` pattern with a sibling
+  `cosmeticFor(id)` so specific achievements unlock specific accessories, the same way
+  they already unlock titles. Gathering/crafting/idle-themed achievements (Phase 3)
+  unlocking gathering-flavored cosmetics (a "gardener's hat", "kiln-scorched apron")
+  ties the whole loop together: play the way the game wants you to, look the part.
+- **Persisted server-side**, not client-only — appearance is part of who you are on a
+  shared server everyone sees, so it belongs next to `name`/`hue` in the `players` table
+  (extend that row: `bodyHue`, `trimHue`, `accessory`), validated on every change the
+  same way every other player-controlled field is (an accessory id must be one the
+  player has actually unlocked — never trust the client's claim that it owns one).
+- **A wardrobe UI**, not just the one-time gate picker: reuse the existing full-screen-
+  overlay pattern (`#map`/`#nodes`/`#craft`) for a `#wardrobe` panel, unlocked cosmetics
+  shown as swatches, locked ones shown greyed-out with their unlock condition as a
+  tooltip (achievements.js already carries `desc` for exactly this).
+- Deliberately **not** in scope for v1: separate sprite silhouettes per body type/build,
+  animation-affecting cosmetics, or anything that would require new draw primitives
+  beyond simple layered shapes. Keep the first pass entirely inside what `drawAvatar`
+  already does well.
+
+### 6. Light grouping (small, optional)
 
 Not formal parties/guilds — just: players gathering the same node or fighting the same
 ambient-combat creature within a small radius all get credit (XP + a share of drops),
@@ -178,7 +214,8 @@ constraint (nothing to configure, nothing to grief).
 | `src/ambient-combat.js` | **new** | Pure module: the Sanctuary damage-tick math (who's in range, how much each tick deals, HP floor). world.js's `tick()` calls this on Sanctuary maps instead of `stepMonster`. Skeleton below. |
 | `src/society.js` (or split into `src/shops.js` + `src/trade.js`) | **new** | Pure module(s): shop listing validation, escrow state transitions for both shops and player-to-player trade. Mirror `economy.js`'s `canAfford`/`applyCost` style exactly — this is the trust-sensitive one, keep it boring and exhaustively tested. |
 | `src/economy.js` | changed | New structure recipes, decor/gift items, a `tonic`/consumable resource type if adopted |
-| `src/achievements.js` | changed | New gathering/crafting/idle-themed entries (additive, existing 14 untouched) |
+| `src/achievements.js` | changed | New gathering/crafting/idle-themed entries (additive, existing 14 untouched); a `cosmeticFor(id)` sibling to the existing `titleFor(id)` |
+| `src/customization.js` | **new** | Pure module: curated palette catalog, accessory catalog, which accessory ids an achievement unlocks, validate-a-requested-look-against-what's-unlocked. Mirror `achievements.js`'s frozen-table style. |
 | `world.js` | changed | Branch `tick()`'s monster simulation on map tone; ambient-combat path for Sanctuary, existing `stepMonster` path for Frontier, unchanged |
 | `server.js` | changed | New tables (`structures`, `trades`), new inbound message types (`build-structure`, `collect-structure`, `trade-offer`, `trade-accept`, `trade-cancel`, `emote`), tone-aware death/drop handling |
 | `public/game.js` / `public/index.html` | changed | Structure placement UI (reuses the hotbar/build pattern), a collect prompt, an emote wheel, a trade panel (reuse the `#craft`/`#nodes` full-screen-overlay pattern) |
