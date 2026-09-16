@@ -1,10 +1,17 @@
 /**
  * token-config.js — Robinhood Chain commerce token for STRATUM.
  *
+ * ⚠️ UNVERIFIED CHAIN: chainId 4663 / chainName / rpcUrl below came from the operator,
+ * not from independent verification. Nobody has confirmed this is a real, reachable EVM
+ * chain or that the RPC actually answers eth_chainId. Settlement is unimplemented (see
+ * chain-adapter.js) so this has never been exercised end-to-end. Confirm it's real before
+ * wiring any real settlement, minting, or funds against it — see README.md's Commerce
+ * section for the full note.
+ *
  * PLACEHOLDER: the token contract address below will be replaced with the official
  * deploy. The treasury *address* is public and safe to ship; the treasury *private
- * key* lives only in the operator Obsidian vault (STRATUM/Treasury-SECRET.md) and
- * optionally in process env as STRATUM_CLAIM_SIGNER_KEY — never in this file.
+ * key* lives only in a local, gitignored `.env` (STRATUM_CLAIM_SIGNER_KEY) on the
+ * operator's machine — never in this file.
  *
  * Override at runtime (server only):
  *   STRATUM_TOKEN_ADDRESS / STRATUM_CHAIN_ID / STRATUM_RPC_URL /
@@ -37,7 +44,8 @@
 
   /**
    * Defaults — Robinhood Chain mainnet + temporary commerce CA + treasury address.
-   * Treasury private key is NOT here (see Obsidian STRATUM/Treasury-SECRET.md).
+   * chainId/chainName/rpcUrl are UNVERIFIED — see the file header. Treasury private
+   * key is NOT here (lives only in a local .env on the operator's machine).
    */
   var DEFAULTS = deepFreeze({
     chainId: 4663,

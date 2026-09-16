@@ -179,6 +179,15 @@ are the server's.
 
 ## Commerce (Robinhood Chain)
 
+> ⚠️ **Unverified: "Robinhood Chain" (chain ID `4663`)** — this chain ID and RPC URL came
+> from the operator, not from independent verification here. Nobody in this project has
+> confirmed it's a real, reachable EVM chain, that `4663` is its correct ID, or that
+> `STRATUM_RPC_URL` (`https://rpc.mainnet.chain.robinhood.com`) actually resolves and
+> answers `eth_chainId`. Since settlement is unimplemented (see "The claim pipeline"
+> below) this has never been exercised end-to-end. **Confirm the chain is real and the
+> RPC is live before wiring any real settlement, minting, or spending real funds against
+> it** — don't take the constants in `src/token-config.js` on faith.
+
 Harvesting, crafting, and kills award **in-game gold** plus pending **STRM** token units
 (`src/rewards.js`). Two separate marketplaces charge a real treasury fee on top of that —
 parcel deeds (`src/parcels.js`) and player shops (`src/shops.js`), both 2.5% by default,
