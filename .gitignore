@@ -13,5 +13,7 @@ node_modules/
 boot-watch.js
 cloudflared.exe
 cloudflared.log
+tunnel-restart.log
+*.log
 .obsidian/
 
