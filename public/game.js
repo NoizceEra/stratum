@@ -573,7 +573,7 @@
     x: 0, y: 0, energy: 240, energyMax: 240, reach: 6, attackRange: 3,
     hp: 100, maxHp: 100, atk: 7, kills: 0, inv: { wood: 0, ore: 0, herb: 0, crystal: 0, gold: 0 },
     claimed: 0, total: W * H, online: 0, volatile: null,
-    commerce: null, tokenPending: 0, tokenOnChain: null, walletAddress: null,
+    commerce: null, tokenPending: 0, tokenOnChain: null, walletAddress: null, colonyQuota: 0,
     sel: 0, zoom: 1, ready: false,
     cam: { x: 0, y: 0 }, mouse: { x: 0, y: 0 },
     edits: new Map(), baseCache: new Map(), lamps: new Set(),
@@ -711,6 +711,7 @@
         if (m.commerce) applyCommerceConfig(m.commerce);
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
         if (m.tokenWallet) S.walletAddress = m.tokenWallet;
+        if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
         if (m.look) {
           S.paletteId = m.look.paletteId; S.bodyHue = m.look.bodyHue; S.trimHue = m.look.trimHue;
           S.hat = m.look.hat; S.cloak = m.look.cloak; S.scarf = m.look.scarf;
@@ -1046,6 +1047,43 @@
         updateWalletHud();
         break;
       }
+      case 'requisitioned': {
+        var reqStatusEl = document.getElementById('h-requisition-status');
+        if (!m.ok) {
+          if (reqStatusEl) reqStatusEl.textContent = String(m.err || '').toUpperCase();
+          toast(String(m.err || 'CANNOT SHIP').toUpperCase());
+          sfx('deny');
+          if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+          updateWalletHud();
+          break;
+        }
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
+        if (reqStatusEl) reqStatusEl.textContent = 'SHIPPED';
+        toast('SHIPPED ' + m.amount + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM') +
+          ' — ' + m.burned + ' BURNED, ' + m.treasury + ' TO TREASURY', true);
+        sfx('craft');
+        updateWalletHud();
+        break;
+      }
+      case 'requisition-broadcast': {
+        if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
+        toast(String(m.by || 'SOMEONE').toUpperCase() + ' SHIPPED ' + m.amount +
+          ' ' + ((S.commerce && S.commerce.symbol) || 'STRM') + ' TO EARTH');
+        break;
+      }
+      case 'rushed': {
+        if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
+        if (m.inv) S.inv = m.inv;
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.tokenBurned === 'number') S.colonyQuota = m.tokenBurned;
+        toast('RUSHED +' + m.gained + ' ' + String(m.resource || '').toUpperCase() +
+          ' FOR ' + m.cost + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), true);
+        float(m.x, m.y - 0.6, '+' + m.gained + ' ' + m.resource, '#8fe4ff', 0);
+        sfx('craft');
+        updateWalletHud();
+        break;
+      }
       case 'tooled': {
         if (m.err) {
           toast(String(m.err).toUpperCase() + (m.missing ? ' — SHORT ' + costText(m.missing) : ''));
@@ -1083,6 +1121,7 @@
         break;
       case 'stats':
         S.claimed = m.claimed; S.total = m.total; S.online = m.online; S.volatile = m.volatile;
+        if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
         break;
       case 'players': {
         if (!m.list) break;
@@ -1259,7 +1298,10 @@
       if (sdx * sdx + sdy * sdy > S.reach * S.reach) return toast('OUT OF REACH — ' + S.reach + ' TILES MAX');
       if (st.owner !== S.key) return toast(st.kind.toUpperCase() + ' — NOT YOURS');
       faceTowards(sdx, sdy);
-      send({ t: 'collect-structure', x: x, y: y });
+      // Shift+click pays STRM to instantly finish the wait instead of collecting what
+      // has accrued so far — see src/token-sink.js's rushCost() for the pricing.
+      if (keys['shift']) send({ t: 'structure-rush', x: x, y: y });
+      else send({ t: 'collect-structure', x: x, y: y });
       return;
     }
     if (S.placingStructure) {
@@ -2936,6 +2978,8 @@
     document.getElementById('h-pct').textContent = ((S.claimed / S.total) * 100).toFixed(4) + '%';
     document.getElementById('h-claimed').textContent = S.claimed.toLocaleString() + ' / ' + S.total.toLocaleString();
     document.getElementById('h-remain').textContent = (S.total - S.claimed).toLocaleString();
+    var quotaEl = document.getElementById('h-quota');
+    if (quotaEl) quotaEl.textContent = (S.colonyQuota | 0).toLocaleString();
     // personal claims only — world S.claimed is the map total and would unveil this on day one
     if (S.personalClaims > 0) document.body.classList.add('seen-claim-stats');
     document.getElementById('h-kills').textContent = S.kills;
@@ -2998,6 +3042,14 @@
       send({ t: 'claim' });
       var statusEl = document.getElementById('h-claim-status');
       if (statusEl) statusEl.textContent = 'CLAIMING…';
+    });
+    var requisitionBtn = document.getElementById('requisition-btn');
+    if (requisitionBtn) requisitionBtn.addEventListener('click', function () {
+      if (!S.ready) return;
+      if (!(S.tokenPending | 0)) { toast('NOTHING PENDING'); return; }
+      send({ t: 'requisition' });
+      var reqStatusEl = document.getElementById('h-requisition-status');
+      if (reqStatusEl) reqStatusEl.textContent = 'SHIPPING…';
     });
     try {
       var savedW = localStorage.getItem('stratum_wallet');

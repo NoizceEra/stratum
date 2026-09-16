@@ -204,6 +204,10 @@
   <div class="big gold" id="h-pct">0.0000%</div>
   <div class="k" id="h-claimed">0 / 1,048,576</div>
   <div style="margin-top:7px"><span class="k">remain</span> <span class="v" id="h-remain">1,048,576</span></div>
+  <!-- Colony quota: total STRM ever shipped to Earth (burned via Earth Requisition).
+       The actual mission-progress metric the game's story is about — separate from
+       land claimed, which is colonization; this is extraction. -->
+  <div style="margin-top:7px"><span class="k">silver shipped</span> <span class="v gold" id="h-quota">0</span></div>
   <div class="k kbdhint" style="margin-top:7px;font-size:10px">[M] map · [T] travel</div>
 </div>
 
@@ -245,6 +249,13 @@
     <div style="margin-top:6px">
       <button type="button" id="claim-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">CLAIM STRM</button>
       <span class="k" id="h-claim-status" style="margin-left:6px;font-size:10px"></span>
+    </div>
+    <!-- Earth Requisition: the actual STRM sink. Most of what you ship is burned
+         forever; a slice funds the treasury. This is the first real reason STRM is
+         worth anything beyond a number that goes up — see src/token-sink.js. -->
+    <div style="margin-top:6px">
+      <button type="button" id="requisition-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">SHIP TO EARTH</button>
+      <span class="k" id="h-requisition-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <div class="k" id="h-token-badge" style="margin-top:4px;font-size:9px;display:none">PLACEHOLDER CA</div>
     <div class="k" style="margin-top:7px">slain <span class="v" id="h-kills">0</span> &nbsp; <span class="k">atk</span> <span class="v" id="h-atk">7</span></div>

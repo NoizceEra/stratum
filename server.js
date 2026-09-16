@@ -29,6 +29,7 @@ const Parcels = require('./src/parcels.js');
 const TokenConfig = require('./src/token-config.js');
 const ChainAdapter = require('./src/chain-adapter.js');
 const Rewards = require('./src/rewards.js');
+const TokenSink = require('./src/token-sink.js');
 
 /** Optional local `.env` (never committed). Existing process.env wins — so hosting
  *  platform secrets always override a checked-out file. Zero-dep, KEY=VALUE only. */
@@ -148,6 +149,14 @@ const PARCEL_FEE_BPS = Number(process.env.STRATUM_PARCEL_FEE_BPS) >= 0
 // (taking a cut of a gift is a different, worse product decision — see ROADMAP_COZY.md).
 const SHOP_FEE_BPS = Number(process.env.STRATUM_SHOP_FEE_BPS) >= 0
   ? Number(process.env.STRATUM_SHOP_FEE_BPS) | 0 : Shops.FEE_BPS;
+// STRM sinks (src/token-sink.js): the fraction of every spend that's burned forever vs.
+// credited to the in-game treasury. Burn-heavy on purpose — see that module's header for
+// why a token that only ever accrues, never drains, is the real danger here, not the
+// missing chain wiring.
+const TOKEN_BURN_BPS = Number(process.env.STRATUM_TOKEN_BURN_BPS) >= 0
+  ? Number(process.env.STRATUM_TOKEN_BURN_BPS) | 0 : TokenSink.BURN_BPS;
+const RUSH_COST_PER_UNIT = Number(process.env.STRATUM_RUSH_COST_PER_UNIT) > 0
+  ? Number(process.env.STRATUM_RUSH_COST_PER_UNIT) | 0 : TokenSink.RUSH_COST_PER_UNIT;
 // The fixed emote allowlist. No freeform text ever — see ROADMAP.md's no-chat non-goal.
 const EMOTES = ['wave', 'thanks', 'nice-place', 'gg'];
 
@@ -210,6 +219,8 @@ db.exec(`
     requestedAt INTEGER NOT NULL,
     settledAt INTEGER);
   CREATE INDEX IF NOT EXISTS claim_requests_k ON claim_requests(k);
+  CREATE TABLE IF NOT EXISTS token_burned(
+    id TEXT PRIMARY KEY, total INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL);
 `);
 
 // migrate a pre-maps tiles table (tiles used to be keyed by x,y only)
@@ -432,6 +443,32 @@ function treasuryTotals() {
   for (const r of qTreasuryAll.all()) out[r.item] = r.qty | 0;
   return out;
 }
+
+// ---------- STRM sinks: Earth Requisition + Structure Rush --------------------------
+// See src/token-sink.js's header. Burned STRM is the "gone forever" half of every
+// sink spend — a single global running total, never per-player (nobody is owed it
+// back, so there is nothing to key by player). The treasury half reuses the SAME
+// treasury table shop/parcel fees already feed, under the 'STRM' item key — one place
+// to look for "how much real fee revenue has this world generated," across every
+// source, in-game resources and STRM alike.
+const qBurnGet = db.prepare('SELECT total FROM token_burned WHERE id=?');
+const qBurnUpsert = db.prepare(
+  'INSERT INTO token_burned(id,total,updated) VALUES(?,?,?) ' +
+  'ON CONFLICT(id) DO UPDATE SET total=excluded.total, updated=excluded.updated');
+function burnedTotal() {
+  const row = qBurnGet.get('global');
+  return row ? (row.total | 0) : 0;
+}
+/** Permanently destroy `n` STRM (adds to the global burned counter) and credit the
+ *  in-game treasury with the rest of a sink's split, in one call — every sink handler
+ *  ends with exactly this. Never touches any player's ledger; the caller already
+ *  deducted the full spend from `pending` before calling this. */
+function applyBurnSplit(n) {
+  const split = TokenSink.splitBurn(n, TOKEN_BURN_BPS);
+  if (split.burned > 0) qBurnUpsert.run('global', burnedTotal() + split.burned, Date.now());
+  if (split.treasury > 0) treasuryCredit('STRM', split.treasury);
+  return split;
+}
 /** Remove one tile from every deed containing it (called on tile release). A deed
  *  reduced to zero tiles dissolves; a dissolved listing just delists (nothing was
  *  ever escrowed away — the deed is a view, so there is nothing to return). */
@@ -506,11 +543,15 @@ const server = http.createServer((req, res) => {
       playersEver: qPlayCount.get().n,
       volatile: world.stats(),
       spawn: T.spawnPoint(0),
-      // In-game fee vault (soft resources taken as a cut of priced sales).
+      // In-game fee vault (soft resources taken as a cut of priced sales, PLUS STRM
+      // from sink spends — see treasury.STRM below).
       treasury: treasuryTotals(),
       // On-chain treasury wallet (public address) + fee knobs — no secrets.
       treasuryWallet: COMMERCE.treasuryAddress,
-      fees: { parcelBps: PARCEL_FEE_BPS, shopBps: SHOP_FEE_BPS },
+      fees: { parcelBps: PARCEL_FEE_BPS, shopBps: SHOP_FEE_BPS, tokenBurnBps: TOKEN_BURN_BPS, rushCostPerUnit: RUSH_COST_PER_UNIT },
+      // Total STRM ever burned via a sink — the actual "silver shipped to Earth" mission
+      // metric this game's whole story is about. Never decreases; nothing owed for it.
+      colonyQuota: burnedTotal(),
       commerce: TokenConfig.publicConfig(COMMERCE)
     }, null, 2);
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -977,10 +1018,10 @@ function cleanText(v, max) {
 // server never dispatches a type it does not know, so a new type cannot reach any code
 // path by accident.
 const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup',
-  'build-structure', 'collect-structure', 'set-look',
+  'build-structure', 'collect-structure', 'structure-rush', 'set-look',
   'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote',
   'parcel-mint', 'parcel-list', 'parcel-buy', 'parcel-cancel', 'parcel-browse', 'parcel-mine',
-  'wallet-link', 'claim']);
+  'wallet-link', 'claim', 'requisition']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -1090,7 +1131,8 @@ function onMessage(c, msg) {
         commerce: TokenConfig.publicConfig(COMMERCE),
         gold: (c.inv.gold | 0),
         tokenPending: c.tokenPending | 0,
-        tokenWallet: c.tokenWallet || null
+        tokenWallet: c.tokenWallet || null,
+        colonyQuota: burnedTotal()
       });
       // returning players get their unlocked state without a round-trip; a fresh
       // arrival's stats (e.g. having now "visited" their spawn map) are checked right after.
@@ -1370,6 +1412,49 @@ function onMessage(c, msg) {
       break;
     }
 
+    // Earth Requisition: spend pending STRM directly, off-chain, right now — no wallet,
+    // no chain-adapter, no waiting on real settlement. Most of it is burned forever
+    // (src/token-sink.js's split); a slice funds the treasury. This is deliberately the
+    // FIRST real reason STRM exists beyond a number that goes up — see the design
+    // discussion in ROADMAP_COZY.md and this commit's own message for why a mint-only
+    // token was the actual danger here, not the missing on-chain wiring.
+    case 'requisition': {
+      if (!c.ready || !c.key) return;
+      const qled = ledgerOf(c.key);
+      const pending = qled.pending | 0;
+      if (msg.amount === undefined && pending <= 0) {
+        return c.send({ t: 'requisitioned', ok: false, err: 'nothing pending', tokenPending: pending });
+      }
+      // omit `amount` to ship everything currently pending; otherwise it must be a real
+      // positive integer. clampInt is deliberately NOT used here — it clamps an
+      // out-of-range value INTO range (0 would become 1), which would silently accept
+      // "requisition 0" as "requisition 1"; a bad amount must be refused outright, not
+      // rounded up into a real spend the player never asked for.
+      const amount = (msg.amount === undefined) ? pending
+        : (isFin(msg.amount) ? Math.trunc(msg.amount) : -1);
+      const v = TokenSink.validateRequisition(amount, pending);
+      if (!v.ok) return c.send({ t: 'requisitioned', ok: false, err: v.error, tokenPending: pending });
+      const qNewPending = pending - v.amount;
+      ledgerSave(c.key, qNewPending, qled.claimed, qled.wallet);
+      c.tokenPending = qNewPending;
+      const qSplit = applyBurnSplit(v.amount);
+      stateSave(c);
+      const quota = burnedTotal();
+      c.send({
+        t: 'requisitioned', ok: true, amount: v.amount, burned: qSplit.burned, treasury: qSplit.treasury,
+        tokenPending: qNewPending, colonyQuota: quota
+      });
+      // A big requisition is a moment worth other colonists seeing — same spirit as an
+      // emote, purely cosmetic, no gameplay effect for anyone but the shipper.
+      if (v.amount >= 50) {
+        for (const o of clients.values()) {
+          if (o.ready && o.key !== c.key) o.send({ t: 'requisition-broadcast', by: c.name, amount: v.amount, colonyQuota: quota });
+        }
+      }
+      checkAchievements(c);
+      break;
+    }
+
     case 'toolup': {
       if (!c.ready || c.dead) return;
       const next = (c.tool | 0) + 1;
@@ -1458,6 +1543,58 @@ function onMessage(c, msg) {
         inv: c.inv, gains: { gold: pay.gold, token: pay.token }, tokenPending: c.tokenPending | 0
       });
       if (res.gained > 0) checkAchievements(c);
+      break;
+    }
+
+    // Pay STRM to instantly finish a structure's current batch instead of waiting.
+    // The already-accrued portion still goes through Idle.collect() exactly like an
+    // ordinary collect; the rushed remainder is a straight purchase, credited the same
+    // uncapped way idle.js's own collect() credits a resource. STRM is deducted BEFORE
+    // anything is granted — a spend that fails partway must never hand out free goods.
+    case 'structure-rush': {
+      if (!c.ready || c.dead) return;
+      let rkey;
+      if (isFin(msg.x) && isFin(msg.y)) {
+        const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
+        if (x === null || y === null) return c.send({ t: 'rushed', err: 'bounds' });
+        rkey = structKey(c.map, x, y);
+      } else {
+        const id = cleanText(msg.id, 64);
+        if (!id) return c.send({ t: 'rushed', err: 'no structure there' });
+        rkey = id;
+      }
+      const struct = structures.get(rkey);
+      if (!struct || struct.map !== c.map) return c.send({ t: 'rushed', err: 'no structure there' });
+      if (struct.owner !== c.key) return c.send({ t: 'rushed', err: 'not yours' });
+      const rdx = struct.x - c.x, rdy = struct.y - c.y;
+      if (rdx * rdx + rdy * rdy > REACH * REACH) return c.send({ t: 'rushed', err: 'reach', x: struct.x, y: struct.y });
+      const def = Idle.structureOf(struct.kind);
+      if (!def) return c.send({ t: 'rushed', err: 'unknown structure' });
+      const rnow = Date.now();
+      const already = Idle.accrued(struct, rnow);
+      const quote = TokenSink.rushCost(already, def.capacity, RUSH_COST_PER_UNIT);
+      if (quote.cost <= 0) return c.send({ t: 'rushed', err: 'already full' });
+      const rled = ledgerOf(c.key);
+      if ((rled.pending | 0) < quote.cost) {
+        return c.send({ t: 'rushed', err: 'cannot afford', cost: quote.cost, tokenPending: rled.pending | 0 });
+      }
+      const rNewPending = (rled.pending | 0) - quote.cost;
+      ledgerSave(c.key, rNewPending, rled.claimed, rled.wallet);
+      c.tokenPending = rNewPending;
+      const rSplit = applyBurnSplit(quote.cost);
+      const rRes = Idle.collect(struct, c.inv, rnow);
+      const rInv = Object.assign({}, rRes.inv);
+      rInv[def.produces] = (rInv[def.produces] || 0) + quote.gained;
+      c.inv = rInv;
+      structures.set(rkey, rRes.struct);
+      qStruct.run(rRes.struct.id, rRes.struct.kind, rRes.struct.map, rRes.struct.x, rRes.struct.y, rRes.struct.owner, rRes.struct.builtAt, rRes.struct.lastCollectedAt);
+      stateSave(c);
+      c.send({
+        t: 'rushed', x: struct.x, y: struct.y, resource: def.produces,
+        gained: rRes.gained + quote.gained, cost: quote.cost, burned: rSplit.burned, treasury: rSplit.treasury,
+        inv: c.inv, tokenPending: c.tokenPending, tokenBurned: burnedTotal()
+      });
+      if (rRes.gained + quote.gained > 0) checkAchievements(c);
       break;
     }
 
@@ -1965,7 +2102,7 @@ every(5000, 'stats tick', () => {
   if (!n) return;
   for (const c of clients.values()) {
     if (!c.ready) continue;
-    c.send({ t: 'stats', claimed: countClaims(c.map), total: W * H, online: n, volatile: world.stats() });
+    c.send({ t: 'stats', claimed: countClaims(c.map), total: W * H, online: n, volatile: world.stats(), colonyQuota: burnedTotal() });
   }
 });
 

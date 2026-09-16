@@ -195,9 +195,8 @@ See `.env.example` for overrides.
 | Placeholder token CA (replace soon) | `0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7` |
 | Treasury wallet (public) | `0xE8896562619Fe0276d65952b51dcC11C17b8C144` |
 
-The treasury **private key** is not in this repo. It lives in the operator Obsidian vault:
-`Obsidian/STRATUM/Treasury-SECRET.md`. For a live host, load it as
-`STRATUM_CLAIM_SIGNER_KEY` (never commit `.env`).
+The treasury **private key** is not in this repo. It lives in a local `.env`
+(`STRATUM_CLAIM_SIGNER_KEY=…`, gitignored) on the operator's machine — never commit `.env`.
 
 ```
 STRATUM_TOKEN_ADDRESS=0x…
@@ -230,6 +229,24 @@ ECDSA with a recovery id, keccak256), which this project's zero-npm-dependency r
 expensive to get right by hand. `src/chain-adapter.js`'s header spells out exactly what
 flipping it on would take. Until there's a real contract and real funds behind it, that
 switch stays off — see `src/chain-adapter.js` before changing that.
+
+### Token sinks — where pending STRM actually goes
+
+Every previous piece of commerce only ever *added* to a player's pending STRM balance.
+`src/token-sink.js` is the drain: two ways to spend it, both funneling through the same
+`splitBurn()` — most of what's spent is **burned** (removed from the economy forever, never
+added to anyone's `claimed` total) and a smaller slice goes to the treasury, default 80/20,
+tunable via `STRATUM_TOKEN_BURN_BPS`. `/api/stats.colonyQuota` and the HUD's "silver shipped"
+counter track the running burn total.
+
+- **Earth Requisition** — a **SHIP TO EARTH** HUD button spends some or all of a player's
+  pending STRM directly (`{t:'requisition', amount?}` — omit `amount` to ship everything).
+  A single shipment of 50+ STRM broadcasts to every other player on the map. Refusals
+  (`nothing pending`, `cannot afford`) never touch the ledger.
+- **Structure Rush** — Shift+click your own idle structure to instantly fill whatever's
+  left of its capacity for STRM, instead of collecting only what has accrued so far
+  (plain click still does that). Priced at `STRATUM_RUSH_COST_PER_UNIT` STRM per resource
+  unit skipped (default 2); an already-full structure costs nothing to rush.
 
 ## Status
 
