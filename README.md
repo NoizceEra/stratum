@@ -179,14 +179,19 @@ are the server's.
 
 ## Commerce (Robinhood Chain)
 
-> ⚠️ **Unverified: "Robinhood Chain" (chain ID `4663`)** — this chain ID and RPC URL came
-> from the operator, not from independent verification here. Nobody in this project has
-> confirmed it's a real, reachable EVM chain, that `4663` is its correct ID, or that
-> `STRATUM_RPC_URL` (`https://rpc.mainnet.chain.robinhood.com`) actually resolves and
-> answers `eth_chainId`. Since settlement is unimplemented (see "The claim pipeline"
-> below) this has never been exercised end-to-end. **Confirm the chain is real and the
-> RPC is live before wiring any real settlement, minting, or spending real funds against
-> it** — don't take the constants in `src/token-config.js` on faith.
+> ✅ **Verified 2026-09-17: Robinhood Chain is real and reachable.** `STRATUM_RPC_URL`
+> (`https://rpc.mainnet.chain.robinhood.com`) answers `eth_chainId` with `0x1237` = `4663`
+> decimal, matching `src/token-config.js`, and `eth_blockNumber` returns a live, advancing
+> block height — this is a real, running EVM chain, not a placeholder RPC.
+>
+> ⚠️ **But the token contract address is still wrong.** `0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7`
+> (the `tokenAddress` default) is a real, already-deployed contract on that chain — but it's
+> called **"FLIR Technologies" (symbol `FLIR`)**, an unrelated token with its own real
+> total supply already in circulation. It is **not** STRM. Nothing should settle, mint, or
+> transfer against this address — the official token needs to be deployed fresh (see
+> `contracts/StratumToken.sol` + `contracts/README.md`) and its real address set via
+> `STRATUM_TOKEN_ADDRESS` before real settlement can safely engage. Until then,
+> `chain-adapter.js` refuses to settle against it — see "The claim pipeline" below.
 
 Harvesting, crafting, and kills award **in-game gold** plus pending **STRM** token units
 (`src/rewards.js`). Two separate marketplaces charge a real treasury fee on top of that —
@@ -201,19 +206,19 @@ See `.env.example` for overrides.
 
 | | Address |
 |--|--|
-| Placeholder token CA (replace soon) | `0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7` |
+| Placeholder token CA (⚠️ "FLIR Technologies" — NOT STRM, replace via `contracts/`) | `0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7` |
 | Treasury wallet (public) | `0xE8896562619Fe0276d65952b51dcC11C17b8C144` |
 
 The treasury **private key** is not in this repo. It lives in a local `.env`
 (`STRATUM_CLAIM_SIGNER_KEY=…`, gitignored) on the operator's machine — never commit `.env`.
 
 ```
-STRATUM_TOKEN_ADDRESS=0x…
+STRATUM_TOKEN_ADDRESS=0x…            # the REAL StratumToken deploy — see contracts/
 STRATUM_TREASURY_ADDRESS=0xE8896562619Fe0276d65952b51dcC11C17b8C144
 STRATUM_CHAIN_ID=4663
 STRATUM_RPC_URL=https://rpc.mainnet.chain.robinhood.com
 STRATUM_TOKEN_SYMBOL=STRM
-# STRATUM_CLAIM_SIGNER_KEY=…   # from Obsidian only
+# STRATUM_CLAIM_SIGNER_KEY=…   # local .env only — never committed, never logged
 ```
 
 Connect a wallet in the HUD to switch to Robinhood Chain and read on-chain `balanceOf`
@@ -223,21 +228,39 @@ settlement, but read the next section before assuming that means a payout happen
 `/api/stats` exposes both the soft fee vault (`treasury`) and the on-chain wallet
 (`treasuryWallet` / `commerce`) for operators — the HUD does not show the treasury address.
 
-### The claim pipeline — real, but deliberately not settling anything yet
+### The claim pipeline — real signing code, gated behind a real contract
 
 Every claim is genuinely recorded end-to-end: `token_ledger.pending` → a `claim_requests`
 row (id, wallet, amount, status, full audit trail) → `src/chain-adapter.js`. That last step
-is an honest, unconfigured stub — it always answers `not_configured`, and the pending
-balance is **never decremented** on that answer, so nothing is ever silently lost. The HUD
-reports this plainly ("QUEUED — ON-CHAIN SETTLEMENT NOT YET LIVE"), not as a payout.
+now contains **real** ERC-20 transfer-signing code (`treasury.transfer(player, amount)`,
+via `ethers` — see below), not a stub — but it still answers `not_configured` today,
+because the deployed token is the wrong contract (see the warning above). The pending
+balance is **never decremented** on a `not_configured` answer, so nothing is ever silently
+lost. The HUD reports this plainly ("QUEUED — ON-CHAIN SETTLEMENT NOT YET LIVE"), not as a
+payout, until the gate actually lifts.
 
-This is deliberate, not an oversight: real settlement means a wallet holding either mint
-authority or real funds, with a private key reachable from this server — genuine custody
-risk — plus correctly signing and broadcasting a real transaction (RLP encoding, secp256k1
-ECDSA with a recovery id, keccak256), which this project's zero-npm-dependency rule makes
-expensive to get right by hand. `src/chain-adapter.js`'s header spells out exactly what
-flipping it on would take. Until there's a real contract and real funds behind it, that
-switch stays off — see `src/chain-adapter.js` before changing that.
+`chain-adapter.js`'s `isConfigured()` requires ALL of: a well-formed RPC URL, token
+address, treasury address, and signer key — **and** the token must be explicitly flagged
+as NOT the placeholder (`STRATUM_TOKEN_IS_PLACEHOLDER`, derived automatically from
+`token-config.js`'s `placeholder` flag — never hand-set this). That flag flips the moment
+`STRATUM_TOKEN_ADDRESS` is overridden with a real deploy. A pre-flight `balanceOf` check
+refuses a claim the treasury can't actually afford instead of burning gas on a guaranteed
+revert. See `chain-adapter.js`'s header for the full safety-gate writeup.
+
+**`ethers` is this project's one intentional dependency.** Every other module is
+hand-rolled and zero-dependency by design; hand-rolling secp256k1 ECDSA + RLP encoding +
+keccak256 for code that moves real funds is exactly the wrong place to save a dependency —
+see `chain-adapter.js`'s header for why this exception is scoped to exactly that one file.
+`test-chain-adapter.js` exercises the real signing/transfer code path entirely offline via
+injected fakes (`settleClaim(req, env, deps)`) — no test in this repo ever signs or
+broadcasts a real transaction, and none should; a live-chain dry run against the real
+deployed contract is the operator's own call to make.
+
+**Deploying the real STRM contract is a separate step, not done by an agent session** —
+see `contracts/StratumToken.sol` (a fixed-supply, burnable, OpenZeppelin-based ERC-20 —
+no `mint()` exists anywhere in it, so a compromised signer key can drain at most the
+treasury's existing balance, never inflate supply) and `contracts/README.md` for the full
+deploy-and-wire-in walkthrough.
 
 ### Token sinks — where pending STRM actually goes
 
@@ -261,8 +284,15 @@ counter track the running burn total.
 
 Playable and tested. Honest gaps:
 
-- **On-chain settlement is not live** — see "The claim pipeline" above. Every claim today
-  queues; none settle.
+- **On-chain settlement is not live** — the signing code is real (see "The claim pipeline"
+  above), but the deployed token contract is still a placeholder (actually an unrelated
+  real token, "FLIR Technologies" — see the Commerce warning above), so `chain-adapter.js`
+  refuses to run. Every claim today queues; none settle. Deploying the real
+  `contracts/StratumToken.sol` and setting `STRATUM_TOKEN_ADDRESS` lifts this.
+- **No way to buy in-game currency with real money or crypto yet.** Gold and STRM are
+  earned by playing only — there's no fiat on-ramp, no "buy gold with STRM" or "buy STRM
+  with a card" flow, and no payment processor wired in anywhere in this codebase. This is
+  a separate, not-yet-designed feature, not a bug in the claim pipeline above.
 - **Not deployed.** It runs locally. Hosting needs a long-lived process (Railway/Fly/VPS) plus the
   static client — not a static host alone.
 - **Anti-cheat is basic** — movement rate-limiting and server-side validation, no persistence of

@@ -12,6 +12,7 @@
   "engines": {
     "node": ">=22.5"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "dependencies": {
+    "ethers": "^6.17.0"
+  }
 }

@@ -1,17 +1,22 @@
 /**
  * token-config.js — Robinhood Chain commerce token for STRATUM.
  *
- * ⚠️ UNVERIFIED CHAIN: chainId 4663 / chainName / rpcUrl below came from the operator,
- * not from independent verification. Nobody has confirmed this is a real, reachable EVM
- * chain or that the RPC actually answers eth_chainId. Settlement is unimplemented (see
- * chain-adapter.js) so this has never been exercised end-to-end. Confirm it's real before
- * wiring any real settlement, minting, or funds against it — see README.md's Commerce
- * section for the full note.
+ * ✅ CHAIN VERIFIED 2026-09-17: chainId 4663, rpcUrl below both confirmed live against
+ * the real RPC (eth_chainId -> 0x1237 = 4663; eth_blockNumber advancing). This really is
+ * a reachable EVM chain with the chain ID this file claims.
+ *
+ * ⚠️ TOKEN ADDRESS IS STILL WRONG: `tokenAddress` below is a real, already-deployed
+ * contract on that chain — but it's "FLIR Technologies" (symbol FLIR), an unrelated
+ * token with its own real circulating supply, NOT STRM. `chain-adapter.js`'s
+ * settlementImplemented is real (it signs and broadcasts via `ethers`), but its
+ * isConfigured() gate refuses to run while `placeholder` is true here — see
+ * contracts/StratumToken.sol + contracts/README.md for deploying the real token, and
+ * README.md's Commerce section for the full note.
  *
  * PLACEHOLDER: the token contract address below will be replaced with the official
- * deploy. The treasury *address* is public and safe to ship; the treasury *private
- * key* lives only in a local, gitignored `.env` (STRATUM_CLAIM_SIGNER_KEY) on the
- * operator's machine — never in this file.
+ * deploy (see contracts/). The treasury *address* is public and safe to ship; the
+ * treasury *private key* lives only in a local, gitignored `.env`
+ * (STRATUM_CLAIM_SIGNER_KEY) on the operator's machine — never in this file.
  *
  * Override at runtime (server only):
  *   STRATUM_TOKEN_ADDRESS / STRATUM_CHAIN_ID / STRATUM_RPC_URL /
@@ -43,9 +48,9 @@
   }
 
   /**
-   * Defaults — Robinhood Chain mainnet + temporary commerce CA + treasury address.
-   * chainId/chainName/rpcUrl are UNVERIFIED — see the file header. Treasury private
-   * key is NOT here (lives only in a local .env on the operator's machine).
+   * Defaults — Robinhood Chain mainnet (chain reachability verified — see file header)
+   * + temporary commerce CA (wrong on purpose today — also see file header) + treasury
+   * address. Treasury private key is NOT here (lives only in a local .env).
    */
   var DEFAULTS = deepFreeze({
     chainId: 4663,

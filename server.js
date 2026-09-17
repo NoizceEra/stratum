@@ -70,7 +70,13 @@ function claimEnv() {
     STRATUM_TREASURY_ADDRESS: e.STRATUM_TREASURY_ADDRESS || COMMERCE.treasuryAddress,
     STRATUM_CLAIM_SIGNER_KEY: e.STRATUM_CLAIM_SIGNER_KEY || e.STRATUM_TREASURY_KEY || '',
     STRATUM_RPC_URL: e.STRATUM_RPC_URL || COMMERCE.rpcUrl,
-    STRATUM_TOKEN_ADDRESS: e.STRATUM_TOKEN_ADDRESS || COMMERCE.tokenAddress
+    STRATUM_TOKEN_ADDRESS: e.STRATUM_TOKEN_ADDRESS || COMMERCE.tokenAddress,
+    STRATUM_TOKEN_DECIMALS: String(COMMERCE.decimals),
+    // Derived from COMMERCE (token-config.js), never hand-set: chain-adapter.js's only
+    // gate against settling real transfers against the known-wrong placeholder contract
+    // (see README.md's Robinhood Chain note). Flips to '0' automatically the moment
+    // STRATUM_TOKEN_ADDRESS is overridden with a real deploy.
+    STRATUM_TOKEN_IS_PLACEHOLDER: COMMERCE.placeholder ? '1' : '0'
   };
 }
 
@@ -1372,12 +1378,14 @@ function onMessage(c, msg) {
     }
 
     // Turn a player's pending STRM ledger balance into a claim attempt. This is the
-    // ONE place src/chain-adapter.js gets called — see that file's header for why it
-    // always answers 'not_configured' today. The pending balance is NEVER decremented
-    // on that answer: nothing was lost, the claim just sits recorded and queued, exactly
-    // as owed as it was before the request. The async settle call is why this handler
-    // (alone, today) doesn't finish synchronously — every other message in this switch
-    // still does.
+    // ONE place src/chain-adapter.js gets called. Real ERC-20 signing code exists there
+    // now, but it still answers 'not_configured' today because the deployed token
+    // contract is a placeholder (see README.md's Robinhood Chain note) — that gate lifts
+    // automatically once a real STRM contract address is set via STRATUM_TOKEN_ADDRESS.
+    // The pending balance is NEVER decremented on a 'not_configured' answer: nothing was
+    // lost, the claim just sits recorded and queued, exactly as owed as it was before the
+    // request. The async settle call is why this handler (alone, today) doesn't finish
+    // synchronously — every other message in this switch still does.
     case 'claim': {
       if (!c.ready || !c.key) return;
       if (!c.tokenWallet) return c.send({ t: 'claimed', ok: false, err: 'link a wallet first' });
@@ -1389,9 +1397,10 @@ function onMessage(c, msg) {
       qClaimIns.run(id, key, wallet, amount, 'requested', null, null, now, null);
       ChainAdapter.settleClaim({ key, wallet, amountUnits: amount }, claimEnv()).then((res) => {
         if (res.ok) {
-          // Unreachable today (settleClaim can only resolve ok:true once real signing
-          // is added — see chain-adapter.js) — written correctly now so that day is a
-          // config change, not a rewrite of this handler.
+          // Unreachable today only because the deployed token is still the placeholder
+          // contract (see chain-adapter.js's isConfigured() gate) — this path is real,
+          // reviewed code, not a stub, so flipping it on is a config change (a real
+          // STRATUM_TOKEN_ADDRESS + funded treasury), not a rewrite of this handler.
           const latest = ledgerOf(key);
           const claimed = (latest.claimed | 0) + amount;
           const pending = Math.max(0, (latest.pending | 0) - amount);

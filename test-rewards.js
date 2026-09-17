@@ -42,7 +42,10 @@ var CA = require('./src/chain-adapter.js');
 check('ca-not-configured-empty', CA.isConfigured({}) === false);
 check('ca-describe-missing', (function () {
   var d = CA.describe({});
-  return d.signerPresent === false && d.treasuryConfigured === false && d.settlementImplemented === false;
+  // settlementImplemented tracks whether the signing code exists (it does — see
+  // chain-adapter.js), not whether this particular call would succeed; isConfigured()
+  // above is still the real "would a claim actually settle" answer.
+  return d.signerPresent === false && d.treasuryConfigured === false && d.settlementImplemented === true;
 })());
 check('ca-describe-with-key-presence-only', (function () {
   // Dummy hex key for shape/presence checks ONLY — never the real treasury key.
@@ -56,7 +59,9 @@ check('ca-describe-with-key-presence-only', (function () {
   // Key presence is visible as a boolean — the key value must never appear in describe()
   var blob = JSON.stringify(d);
   return d.signerPresent === true && d.treasuryConfigured === true && d.rpcConfigured === true &&
-    d.tokenConfigured === true && d.settlementImplemented === false &&
+    d.tokenConfigured === true && d.settlementImplemented === true &&
+    // Still not actually configured: this env never says the token is a real (non-
+    // placeholder) deploy, which isConfigured() requires — see chain-adapter.js.
     CA.isConfigured({
       STRATUM_CLAIM_RPC_URL: 'https://rpc.mainnet.chain.robinhood.com',
       STRATUM_CLAIM_TOKEN_ADDR: TC.DEFAULTS.tokenAddress,
