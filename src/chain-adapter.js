@@ -6,8 +6,8 @@
  *   src/rewards.js pays players soft `gold` + hard `token` units into `token_ledger.pending`.
  *   Turning pending into a chain transfer needs a funded treasury wallet and a signer.
  *   The treasury *address* is public (`token-config.js` / STRATUM_TREASURY_ADDRESS).
- *   The treasury *private key* lives in Obsidian `STRATUM/Treasury-SECRET.md` and may be
- *   loaded into the host as STRATUM_CLAIM_SIGNER_KEY (or alias STRATUM_TREASURY_KEY).
+ *   The treasury *private key* lives only in a local, gitignored `.env` on the operator's
+ *   machine, loaded into the host as STRATUM_CLAIM_SIGNER_KEY (or alias STRATUM_TREASURY_KEY).
  *   This module never logs or returns that key.
  *
  * CONTRACT
