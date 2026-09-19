@@ -39,6 +39,19 @@
  *   real transaction, and none should — a live-chain dry run is the operator's own call to
  *   make, against a real deployed contract, not something this test suite does for them.
  *
+ * ONE TREASURY WALLET, ONE TRANSACTION AT A TIME
+ *   The treasury is a single signer with a single on-chain nonce. `ethers` fetches "the
+ *   current nonce" from the RPC right before sending — if two settleClaim() calls raced
+ *   each other (two players claiming within the same moment), they could both read the
+ *   same nonce and one transaction would fail or silently replace the other. The fix is a
+ *   module-level promise-chain queue (`sendQueue`, below `settleClaim`): every call's
+ *   actual chain-touching work (balance check + transfer + confirmation) is appended to
+ *   that chain and only starts once every earlier call has fully finished, so nonce
+ *   assignment is always strictly sequential. Validation and the isConfigured() gate stay
+ *   OUTSIDE the queue — those never touch the signer, so a claim that's going to be
+ *   refused anyway (bad request, not configured) answers immediately instead of waiting
+ *   in line behind real transactions.
+ *
  * CONTRACT
  *   - `describe()` / `isConfigured()` are pure, synchronous, given an env snapshot.
  *   - `settleClaim()` always resolves (never rejects/throws) — every failure path returns
@@ -114,10 +127,80 @@ function defaultDeps() {
 }
 
 /**
+ * The actual chain-touching work for one claim: build a signer, check the treasury can
+ * afford it, transfer, wait for confirmation. Never called directly — always through the
+ * `sendQueue` below, which is what guarantees only one of these runs at a time. Always
+ * resolves (never rejects), same contract as settleClaim().
+ */
+async function sendToChain(req, env, amount, deps) {
+  var e = env;
+  var rpc = e.STRATUM_CLAIM_RPC_URL || e.STRATUM_RPC_URL;
+  var tokenAddr = e.STRATUM_CLAIM_TOKEN_ADDR || e.STRATUM_TOKEN_ADDRESS;
+  var signerKey = e.STRATUM_CLAIM_SIGNER_KEY || e.STRATUM_TREASURY_KEY;
+  var dec = tokenDecimals(env);
+  var fns = Object.assign(defaultDeps(), deps || {});
+
+  var provider, wallet, contract;
+  try {
+    provider = fns.makeProvider(rpc);
+    wallet = fns.makeWallet(signerKey, provider);
+    contract = fns.makeContract(tokenAddr, ERC20_ABI, wallet);
+  } catch (eSigner) {
+    return { ok: false, reason: 'signer_error', detail: eSigner && eSigner.message };
+  }
+
+  var amountUnits;
+  try {
+    amountUnits = ethers.parseUnits(String(amount), dec);
+  } catch (eParse) {
+    return { ok: false, reason: 'bad_request', detail: 'could not encode claim amount for ' + dec + ' decimals' };
+  }
+
+  // A pre-flight balance read avoids paying gas for a guaranteed-to-revert transfer,
+  // and gives the player a clearer reason than a generic send failure.
+  try {
+    var treasuryAddr = await wallet.getAddress();
+    var bal = await contract.balanceOf(treasuryAddr);
+    if (bal < amountUnits) {
+      return { ok: false, reason: 'insufficient_treasury_balance', detail: 'treasury holds less STRM than this claim needs' };
+    }
+  } catch (eBal) {
+    return { ok: false, reason: 'rpc_error', detail: 'could not read treasury balance: ' + (eBal && eBal.message) };
+  }
+
+  try {
+    var tx = await contract.transfer(req.wallet, amountUnits);
+    var receipt = await tx.wait(1);
+    if (!receipt || receipt.status !== 1) {
+      return { ok: false, reason: 'tx_failed', detail: 'transaction did not confirm successfully', txHash: tx.hash };
+    }
+    return { ok: true, txHash: tx.hash };
+  } catch (eSend) {
+    return { ok: false, reason: 'send_failed', detail: eSend && eSend.message };
+  }
+}
+
+/**
+ * Promise-chain mutex serializing every real send through the one treasury signer — see
+ * the file header's "ONE TREASURY WALLET, ONE TRANSACTION AT A TIME" note. Each call
+ * appends its work onto whatever's currently queued and becomes the new tail; the tail
+ * always swallows its own rejection so one failed/slow send can never wedge the queue for
+ * everyone behind it (sendToChain() itself never rejects anyway — this is defense in depth
+ * against a future bug, not a case that fires today).
+ */
+let sendQueue = Promise.resolve();
+function enqueueSend(req, env, amount, deps) {
+  const task = sendQueue.then(function () { return sendToChain(req, env, amount, deps); });
+  sendQueue = task.catch(function () {});
+  return task;
+}
+
+/**
  * Attempt to settle one claim on-chain. Always resolves (never rejects).
  * Not configured (still the common case today — see the placeholder-contract note in
  * README.md) -> { ok:false, reason:'not_configured', ... }; pending balance must stay put.
- * Configured -> a real ERC-20 transfer(treasury -> req.wallet) of req.amountUnits STRM.
+ * Configured -> a real ERC-20 transfer(treasury -> req.wallet) of req.amountUnits STRM,
+ * queued behind any other claim currently being sent (see enqueueSend()/sendQueue above).
  *
  * `deps` is test-only dependency injection (see the file header); production callers pass
  * nothing and get the real `ethers`-backed implementation.
@@ -150,51 +233,7 @@ async function settleClaim(req, env, deps) {
       };
     }
 
-    var e = env;
-    var rpc = e.STRATUM_CLAIM_RPC_URL || e.STRATUM_RPC_URL;
-    var tokenAddr = e.STRATUM_CLAIM_TOKEN_ADDR || e.STRATUM_TOKEN_ADDRESS;
-    var signerKey = e.STRATUM_CLAIM_SIGNER_KEY || e.STRATUM_TREASURY_KEY;
-    var dec = tokenDecimals(env);
-    var fns = Object.assign(defaultDeps(), deps || {});
-
-    var provider, wallet, contract;
-    try {
-      provider = fns.makeProvider(rpc);
-      wallet = fns.makeWallet(signerKey, provider);
-      contract = fns.makeContract(tokenAddr, ERC20_ABI, wallet);
-    } catch (eSigner) {
-      return { ok: false, reason: 'signer_error', detail: eSigner && eSigner.message };
-    }
-
-    var amountUnits;
-    try {
-      amountUnits = ethers.parseUnits(String(amount), dec);
-    } catch (eParse) {
-      return { ok: false, reason: 'bad_request', detail: 'could not encode claim amount for ' + dec + ' decimals' };
-    }
-
-    // A pre-flight balance read avoids paying gas for a guaranteed-to-revert transfer,
-    // and gives the player a clearer reason than a generic send failure.
-    try {
-      var treasuryAddr = await wallet.getAddress();
-      var bal = await contract.balanceOf(treasuryAddr);
-      if (bal < amountUnits) {
-        return { ok: false, reason: 'insufficient_treasury_balance', detail: 'treasury holds less STRM than this claim needs' };
-      }
-    } catch (eBal) {
-      return { ok: false, reason: 'rpc_error', detail: 'could not read treasury balance: ' + (eBal && eBal.message) };
-    }
-
-    try {
-      var tx = await contract.transfer(req.wallet, amountUnits);
-      var receipt = await tx.wait(1);
-      if (!receipt || receipt.status !== 1) {
-        return { ok: false, reason: 'tx_failed', detail: 'transaction did not confirm successfully', txHash: tx.hash };
-      }
-      return { ok: true, txHash: tx.hash };
-    } catch (eSend) {
-      return { ok: false, reason: 'send_failed', detail: eSend && eSend.message };
-    }
+    return await enqueueSend(req, env, amount, deps);
   } catch (e) {
     return { ok: false, reason: 'internal_error', detail: e && e.message };
   }

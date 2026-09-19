@@ -163,6 +163,15 @@ const TOKEN_BURN_BPS = Number(process.env.STRATUM_TOKEN_BURN_BPS) >= 0
   ? Number(process.env.STRATUM_TOKEN_BURN_BPS) | 0 : TokenSink.BURN_BPS;
 const RUSH_COST_PER_UNIT = Number(process.env.STRATUM_RUSH_COST_PER_UNIT) > 0
   ? Number(process.env.STRATUM_RUSH_COST_PER_UNIT) | 0 : TokenSink.RUSH_COST_PER_UNIT;
+// Floor on a 'claim' request, in whole STRM units. Real on-chain settlement (chain-
+// adapter.js) pays gas for every settled claim from the treasury wallet — a 1-STRM claim
+// costs the same gas as a 1000-STRM one, so with no floor a player (or a bot) could bleed
+// the treasury's gas float one dust-sized claim at a time. Requisition (src/token-sink.js)
+// stays floor-free on purpose — it never touches the chain, so it has no gas cost to
+// protect against. Default chosen to comfortably clear a single harvest/kill/craft reward
+// (src/rewards.js grants 1-2 STRM per action) many times over before claiming is worthwhile.
+const MIN_CLAIM_AMOUNT = Number(process.env.STRATUM_MIN_CLAIM_AMOUNT) > 0
+  ? Number(process.env.STRATUM_MIN_CLAIM_AMOUNT) | 0 : 50;
 // The fixed emote allowlist. No freeform text ever — see ROADMAP.md's no-chat non-goal.
 const EMOTES = ['wave', 'thanks', 'nice-place', 'gg'];
 
@@ -554,7 +563,10 @@ const server = http.createServer((req, res) => {
       treasury: treasuryTotals(),
       // On-chain treasury wallet (public address) + fee knobs — no secrets.
       treasuryWallet: COMMERCE.treasuryAddress,
-      fees: { parcelBps: PARCEL_FEE_BPS, shopBps: SHOP_FEE_BPS, tokenBurnBps: TOKEN_BURN_BPS, rushCostPerUnit: RUSH_COST_PER_UNIT },
+      fees: {
+        parcelBps: PARCEL_FEE_BPS, shopBps: SHOP_FEE_BPS, tokenBurnBps: TOKEN_BURN_BPS,
+        rushCostPerUnit: RUSH_COST_PER_UNIT, minClaim: MIN_CLAIM_AMOUNT
+      },
       // Total STRM ever burned via a sink — the actual "silver shipped to Earth" mission
       // metric this game's whole story is about. Never decreases; nothing owed for it.
       colonyQuota: burnedTotal(),
@@ -1392,6 +1404,16 @@ function onMessage(c, msg) {
       const cur = ledgerOf(c.key);
       const amount = cur.pending | 0;
       if (amount <= 0) return c.send({ t: 'claimed', ok: false, err: 'nothing pending' });
+      // Below MIN_CLAIM_AMOUNT: refuse before ever touching claim_requests or chain-
+      // adapter.js — same "nothing spent on a refusal" contract as every other economy
+      // gate in this file (requisition, rush, shop-buy). The pending balance is untouched;
+      // the player just keeps earning until they clear the floor.
+      if (amount < MIN_CLAIM_AMOUNT) {
+        return c.send({
+          t: 'claimed', ok: false, err: 'below minimum claim (' + MIN_CLAIM_AMOUNT + ')',
+          minClaim: MIN_CLAIM_AMOUNT, tokenPending: amount
+        });
+      }
       const id = crypto.randomUUID();
       const wallet = c.tokenWallet, key = c.key, now = Date.now();
       qClaimIns.run(id, key, wallet, amount, 'requested', null, null, now, null);

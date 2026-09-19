@@ -157,7 +157,11 @@ class Client {
   // floors to 0 — that floor behavior is already proven by test-shops.js's pure-math
   // cases; this integration test's job is only to prove the server actually wires
   // SHOP_FEE_BPS into Shops.buy() and credits both sides, not to re-prove the floor).
-  const srv = startServer(port, TESTDB, { STRATUM_SHOP_FEE_BPS: '5000' });
+  // Same reasoning for the min-claim floor: dropped to 1 so a single real harvest (1-2
+  // STRM) clears it, because THIS suite's claim section proves the not_configured/queued
+  // wiring and the "balance is never touched" contract, not the floor itself — that gets
+  // its own dedicated coverage in test-claim-floor-integration.js against the real default.
+  const srv = startServer(port, TESTDB, { STRATUM_SHOP_FEE_BPS: '5000', STRATUM_MIN_CLAIM_AMOUNT: '1' });
   await waitReady(port);
   let srvDead = false;
   const mustLive = () => { if (srv.exited !== null) { srvDead = true; ok(false, 'test server died mid-suite', srv.exited); } return !srvDead; };

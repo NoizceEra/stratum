@@ -247,6 +247,22 @@ as NOT the placeholder (`STRATUM_TOKEN_IS_PLACEHOLDER`, derived automatically fr
 refuses a claim the treasury can't actually afford instead of burning gas on a guaranteed
 revert. See `chain-adapter.js`'s header for the full safety-gate writeup.
 
+**Two more protections for the treasury's gas float**, both purely server-side (no chain
+interaction needed to enforce either):
+- A minimum claim floor (`STRATUM_MIN_CLAIM_AMOUNT`, default 50 STRM) — real settlement
+  pays the same gas for a 1-STRM claim as a 1000-STRM one, so with no floor a player (or a
+  bot) could bleed the gas float one dust-sized claim at a time. Refused claims never touch
+  `claim_requests` or `chain-adapter.js` at all — same "nothing spent on a refusal" contract
+  as every other economy gate in `server.js`.
+- A send queue in `chain-adapter.js` serializing every real transfer through the one
+  treasury signer — the treasury has a single on-chain nonce, and `ethers` fetches "the
+  current nonce" right before sending; two claims settling at the same moment could
+  otherwise race for it. Every `settleClaim()` call's actual chain-touching work now runs
+  strictly one-at-a-time via a promise-chain queue, proven with an offline concurrency test
+  in `test-chain-adapter.js` (two calls fired without awaiting between them, asserted to
+  never interleave). Validation and the `isConfigured()` gate stay outside the queue, so a
+  claim that's going to be refused anyway still answers immediately.
+
 **`ethers` is this project's one intentional dependency.** Every other module is
 hand-rolled and zero-dependency by design; hand-rolling secp256k1 ECDSA + RLP encoding +
 keccak256 for code that moves real funds is exactly the wrong place to save a dependency —

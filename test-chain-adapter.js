@@ -165,7 +165,48 @@ check('isConfigured-false-without-signer-even-when-marked-real', CA.isConfigured
   check('settleClaim-reports-signer_error-when-provider-construction-throws',
     signerErr1.ok === false && signerErr1.reason === 'signer_error');
 
-  check('settleClaim-never-throws-even-when-every-fake-call-throws', (function () { return true; })());
+  // Reaching this line at all — through five straight fake failure modes above, none of
+  // which threw out of settleClaim() — is itself the "never throws" proof; every check
+  // above exercises a distinct throwing fake, so no separate vacuous assertion is needed.
+
+  // -------------------------------------------------------- settleClaim() — queue serializes real sends
+  // The treasury is ONE signer with ONE nonce (see chain-adapter.js's file header). Two
+  // settleClaim() calls fired without awaiting between them must never let their chain-
+  // touching work (balanceOf + transfer) interleave — that's exactly how two claims could
+  // race for the same nonce. Prove it with fakes that record whether a second call's work
+  // ever started before the first one's finished.
+  await (async function () {
+    let inFlight = 0;
+    let sawOverlap = false;
+    const order = [];
+    function trackingDeps(tag) {
+      return fakeDeps({
+        contract: {
+          balanceOf: async function () {
+            inFlight++;
+            if (inFlight > 1) sawOverlap = true;
+            await new Promise((r) => setTimeout(r, 15));
+            order.push(tag + ':balanceOf');
+            return 1000n;
+          },
+          transfer: async function () {
+            await new Promise((r) => setTimeout(r, 15));
+            order.push(tag + ':transfer');
+            inFlight--;
+            return { hash: '0x' + tag, wait: async function () { return { status: 1 }; } };
+          }
+        }
+      });
+    }
+    const p1 = CA.settleClaim({ key: 'p1', amountUnits: 1, wallet: WALLET }, realEnv, trackingDeps('first'));
+    const p2 = CA.settleClaim({ key: 'p2', amountUnits: 1, wallet: WALLET }, realEnv, trackingDeps('second'));
+    const [r1, r2] = await Promise.all([p1, p2]);
+    check('settleClaim-queue-never-lets-two-sends-overlap', sawOverlap === false);
+    check('settleClaim-queue-runs-second-call-strictly-after-the-first-completes',
+      order.join(',') === 'first:balanceOf,first:transfer,second:balanceOf,second:transfer');
+    check('settleClaim-queue-both-queued-calls-still-succeed', r1.ok === true && r2.ok === true);
+    check('settleClaim-queue-both-calls-get-their-own-txHash', r1.txHash === '0xfirst' && r2.txHash === '0xsecond');
+  })();
 
   // ---------------------------------------------------------------- purity / hygiene
   const source = require('fs').readFileSync('./src/chain-adapter.js', 'utf8')
