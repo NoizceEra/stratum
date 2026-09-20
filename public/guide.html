@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<title>STRATUM — Colonist's Guide</title>
+<style>
+  :root{
+    --ink:#e8e6df; --dim:#8b8578; --gold:#c9a55c; --bg:#0b0c10;
+    --panel:rgba(255,255,255,.03); --rule:rgba(201,165,92,.28);
+    --good:#8fae63; --warn:#d0674a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--bg)}
+  body{background:var(--bg);color:var(--ink);
+    font:14px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    -webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;
+    padding:0 0 80px;min-height:100%}
+  a{color:var(--gold)}
+  .wrap{max-width:760px;margin:0 auto;padding:0 20px}
+
+  /* ---------- top banner ---------- */
+  header{padding:56px 20px 34px;text-align:center;
+    background:radial-gradient(circle at 50% 0%,#14161d,#0b0c10 72%);
+    border-bottom:1px solid var(--rule)}
+  header h1{font-size:clamp(26px,6vw,40px);letter-spacing:.42em;margin-left:.42em;
+    color:var(--gold);font-weight:400}
+  header .sub{color:var(--dim);letter-spacing:.16em;font-size:11px;margin-top:14px;
+    text-transform:uppercase}
+  header .back{display:inline-block;margin-top:26px;border:1px solid var(--gold);
+    color:var(--gold);text-decoration:none;padding:10px 22px;letter-spacing:.2em;
+    font-size:11px}
+  header .back:hover{background:var(--gold);color:#0b0c10}
+
+  /* ---------- quick-start strip ---------- */
+  .quickstart{background:var(--panel);border-bottom:1px solid var(--rule);padding:26px 0}
+  .qs-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
+  .qs-step{border:1px solid var(--rule);padding:14px 14px 16px;background:rgba(0,0,0,.2)}
+  .qs-step .n{color:var(--gold);font-size:11px;letter-spacing:.2em}
+  .qs-step .t{margin-top:6px;font-size:13px;color:var(--ink)}
+  .qs-step .d{margin-top:5px;color:var(--dim);font-size:11.5px;line-height:1.55}
+
+  /* ---------- section chrome ---------- */
+  nav.toc{padding:26px 0 6px}
+  nav.toc .lbl{color:var(--dim);letter-spacing:.2em;font-size:10px;margin-bottom:10px}
+  nav.toc ul{list-style:none;display:flex;flex-wrap:wrap;gap:8px 14px}
+  nav.toc a{font-size:11.5px;letter-spacing:.06em;text-decoration:none;
+    border-bottom:1px dotted var(--rule);padding-bottom:1px}
+  nav.toc a:hover{border-bottom-color:var(--gold)}
+
+  section{padding:34px 0;border-top:1px solid var(--rule)}
+  section:first-of-type{border-top:none}
+  section .tag{display:inline-block;color:var(--gold);font-size:10px;letter-spacing:.24em;
+    border:1px solid var(--rule);padding:3px 9px;margin-bottom:12px}
+  section h2{font-size:19px;letter-spacing:.08em;color:var(--gold);font-weight:400;
+    margin-bottom:14px}
+  section h3{font-size:13px;letter-spacing:.08em;color:var(--ink);font-weight:400;
+    margin:20px 0 8px;padding-left:10px;border-left:2px solid var(--gold)}
+  section p{color:var(--ink);margin-bottom:12px}
+  section p.dim{color:var(--dim);font-size:12.5px}
+  section ul,section ol{margin:0 0 14px 22px;color:var(--ink)}
+  section li{margin-bottom:7px}
+  section li::marker{color:var(--gold)}
+  .card{border:1px solid var(--rule);background:var(--panel);padding:14px 16px;margin:14px 0}
+  .card .h{color:var(--gold);letter-spacing:.1em;font-size:12px;margin-bottom:6px}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  table{width:100%;border-collapse:collapse;margin:12px 0 16px;font-size:12.5px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.08)}
+  th{color:var(--dim);font-weight:400;letter-spacing:.08em;font-size:10.5px;
+    text-transform:uppercase}
+  td.num{color:var(--gold)}
+  .kbd{display:inline-block;border:1px solid rgba(255,255,255,.18);border-radius:2px;
+    padding:0 5px;font-size:11px;color:var(--ink);background:rgba(255,255,255,.04)}
+  .note{border-left:2px solid var(--good);padding:10px 14px;background:rgba(143,174,99,.07);
+    font-size:12.5px;color:var(--ink);margin:14px 0}
+  .warn{border-left:2px solid var(--warn);padding:10px 14px;background:rgba(208,103,74,.08);
+    font-size:12.5px;color:var(--ink);margin:14px 0}
+  .warn b, .note b{color:var(--gold);font-weight:400}
+
+  footer{padding:40px 20px 20px;text-align:center;color:var(--dim);font-size:11px;
+    letter-spacing:.1em}
+  footer a{color:var(--dim);text-decoration:underline}
+
+  ::selection{background:rgba(201,165,92,.35)}
+
+  @media (max-width:520px){
+    header{padding:44px 16px 26px}
+    section{padding:26px 0}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>STRATUM</h1>
+  <div class="sub">Colonist's Guide — everything you need, nothing you don't</div>
+  <a class="back" href="/">← BACK TO THE WORLD</a>
+</header>
+
+<div class="quickstart">
+  <div class="wrap">
+    <div class="qs-steps">
+      <div class="qs-step">
+        <div class="n">01</div>
+        <div class="t">Claim a tile</div>
+        <div class="d">Left-click open ground near you. It's yours forever — nobody can ever take it back.</div>
+      </div>
+      <div class="qs-step">
+        <div class="n">02</div>
+        <div class="t">Mine it</div>
+        <div class="d">Left-click a tree, ore seam, herb patch, or crystal. This is where wood, ore, herb, crystal, gold and STRM come from.</div>
+      </div>
+      <div class="qs-step">
+        <div class="n">03</div>
+        <div class="t">Craft a better tool</div>
+        <div class="d">Press <span class="kbd">C</span>. Every tool tier you unlock mines MORE per swing — this is the single biggest lever on your income.</div>
+      </div>
+      <div class="qs-step">
+        <div class="n">04</div>
+        <div class="t">Repeat, and grow</div>
+        <div class="d">More land, better tools, more STRM. Fight, craft gear, build structures, ship silver to Earth — whenever you're ready.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<nav class="toc">
+  <div class="wrap">
+    <div class="lbl">JUMP TO</div>
+    <ul>
+      <li><a href="#mining">Mining</a></li>
+      <li><a href="#crafting">Crafting</a></li>
+      <li><a href="#land">Claiming land</a></li>
+      <li><a href="#currency">Gold &amp; STRM</a></li>
+      <li><a href="#spending">Spending STRM</a></li>
+      <li><a href="#combat">Combat</a></li>
+      <li><a href="#structures">Structures</a></li>
+      <li><a href="#trading">Shops, deeds &amp; trade</a></li>
+      <li><a href="#wallet">Wallet &amp; claiming</a></li>
+      <li><a href="#controls">Controls</a></li>
+      <li><a href="#honest">Honest notes</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <section id="mining">
+    <div class="tag">PRIMARY</div>
+    <h2>Mining — this is the game</h2>
+    <p>Everything in STRATUM starts with mining. Walk up to a resource node — a tree,
+      an ore seam, an herb patch, a crystal formation — and left-click it. That's it.
+      Every hit gives you a raw material, some gold, and (usually) a small amount of
+      pending STRM.</p>
+
+    <h3>What you're mining</h3>
+    <table>
+      <tr><th>Node</th><th>Yields</th><th>Notes</th></tr>
+      <tr><td>Tree</td><td class="num">wood</td><td>Common everywhere there's green ground</td></tr>
+      <tr><td>Ore seam</td><td class="num">ore</td><td>Denser near rocky/volcanic terrain</td></tr>
+      <tr><td>Herb patch</td><td class="num">herb</td><td>Needed for armor and a few tools</td></tr>
+      <tr><td>Crystal</td><td class="num">crystal</td><td>Rarest, gates the best gear tier</td></tr>
+    </table>
+    <p class="dim">Most nodes take a couple of hits to fully deplete — you'll see it
+      change state as you work it. A depleted node isn't gone forever: the planet
+      regrows it on its own after a while. Nothing here is a quarry you can empty out
+      — it's a world you settle.</p>
+
+    <h3>Why your tool tier is everything</h3>
+    <p>A bare-handed swing gets you the least of everything: least yield per hit,
+      slowest pace. Every tool tier you unlock — flint → copper → iron → steel —
+      mines <b>more per swing</b>, and never less than what you had before. This is
+      the real progression curve in STRATUM: better tools aren't a side quest, they're
+      the whole economic engine. See <a href="#crafting">Crafting</a> below for exactly
+      how to get them.</p>
+
+    <div class="note"><b>The one thing to remember:</b> if your income feels slow, the
+      answer is almost always "craft the next tool tier," not "find a better spot."</div>
+  </section>
+
+  <section id="crafting">
+    <div class="tag">SECONDARY — MULTIPLIES MINING</div>
+    <h2>Crafting</h2>
+    <p>Crafting doesn't compete with mining — it feeds it. Press <span class="kbd">C</span>
+      to open the craft panel. Every recipe shows exactly what it costs and what tool
+      tier unlocks it; a recipe you can't afford or haven't unlocked yet is dimmed, not
+      hidden, so you always know what's coming next.</p>
+
+    <h3>Tool upgrades — do these first</h3>
+    <p>The top card in the craft panel is always your next tool tier. Paying its cost
+      raises your tool tier permanently and immediately increases how much every future
+      swing yields. There's no reason to delay one you can afford.</p>
+
+    <h3>Gear — weapons and armor</h3>
+    <p>Below tools, recipes turn raw materials into weapons (more attack) and armor
+      (less damage taken) across four tiers matching the tool ladder. Better gear
+      makes <a href="#combat">fighting</a> safer and faster, which matters once you're
+      relying on monster kills for extra income too.</p>
+
+    <h3>Batch crafting — craft more in one click</h3>
+    <p>Holding <span class="kbd">Shift</span> while clicking a recipe crafts as many as
+      you can currently afford in a single request, instead of clicking the same card
+      over and over. Same total cost, same total output, just less clicking.</p>
+
+    <h3>Salvage — undo a craft you regret</h3>
+    <p>The SALVAGE MODE toggle at the top of the craft panel lists everything crafted
+      you're currently holding. Clicking one breaks it back down for roughly half its
+      original materials back — not a full refund, but enough that trying a different
+      gear path never feels like a dead loss.</p>
+
+    <div class="card">
+      <div class="h">TL;DR</div>
+      Mine → unlock the next tool tier → mine faster/more → repeat. Gear and decor are
+      there when you want them, but the tool ladder is what actually multiplies your
+      income.
+    </div>
+  </section>
+
+  <section id="land">
+    <div class="tag">FOUNDATION</div>
+    <h2>Claiming land</h2>
+    <p>Left-click open, unclaimed ground to stake it — it costs a small amount of
+      whatever material matches that terrain (dirt, grass, stone, and so on all cost
+      something different). Once it's yours, it's yours <b>permanently</b>. There is no
+      decay, no upkeep, and nobody — ever — can take a claim from you. Right-click your
+      own claimed land to release it back to the frontier if you no longer want it; that's
+      the only way a claim ever changes hands.</p>
+    <p class="dim">Claiming land isn't required to mine or fight, but structures, shops,
+      and parcel deeds all need your own claimed ground under them.</p>
+  </section>
+
+  <section id="currency">
+    <div class="tag">ECONOMY</div>
+    <h2>Gold &amp; STRM — two currencies, two jobs</h2>
+    <p>Almost everything that earns you something pays in both at once:</p>
+    <div class="grid2">
+      <div class="card">
+        <div class="h">GOLD</div>
+        Soft, in-game only. Spend it freely on shop listings and parcel deeds — there's
+        no reason to hoard it.
+      </div>
+      <div class="card">
+        <div class="h">STRM</div>
+        The hard currency — STRATUM's real token, meant to move on-chain (Robinhood
+        Chain). Every action that grants it adds to your <b>pending</b> balance first.
+      </div>
+    </div>
+    <p>Mining, crafting, and fighting all pay a small amount of pending STRM per action.
+      There's no cap on how much you can accrue by playing.</p>
+  </section>
+
+  <section id="spending">
+    <div class="tag">SINKS</div>
+    <h2>Spending STRM in-game</h2>
+    <p>STRM isn't only something you claim off-world — you can spend pending STRM
+      directly, right now, two ways:</p>
+    <h3>Earth Requisition — SHIP TO EARTH</h3>
+    <p>The SHIP TO EARTH button sends some or all of your pending STRM toward the
+      colony's overall mission. A shipment of 50 or more STRM at once announces itself
+      to every other player on the map — a real, visible milestone.</p>
+    <h3>Structure Rush</h3>
+    <p>Own an idle structure? Shift-click it to instantly finish whatever it's still
+      producing, for STRM, instead of waiting out the timer. A plain click still just
+      collects whatever has already finished.</p>
+    <p class="dim">Most of whatever you spend this way is permanently destroyed, not
+      recycled — that's deliberate. It's what keeps STRM meaning something instead of
+      only ever going up.</p>
+  </section>
+
+  <section id="combat">
+    <div class="tag">RISK &amp; REWARD</div>
+    <h2>Combat</h2>
+    <p>Creatures roam every map with real AI — they notice you, chase, and hit back.
+      Left-click one in range to strike. Kills grant XP, gold, and STRM, and your level
+      climbs as you fight. Better gear (see <a href="#crafting">Crafting</a>) makes this
+      safer and faster.</p>
+    <div class="warn"><b>Dying has a real cost:</b> a death drops half your carried raw
+      materials right where you fell. Walk back to recover them before someone else
+      does, or before they expire.</div>
+  </section>
+
+  <section id="structures">
+    <div class="tag">PASSIVE INCOME</div>
+    <h2>Idle structures</h2>
+    <p>Press <span class="kbd">I</span> to see what you can build on your own claimed
+      land. A structure quietly produces a resource over time even while you're off
+      doing something else — check back later, or Structure Rush it (see
+      <a href="#spending">Spending STRM</a>) to finish it instantly.</p>
+  </section>
+
+  <section id="trading">
+    <div class="tag">PLAYER ECONOMY</div>
+    <h2>Shops, deeds &amp; trade</h2>
+    <ul>
+      <li><b>Shops</b> — list something from your own claimed tile for a fixed price in
+        another resource. A small treasury fee applies to real sales; gifting through
+        direct trade never does.</li>
+      <li><b>Parcel deeds</b> — mint a deed for a piece of your land and sell it to
+        another colonist outright, fee included.</li>
+      <li><b>Direct trade</b> — offer an item to a specific player, no fee, no escrow
+        games; either side can cancel before it's accepted.</li>
+    </ul>
+  </section>
+
+  <section id="wallet">
+    <div class="tag">GETTING STRM OFF-WORLD</div>
+    <h2>Wallet &amp; claiming</h2>
+    <p>Connect a wallet from the HUD to link your address and read your real on-chain
+      balance. The CLAIM STRM button turns your pending balance into a real settlement
+      request.</p>
+    <div class="warn"><b>Honest status:</b> on-chain settlement is not live yet.
+      Every claim today is genuinely recorded and queued — nothing is ever lost — but it
+      won't pay out on-chain until STRATUM's official token contract is deployed. Keep
+      playing; nothing you've earned goes away while this catches up.</div>
+  </section>
+
+  <section id="controls">
+    <div class="tag">REFERENCE</div>
+    <h2>Controls</h2>
+    <table>
+      <tr><th>Key</th><th>Does</th></tr>
+      <tr><td><span class="kbd">WASD</span></td><td>Walk</td></tr>
+      <tr><td><span class="kbd">LMB</span></td><td>Strike / harvest / build / claim</td></tr>
+      <tr><td><span class="kbd">Shift+LMB</span></td><td>Batch-craft a recipe, or rush an owned structure</td></tr>
+      <tr><td><span class="kbd">RMB</span></td><td>Release a claim you own</td></tr>
+      <tr><td><span class="kbd">1–0</span></td><td>Select build material</td></tr>
+      <tr><td><span class="kbd">M</span></td><td>World map</td></tr>
+      <tr><td><span class="kbd">T</span></td><td>Travel between maps</td></tr>
+      <tr><td><span class="kbd">C</span></td><td>Craft (and salvage)</td></tr>
+      <tr><td><span class="kbd">I</span></td><td>Idle structures</td></tr>
+      <tr><td><span class="kbd">P</span></td><td>Parcel deeds</td></tr>
+      <tr><td><span class="kbd">K</span></td><td>Wardrobe</td></tr>
+      <tr><td><span class="kbd">L</span></td><td>Leaderboard</td></tr>
+      <tr><td><span class="kbd">+ / −</span></td><td>Zoom</td></tr>
+    </table>
+    <p class="dim">On a phone or tablet, one MENU button in the corner reaches every
+      panel above — the keybinds are a desktop shortcut, not a requirement.</p>
+  </section>
+
+  <section id="honest">
+    <div class="tag">THE FINE PRINT — ON PURPOSE, NOT HIDDEN</div>
+    <h2>A few honest notes</h2>
+    <ul>
+      <li>STRATUM has <b>no admins and no moderation queue</b>, by design. Ownership of
+        land is absolute and enforced by the server, not a person.</li>
+      <li>There is <b>no way yet to buy gold or STRM with real money</b>. Everything is
+        earned by playing — mining, crafting, and fighting.</li>
+      <li>On-chain settlement (turning pending STRM into a real on-chain payout) is
+        built but not yet switched on — see <a href="#wallet">Wallet &amp; claiming</a>.</li>
+      <li>Real-money play-to-earn is a genuinely regulated space in most places. Play,
+        earn, and enjoy — just don't treat anything here as financial advice or a
+        guaranteed payout until settlement is actually live.</li>
+    </ul>
+  </section>
+
+</div>
+
+<footer>
+  <div>The land never resets. The provisions always do.</div>
+  <div style="margin-top:6px"><a href="/">Return to STRATUM →</a></div>
+</footer>
+
+</body>
+</html>

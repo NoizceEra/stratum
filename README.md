@@ -158,6 +158,9 @@ world.js               the VOLATILE layer: nodes, monsters, respawn timers
 public/terrain.js      deterministic world generation — shared verbatim by client and server
 public/game.js         client: renderer, input, netcode
 public/index.html      shell, HUD, gate, travel panel
+public/guide.html       player-facing colonist's guide — served at /guide.html, linked
+                        from the gate screen and the in-game menu; mining-first, crafting
+                        framed as its multiplier, matching the actual reward curve
 test.js                protocol suite (phase A)
 test-restart.js        restart persistence (phases B/C)
 run-tests.js           orchestrates the phases, spawning each server as a child

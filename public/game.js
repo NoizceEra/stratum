@@ -1515,7 +1515,8 @@
   // Desktop never opens this; it keeps its direct keybinds in #hud-bl.
   var MENU_ACTIONS = {
     map: toggleMap, travel: toggleTravel, craft: toggleCraft, idle: toggleIdle,
-    parcels: toggleParcels, wardrobe: toggleWardrobe, leaderboard: toggleLeaderboard
+    parcels: toggleParcels, wardrobe: toggleWardrobe, leaderboard: toggleLeaderboard,
+    guide: function () { window.open('/guide.html', '_blank', 'noopener'); }
   };
   function toggleMenuSheet() {
     if (!S.ready) return;
