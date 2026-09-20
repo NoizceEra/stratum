@@ -597,6 +597,7 @@
     personalClaims: 0,
     craftOpens: 0,
     crafts: 0,
+    salvageMode: false,
     mapsSeen: {},
     achUnlocked: 0, achTitle: null, achUnlockedIds: [],
     // appearance — palette id + the two hues it carries, plus equipped accessory ids per
@@ -1007,14 +1008,25 @@
         if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
         if (m.inv) S.inv = m.inv;
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
-        S.crafts += 1;
-        toast('CRAFTED: ' + String(m.item || '').toUpperCase(), true);
+        var craftedN = m.count | 0 || 1;
+        S.crafts += craftedN;
+        toast((craftedN > 1 ? craftedN + 'x ' : 'CRAFTED: ') + String(m.item || '').toUpperCase(), true);
         if (m.gains && m.gains.gold) float(S.x, S.y - 0.6, '+' + m.gains.gold + ' gold', '#e8c76a', 0);
         if (m.gains && m.gains.token) float(S.x, S.y - 0.9, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), '#8fe4ff', 0);
         sfx('craft');
         if (S.craftOpen) buildCraft();
         if (window.StratumHud) window.StratumHud.noteAction();
         refreshQuest(true);
+        break;
+      }
+      case 'salvaged': {
+        if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
+        if (m.inv) S.inv = m.inv;
+        var refundText = Object.keys(m.refund || {}).map(function (k) { return '+' + m.refund[k] + ' ' + k; }).join(' ');
+        toast('SALVAGED ' + (m.count | 0 || 1) + 'x ' + String(m.item || '').toUpperCase() +
+          (refundText ? ' — ' + refundText.toUpperCase() : ''), true);
+        sfx('ui');
+        if (S.craftOpen) buildCraft();
         break;
       }
       case 'wallet-linked': {
@@ -1861,6 +1873,20 @@
     S.craftOpen = false;
     document.getElementById('craft').classList.remove('on');
   }
+  /** How many of `cost` the current inventory can pay for, capped at the server's real
+   *  batch ceiling (S.commerce.fees.maxCraftBatch — falls back to 20, matching
+   *  src/crafting.js's own MAX_BATCH default, if the server hasn't reported one yet). */
+  function affordableBatch(cost) {
+    if (!cost) return 1;
+    var inv = S.inv || {};
+    var cap = (S.commerce && S.commerce.fees && S.commerce.fees.maxCraftBatch) || 20;
+    var n = cap;
+    for (var k in cost) {
+      if (!cost[k]) continue;
+      n = Math.min(n, Math.floor((inv[k] || 0) / cost[k]));
+    }
+    return Math.max(0, n);
+  }
   function buildCraft() {
     var list = document.getElementById('craftlist');
     document.getElementById('crafttool').textContent = toolName(S.tool | 0).toUpperCase() + ' TOOLS';
@@ -1869,6 +1895,36 @@
       return;
     }
     var html = '', i, r;
+    // Toggle first so it's always reachable regardless of scroll position.
+    html += '<div class="mcard" data-toggle-salvage="1"><div class="nm">' +
+      (S.salvageMode ? 'EXIT SALVAGE MODE' : 'SALVAGE MODE') + '</div>' +
+      '<div class="tier">' + (S.salvageMode
+        ? 'CLICK SOMETHING YOU HOLD TO BREAK IT DOWN FOR PART OF ITS COST BACK'
+        : 'SHIFT+CLICK A RECIPE BELOW TO CRAFT AS MANY AS YOU CAN AFFORD AT ONCE') +
+      '</div></div>';
+    if (S.salvageMode) {
+      var recsS = S.catalog.recipes || [];
+      var any = false;
+      for (i = 0; i < recsS.length; i++) {
+        r = recsS[i];
+        var held = (S.inv && S.inv[r.output.item]) | 0;
+        if (held <= 0) continue;
+        any = true;
+        html += '<div class="mcard" data-salvage="' + r.id + '">' +
+          '<div class="nm">' + itemName(r.output.item).toUpperCase() + ' <span class="tier">x' + held + ' HELD</span></div>' +
+          '<div class="cost can">SALVAGE 1 — PART OF ' + costText(r.inputs) + ' BACK</div></div>';
+      }
+      if (!any) html += '<div class="mcard"><div class="ds">NOTHING CRAFTED IS CURRENTLY HELD.</div></div>';
+      list.innerHTML = html;
+      Array.prototype.forEach.call(list.children, function (el) {
+        el.addEventListener('click', function () {
+          unlockAudio();
+          if (el.dataset.toggleSalvage) { S.salvageMode = !S.salvageMode; buildCraft(); return; }
+          if (el.dataset.salvage) send({ t: 'salvage', id: el.dataset.salvage, count: 1 });
+        });
+      });
+      return;
+    }
     var tiers = S.catalog.tools || [];
     var next = (S.tool | 0) + 1;
     if (next < tiers.length) {
@@ -1895,10 +1951,20 @@
     }
     list.innerHTML = html;
     Array.prototype.forEach.call(list.children, function (el) {
-      el.addEventListener('click', function () {
+      el.addEventListener('click', function (e) {
         unlockAudio();
-        if (el.dataset.toolup) send({ t: 'toolup' });
-        else if (el.dataset.recipe) send({ t: 'craft', id: el.dataset.recipe });
+        if (el.dataset.toggleSalvage) { S.salvageMode = !S.salvageMode; buildCraft(); return; }
+        if (el.dataset.toolup) return send({ t: 'toolup' });
+        if (!el.dataset.recipe) return;
+        if (e.shiftKey) {
+          var rec = null;
+          for (var j = 0; j < recs.length; j++) if (recs[j].id === el.dataset.recipe) { rec = recs[j]; break; }
+          var n = rec ? affordableBatch(rec.inputs) : 0;
+          if (n <= 0) { toast('CANNOT AFFORD EVEN ONE'); sfx('deny'); return; }
+          send({ t: 'craft', id: el.dataset.recipe, count: n });
+        } else {
+          send({ t: 'craft', id: el.dataset.recipe });
+        }
       });
     });
   }

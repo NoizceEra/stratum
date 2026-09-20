@@ -296,6 +296,59 @@ counter track the running burn total.
   (plain click still does that). Priced at `STRATUM_RUSH_COST_PER_UNIT` STRM per resource
   unit skipped (default 2); an already-full structure costs nothing to rush.
 
+## Crafting
+
+`src/economy.js` still owns the 11-recipe base game (materials in, one item out, gated by
+tool tier). `src/crafting.js` adds depth on top, in the craft panel HUD:
+
+- **Batch crafting** — Shift+click a recipe to craft as many as you can afford at once
+  (capped at `src/crafting.js`'s `MAX_BATCH`, 20), instead of clicking the same card
+  repeatedly. Pays exactly count × the recipe cost and yields
+  exactly count × the output, in one request. This is also a genuine anti-cheat
+  improvement, not just convenience: one legitimate batch request does the job that used
+  to take dozens of individual messages — see the Anti-cheat section below for why that
+  matters, and `server.js`'s `applyCommerceReward()` comment for why a batch is evaluated
+  as ONE action (scaled reward), never `count` separate ones.
+- **Salvage** — a SALVAGE MODE toggle at the top of the craft panel lists everything
+  crafted you currently hold; clicking one breaks it down for a partial materials refund
+  (`STRATUM_SALVAGE_REFUND_BPS`, default 50%, floored per material — never a full-value
+  refund, which would make crafting free to "try" indefinitely). Reverses a crafting
+  mistake; grants no gold or STRM (it's undoing a purchase, not earning a new one).
+
+## Anti-cheat
+
+STRATUM has no admins and no moderation queue — see "The idea" above — which was a fine,
+deliberate choice while STRM was just a number going up. Now that
+`chain-adapter.js` can really sign and broadcast a settlement transfer (still gated off
+today — see the Commerce section above), harvest-botting or multi-accounting becomes a
+direct financial exploit, not a leaderboard nuisance. `src/anti-cheat.js` is the answer,
+and it's built to fit the no-admins rule rather than break it: **entirely automatic and
+reversible**. It watches three signals on every reward-earning action (harvest, craft,
+kill, collect) through the single choke point every one of them already passes through
+(`applyCommerceReward()` in `server.js`):
+
+- **Rate** — more reward-earning actions in a 10-second window than a human clicking a UI
+  can plausibly produce.
+- **Rhythm** — suspiciously *uniform* timing between actions (measured as the coefficient
+  of variation of the gaps between them) — real human input has natural jitter; a script
+  firing on a fixed interval does not.
+- **IP density** — many distinct accounts earning from the same IP at once. A soft signal
+  only (shared networks, NAT, and office wifi are real and innocent) — it's structurally
+  an *amplifier*, never an independent source: it can never by itself push the score over
+  the line, only make an existing rate/rhythm violation worse. See `src/anti-cheat.js`'s
+  header for why "weighted low" alone wasn't a strong enough guarantee under this module's
+  linear score decay, and why it had to be excluded from standalone accumulation instead.
+
+These combine into one rolling, decaying suspicion score per player (session-only, never
+persisted — it's a short-timescale behavioral signal, not a permanent mark). Crossing the
+threshold **throttles the economic reward of that one action** — gold and STRM both come
+back zero — while the action itself (materials consumed, item crafted, node depleted, XP
+awarded) proceeds completely normally. Never a block, never a ban, never a lockout, never
+anything requiring a human to review or undo. A false positive costs a legitimate player a
+few seconds of zero-reward actions, nothing more; sustained normal play always decays back
+to zero within a few minutes. Proven end-to-end (offline unit math, then a real server
+under a real rapid-fire burst) in `test-anti-cheat.js` and `test-anti-cheat-integration.js`.
+
 ## Status
 
 Playable and tested. Honest gaps:
@@ -311,8 +364,12 @@ Playable and tested. Honest gaps:
   a separate, not-yet-designed feature, not a bug in the claim pipeline above.
 - **Not deployed.** It runs locally. Hosting needs a long-lived process (Railway/Fly/VPS) plus the
   static client — not a static host alone.
-- **Anti-cheat is basic** — movement rate-limiting and server-side validation, no persistence of
-  suspicion.
+- **Anti-cheat now covers economic abuse specifically** (see the Anti-cheat section
+  above) — rate/rhythm/IP-density detection on every reward-earning action, throttling
+  gold/STRM without ever blocking play. Movement rate-limiting and server-side validation
+  on everything else remain as before; this doesn't add anything like device fingerprinting,
+  CAPTCHA, or persistent per-account suspicion history — a determined, patient bot working
+  well under the rate/rhythm thresholds is still not caught by this.
 - **Real-money play-to-earn is a regulated space in most jurisdictions** (gambling,
   securities, money-transmission considerations all vary by where players and the operator
   are). Worth real legal review before any of this handles real value, independent of

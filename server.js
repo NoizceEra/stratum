@@ -30,6 +30,8 @@ const TokenConfig = require('./src/token-config.js');
 const ChainAdapter = require('./src/chain-adapter.js');
 const Rewards = require('./src/rewards.js');
 const TokenSink = require('./src/token-sink.js');
+const AntiCheat = require('./src/anti-cheat.js');
+const Crafting = require('./src/crafting.js');
 
 /** Optional local `.env` (never committed). Existing process.env wins — so hosting
  *  platform secrets always override a checked-out file. Zero-dep, KEY=VALUE only. */
@@ -172,6 +174,10 @@ const RUSH_COST_PER_UNIT = Number(process.env.STRATUM_RUSH_COST_PER_UNIT) > 0
 // (src/rewards.js grants 1-2 STRM per action) many times over before claiming is worthwhile.
 const MIN_CLAIM_AMOUNT = Number(process.env.STRATUM_MIN_CLAIM_AMOUNT) > 0
   ? Number(process.env.STRATUM_MIN_CLAIM_AMOUNT) | 0 : 50;
+// Salvage refund rate (src/crafting.js) — same "fall back to the real default, not to 0
+// or 100%" bps convention as every other tunable here.
+const SALVAGE_REFUND_BPS = Number(process.env.STRATUM_SALVAGE_REFUND_BPS) >= 0
+  ? Number(process.env.STRATUM_SALVAGE_REFUND_BPS) | 0 : Crafting.SALVAGE_REFUND_BPS;
 // The fixed emote allowlist. No freeform text ever — see ROADMAP.md's no-chat non-goal.
 const EMOTES = ['wave', 'thanks', 'nice-place', 'gg'];
 
@@ -565,7 +571,8 @@ const server = http.createServer((req, res) => {
       treasuryWallet: COMMERCE.treasuryAddress,
       fees: {
         parcelBps: PARCEL_FEE_BPS, shopBps: SHOP_FEE_BPS, tokenBurnBps: TOKEN_BURN_BPS,
-        rushCostPerUnit: RUSH_COST_PER_UNIT, minClaim: MIN_CLAIM_AMOUNT
+        rushCostPerUnit: RUSH_COST_PER_UNIT, minClaim: MIN_CLAIM_AMOUNT,
+        salvageRefundBps: SALVAGE_REFUND_BPS, maxCraftBatch: Crafting.MAX_BATCH
       },
       // Total STRM ever burned via a sink — the actual "silver shipped to Earth" mission
       // metric this game's whole story is about. Never decreases; nothing owed for it.
@@ -742,6 +749,10 @@ server.on('upgrade', (req, socket) => {
     paletteId: CU.DEFAULT_PALETTE_ID, bodyHue: 0, trimHue: 0, accessories: { hat: null, cloak: null, scarf: null },
     achIds: new Set(), achMaps: new Set(), achCrafts: 0, achTitle: null,
     energy: ENERGY_MAX, subs: new Set(), sent: new Set(),
+    // src/anti-cheat.js's rolling state — deliberately in-memory only, never persisted:
+    // it's a short-timescale behavioral signal that fully decays within minutes (see that
+    // module's header), so a fresh connection starting at zero is correct, not a gap.
+    acHistory: [], acScore: 0, acLastAt: null, acWasThrottled: false,
     ready: false, lastMove: Date.now(), dead: false,
     gone: false, bad: 0, lastRx: Date.now(), tokenAt: Date.now(), tokens: MSG_BURST, dropped: 0,
     send(obj) {
@@ -907,17 +918,67 @@ function broadcastDropGone(map, x, y) {
 
 function gain(c, what, n) { c.inv[what] = (c.inv[what] || 0) + n; }
 
+// Anti-cheat IP-density tracking (src/anti-cheat.js's third, amplifier-only signal): which
+// distinct player keys have earned a commerce reward from each IP recently. A soft signal
+// by design — shared networks, NAT, campus/office wifi are real and innocent — so this
+// feeds a count into AntiCheat.evaluate() and nothing else; see that module's header for
+// why IP density alone can never throttle regardless of how long it's sustained.
+const IP_EARNER_WINDOW_MS = 120000; // 2 minutes — "recently active", not a tight timing window
+const recentEarnersByIp = new Map(); // ip -> Map<key, lastSeenTs>
+function ipEarnerCount(ip, key, now) {
+  let byKey = recentEarnersByIp.get(ip);
+  if (!byKey) { byKey = new Map(); recentEarnersByIp.set(ip, byKey); }
+  byKey.set(key, now);
+  for (const [k, t] of byKey) if (now - t > IP_EARNER_WINDOW_MS) byKey.delete(k);
+  if (byKey.size === 0) recentEarnersByIp.delete(ip);
+  return byKey.size;
+}
+
 /**
  * Dual commerce payout: soft gold into inv + hard token units into token_ledger.
  * Returns the reward applied (or zeros). Never throws.
+ *
+ * Every call also feeds src/anti-cheat.js's rolling per-player suspicion score (this is
+ * the ONE place every reward-earning action passes through, so it's the one place to hook
+ * — see that module's header for the full design). A throttled call still returns zeros
+ * exactly like a "nothing to reward" call already did; the caller's game action (inventory
+ * gain, harvest depletion, craft materials spent, kill XP, ...) is untouched either way —
+ * only the ECONOMIC reward is ever suppressed, never the action itself, never a ban, never
+ * anything requiring a human to review or undo (ROADMAP.md's no-admins rule, honored).
  */
-function applyCommerceReward(c, action, ctx) {
+function applyCommerceReward(c, action, ctx, multiplier) {
   try {
+    // `multiplier` scales the reward for a single request that legitimately represents
+    // more than one unit of the action — batch crafting (src/crafting.js), specifically.
+    // This is deliberately ONE anti-cheat evaluation below, not `multiplier` of them: the
+    // player performed ONE real action (submitting one batch request), and evaluating the
+    // rate/rhythm signals `multiplier` times in a synchronous loop would hand them all
+    // near-identical timestamps, which is EXACTLY what src/anti-cheat.js's RHYTHM signal
+    // is designed to flag — a legitimate batch craft would look machine-regular purely as
+    // an artifact of how this function was called, not because of anything the player
+    // actually did. One evaluation, scaled reward, is both more honest and immune to that.
+    const mult = (typeof multiplier === 'number' && isFinite(multiplier) && multiplier > 0) ? Math.floor(multiplier) : 1;
+    if (c.key) {
+      const now = Date.now();
+      const ipCount = ipEarnerCount(c.ip, c.key, now);
+      const ev = AntiCheat.evaluate({ history: c.acHistory, score: c.acScore, lastAt: c.acLastAt }, now, ipCount);
+      c.acHistory = ev.history; c.acScore = ev.score; c.acLastAt = ev.lastAt;
+      if (ev.throttled) {
+        if (!c.acWasThrottled) {
+          console.log(`[anti-cheat] #${c.id}${c.name ? ' ' + c.name : ''} economic reward throttled ` +
+            `(score=${ev.score.toFixed(1)} flags=${JSON.stringify(ev.flags)})`);
+        }
+        c.acWasThrottled = true;
+        return { gold: 0, token: 0, tokenPending: c.tokenPending | 0 };
+      }
+      c.acWasThrottled = false;
+    }
     const r = Rewards.rewardFor(action, ctx || {});
     if (!Rewards.hasReward(r)) return { gold: 0, token: 0, tokenPending: c.tokenPending | 0 };
-    if (r.gold > 0) gain(c, 'gold', r.gold);
-    if (r.token > 0 && c.key) c.tokenPending = creditToken(c.key, r.token);
-    return { gold: r.gold | 0, token: r.token | 0, tokenPending: c.tokenPending | 0 };
+    const gold = (r.gold | 0) * mult, token = (r.token | 0) * mult;
+    if (gold > 0) gain(c, 'gold', gold);
+    if (token > 0 && c.key) c.tokenPending = creditToken(c.key, token);
+    return { gold, token, tokenPending: c.tokenPending | 0 };
   } catch (e) {
     return { gold: 0, token: 0, tokenPending: c.tokenPending | 0 };
   }
@@ -1039,7 +1100,7 @@ const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', '
   'build-structure', 'collect-structure', 'structure-rush', 'set-look',
   'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote',
   'parcel-mint', 'parcel-list', 'parcel-buy', 'parcel-cancel', 'parcel-browse', 'parcel-mine',
-  'wallet-link', 'claim', 'requisition']);
+  'wallet-link', 'claim', 'requisition', 'salvage']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -1354,20 +1415,77 @@ function onMessage(c, msg) {
       const rec = ECO.recipeById(id);
       if (!rec) return c.send({ t: 'crafted', err: 'unknown recipe', id });
       if (rec.tier > (c.tool | 0)) return c.send({ t: 'crafted', err: 'locked: needs ' + (ECO.toolTier(rec.tier) || {}).name + ' tools', id });
-      const res = ECO.craft(id, c.inv);
-      if (!res.ok) return c.send({ t: 'crafted', err: res.error, id });
-      c.inv = res.inv;
+
+      // Batch (src/crafting.js): an omitted count behaves exactly as a single craft
+      // always has — same message shape, same response — so msg.count only changes
+      // anything when it's a real request for more than one.
+      const cv = Crafting.validateBatchCount(msg.count === undefined ? 1 : msg.count);
+      if (!cv.ok) return c.send({ t: 'crafted', err: cv.error, id });
+      const batchCount = cv.count;
+
+      let item, count;
+      if (batchCount === 1) {
+        const res = ECO.craft(id, c.inv);
+        if (!res.ok) return c.send({ t: 'crafted', err: res.error, id });
+        c.inv = res.inv;
+        item = res.item; count = res.count;
+      } else {
+        const scaledCost = Crafting.batchCost(rec.inputs, batchCount);
+        if (!scaledCost || !ECO.canAfford(c.inv, scaledCost)) {
+          const miss = scaledCost ? ECO.missingFor(c.inv, scaledCost) : {};
+          const parts = []; for (const m in miss) parts.push(m + ' ' + miss[m]);
+          return c.send({ t: 'crafted', err: 'insufficient resources: ' + parts.join(', '), id });
+        }
+        const outCount = Crafting.batchOutputCount(rec.output.count, batchCount);
+        const paidInv = ECO.applyCost(c.inv, scaledCost);
+        if (!paidInv || ECO.roomFor(paidInv, rec.output.item) < outCount) {
+          return c.send({ t: 'crafted', err: 'stack limit reached for ' + rec.output.item, id });
+        }
+        c.inv = ECO.add(paidInv, rec.output.item, outCount);
+        item = rec.output.item; count = outCount;
+      }
+
       c.atkBoost = gearBonus(c.inv, 'weapon');
-      c.achCrafts = (c.achCrafts | 0) + 1;
-      const pay = applyCommerceReward(c, 'craft', { tier: rec.tier | 0 });
-      world.awardXp(c, CRAFT_XP_BASE + CRAFT_XP_PER_TIER * rec.tier);  // crafting is a real XP source now (ROADMAP_COZY §3)
+      c.achCrafts = (c.achCrafts | 0) + batchCount;
+      // One commerce-reward call, scaled by batchCount — see applyCommerceReward()'s own
+      // comment for why this is ONE anti-cheat evaluation with a scaled payout, not
+      // batchCount separate ones.
+      const pay = applyCommerceReward(c, 'craft', { tier: rec.tier | 0 }, batchCount);
+      world.awardXp(c, (CRAFT_XP_BASE + CRAFT_XP_PER_TIER * rec.tier) * batchCount);  // crafting is a real XP source now (ROADMAP_COZY §3)
       stateSave(c);
       sendVitals(c);
       c.send({
-        t: 'crafted', id, item: res.item, count: res.count, inv: c.inv, atkBoost: c.atkBoost,
+        t: 'crafted', id, item, count, inv: c.inv, atkBoost: c.atkBoost,
         gains: { gold: pay.gold, token: pay.token }, tokenPending: c.tokenPending | 0
       });
       checkAchievements(c);
+      break;
+    }
+
+    // Salvage (src/crafting.js): break down `count` held crafted items back into a partial
+    // materials refund (SALVAGE_REFUND_BPS, default 50%). Deliberately no commerce reward
+    // here — this reverses a purchase, it doesn't earn a new one — and deliberately no
+    // anti-cheat evaluation either: salvaging never grants gold or STRM, so it isn't a
+    // reward-earning action anti-cheat needs to watch (see applyCommerceReward()'s header).
+    case 'salvage': {
+      if (!c.ready || c.dead) return;
+      const id = cleanText(msg.id, 32);
+      const rec = ECO.recipeById(id);
+      if (!rec) return c.send({ t: 'salvaged', err: 'unknown recipe', id });
+      const held = c.inv[rec.output.item] | 0;
+      const cv = Crafting.validateSalvageCount(msg.count === undefined ? 1 : msg.count, held);
+      if (!cv.ok) return c.send({ t: 'salvaged', err: cv.error, id });
+      const salvageCount = cv.count;
+      const refund = Crafting.batchSalvageRefund(rec.inputs, salvageCount, SALVAGE_REFUND_BPS);
+      let inv = ECO.remove(c.inv, rec.output.item, salvageCount);
+      for (const mat in refund) inv = ECO.add(inv, mat, refund[mat]);
+      c.inv = inv;
+      c.atkBoost = gearBonus(c.inv, 'weapon');
+      stateSave(c);
+      sendVitals(c);
+      c.send({
+        t: 'salvaged', id, item: rec.output.item, count: salvageCount, refund, inv: c.inv, atkBoost: c.atkBoost
+      });
       break;
     }
 
