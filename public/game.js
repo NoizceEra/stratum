@@ -360,7 +360,19 @@
   function sel(g, x, y, rx, ry) { g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, TAU); g.fill(); }
 
   var NODESPR = {}, SHIM = [], FOAM = [], WET = [], GLOW_LAMP = null, GLOW_CRYS = null, GLOW_WARN = null;
-  var VIG_DARK = null, VIG_RED = null;
+  var VIG_DARK = null, VIG_RED = null, VIG_ALIEN = null;
+
+  // ---------- space-colony ambience --------------------------------------
+  // Two fixed, decorative (non-collidable, non-interactive) landmarks near map 0's
+  // spawn — a landed dropship and a terraformed glass dome — plus a slow drift of
+  // glowing atmospheric motes and a very faint off-world color wash on the vignette.
+  // All baked once as offscreen canvases (same `spr()` technique as GLOW_LAMP/etc.
+  // above) and placed at world coordinates resolved lazily on first render, once
+  // S.map is known to be trustworthy (see resolveLandmarks()). Nothing here touches
+  // collision, the tile grid, or any server state — purely a client-side backdrop.
+  var LANDMARK_SHIP = null, LANDMARK_DOME = null;
+  var LANDMARKS = null; // null = not yet resolved; [] or [ship, dome] after resolveLandmarks()
+  var MOTES = null;     // lazily-built array of drifting screen-space glow particles
 
   function buildNodeSprites() {
     NODESPR[1] = []; NODESPR[2] = []; NODESPR[3] = []; NODESPR[4] = [];
@@ -487,6 +499,164 @@
       grd.addColorStop(1, 'rgba(214,40,22,0.92)');
       g.fillStyle = grd; g.fillRect(0, 0, N, N);
     });
+    // A very faint violet/cyan corner wash — reinforces "not Earth" without fighting the
+    // terrain palette. Drawn on top of VIG_DARK at low alpha in render()'s atmosphere pass.
+    VIG_ALIEN = spr(N, function (g) {
+      var grd = g.createRadialGradient(N * 0.5, N * 0.42, N * 0.05, N * 0.5, N * 0.5, N * 0.74);
+      grd.addColorStop(0, 'rgba(90,60,150,0)');
+      grd.addColorStop(0.55, 'rgba(70,50,140,0.10)');
+      grd.addColorStop(1, 'rgba(40,150,170,0.22)');
+      g.fillStyle = grd; g.fillRect(0, 0, N, N);
+    });
+  }
+
+  /**
+   * Two pre-baked, multi-tile decorative sprites — a landed dropship and a terraformed
+   * glass dome — built once from canvas primitives (no image files, same zero-dependency
+   * rule as the rest of this project). Each canvas is square and drawn centered on its
+   * world anchor by drawLandmark(); the extra transparent margin lets glow/flame effects
+   * bleed outside the hull without being clipped.
+   */
+  function bakeLandmarkSprites() {
+    var N = 256;
+    LANDMARK_SHIP = spr(N, function (g) {
+      var cx = N * 0.5, cy = N * 0.56;
+      g.save(); g.translate(cx, cy); g.rotate(-0.09);
+      // scorched landing crater
+      var crater = g.createRadialGradient(0, N * 0.22, 4, 0, N * 0.22, N * 0.34);
+      crater.addColorStop(0, 'rgba(20,14,10,.55)'); crater.addColorStop(1, 'rgba(20,14,10,0)');
+      g.fillStyle = crater; g.beginPath(); g.ellipse(0, N * 0.22, N * 0.34, N * 0.13, 0, 0, TAU); g.fill();
+      // hull — a squat, tilted wedge, half-buried
+      g.fillStyle = '#2c3038'; g.beginPath();
+      g.moveTo(-N * 0.20, N * 0.10); g.lineTo(-N * 0.10, -N * 0.20); g.lineTo(N * 0.07, -N * 0.24);
+      g.lineTo(N * 0.24, -N * 0.02); g.lineTo(N * 0.18, N * 0.16); g.lineTo(-N * 0.06, N * 0.20);
+      g.closePath(); g.fill();
+      g.fillStyle = '#3c4350'; g.beginPath();
+      g.moveTo(-N * 0.10, -N * 0.20); g.lineTo(N * 0.07, -N * 0.24); g.lineTo(N * 0.15, -N * 0.12);
+      g.lineTo(-N * 0.04, -N * 0.08); g.closePath(); g.fill();          // top panel, lighter
+      g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(-N * 0.10, -N * 0.20); g.lineTo(N * 0.18, N * 0.16); g.stroke();
+      // cockpit glass
+      g.fillStyle = 'rgba(140,210,230,.85)';
+      g.beginPath(); g.ellipse(N * 0.05, -N * 0.10, N * 0.05, N * 0.035, 0.4, 0, TAU); g.fill();
+      // tail fin
+      g.fillStyle = '#23262c'; g.beginPath();
+      g.moveTo(-N * 0.20, N * 0.10); g.lineTo(-N * 0.30, -N * 0.06); g.lineTo(-N * 0.16, N * 0.02);
+      g.closePath(); g.fill();
+      g.restore();
+      // beacon glow + engine embers baked at low alpha; render()-time pulsing is layered
+      // on top by drawLandmark() using GLOW_WARN so the light actually animates.
+      g.fillStyle = 'rgba(255,150,90,.5)';
+      g.beginPath(); g.ellipse(cx + N * 0.18, cy - N * 0.02, 5, 5, 0, 0, TAU); g.fill();
+    });
+
+    LANDMARK_DOME = spr(N, function (g) {
+      var cx = N * 0.5, cy = N * 0.60, r = N * 0.30;
+      // ground shadow / foundation ring
+      g.fillStyle = 'rgba(15,20,18,.4)';
+      g.beginPath(); g.ellipse(cx, cy + r * 0.72, r * 1.06, r * 0.30, 0, 0, TAU); g.fill();
+      g.fillStyle = '#34413e';
+      g.beginPath(); g.ellipse(cx, cy + r * 0.55, r * 1.0, r * 0.24, 0, 0, TAU); g.fill();
+      // glass dome — a soft gradient dome shape, geodesic seams over it
+      var domeG = g.createRadialGradient(cx - r * 0.3, cy - r * 0.5, r * 0.1, cx, cy, r * 1.15);
+      domeG.addColorStop(0, 'rgba(180,235,240,.30)');
+      domeG.addColorStop(0.55, 'rgba(90,170,190,.20)');
+      domeG.addColorStop(1, 'rgba(40,90,110,.10)');
+      g.fillStyle = domeG;
+      g.beginPath(); g.ellipse(cx, cy, r, r * 0.98, 0, Math.PI, TAU); g.fill();
+      g.strokeStyle = 'rgba(210,240,245,.35)'; g.lineWidth = 1.5;
+      for (var seam = -2; seam <= 2; seam++) {
+        g.beginPath();
+        g.ellipse(cx, cy, Math.abs(r * seam * 0.32) + r * 0.18, r * 0.98, 0, Math.PI, TAU);
+        g.stroke();
+      }
+      g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx, cy - r); g.stroke();
+      for (var a2 = 1; a2 <= 3; a2++) {
+        g.beginPath();
+        g.moveTo(cx, cy);
+        g.lineTo(cx + Math.cos(Math.PI + a2 * (Math.PI / 4)) * r, cy + Math.sin(Math.PI + a2 * (Math.PI / 4)) * r * 0.98);
+        g.stroke();
+      }
+      // faint interior glow (greenhouse warmth inside the colony dome)
+      g.fillStyle = 'rgba(160,230,150,.10)';
+      g.beginPath(); g.ellipse(cx, cy - r * 0.15, r * 0.55, r * 0.5, 0, 0, TAU); g.fill();
+    });
+  }
+
+  /** Lazily resolves the two landmarks' fixed world tile-coordinates on map 0, choosing
+   *  the first dry (non-water, non-void) candidate offset from spawn in each direction.
+   *  Runs at most once — cached in LANDMARKS thereafter. Never touches server state. */
+  function resolveLandmarks() {
+    if (LANDMARKS !== null) return;
+    if (S.map !== 0) { LANDMARKS = []; return; }   // only ever placed on the starting map
+    var sp = T.spawnPoint(0);
+    // Offsets deliberately favor the open area below/left of spawn — the HUD's own
+    // panels sit in the four screen corners (see public/index.html's #hud-tl/tr/br), so
+    // a landmark placed too far up-right lands visually behind them at the default
+    // camera position instead of being the "walk out and see it" moment it's meant to be.
+    var shipCandidates = [[2, 16], [6, 18], [10, 12], [16, -10], [-14, -12]];
+    var domeCandidates = [[-16, 8], [-12, -14], [16, 16], [-20, -2]];
+    function firstDry(cands) {
+      for (var i = 0; i < cands.length; i++) {
+        var x = sp.x + cands[i][0], y = sp.y + cands[i][1];
+        var m = tileAt(x, y);
+        if (m !== VOID && m !== WATER) return { x: x, y: y };
+      }
+      return { x: sp.x + cands[0][0], y: sp.y + cands[0][1] }; // fall back — still just decor
+    }
+    LANDMARKS = [
+      Object.assign({ type: 'ship', spr: LANDMARK_SHIP, tiles: 6.5 }, firstDry(shipCandidates)),
+      Object.assign({ type: 'dome', spr: LANDMARK_DOME, tiles: 8 }, firstDry(domeCandidates))
+    ];
+  }
+
+  /** Slow-drifting glowing atmosphere motes — pure screen-space, wrap around the
+   *  viewport, never tied to world position. Cheap ambient motion, sci-fi/alien feel. */
+  function initMotes() {
+    MOTES = [];
+    var n = 26;
+    for (var i = 0; i < n; i++) {
+      MOTES.push({
+        x: Math.random() * VW, y: Math.random() * VH,
+        vx: (Math.random() - 0.5) * 3.2, vy: -3 - Math.random() * 4.5,
+        r: 0.6 + Math.random() * 1.6, ph: Math.random() * TAU,
+        hue: Math.random() < 0.5 ? '150,230,255' : '180,255,210'
+      });
+    }
+  }
+  function drawMotes(dt, now) {
+    if (!MOTES) initMotes();
+    ctx.globalCompositeOperation = 'lighter';
+    for (var i = 0; i < MOTES.length; i++) {
+      var p = MOTES[i];
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.y < -8) { p.y = VH + 8; p.x = Math.random() * VW; }
+      if (p.x < -8) p.x = VW + 8; else if (p.x > VW + 8) p.x = -8;
+      var tw = 0.35 + 0.35 * Math.sin(now * 0.0012 + p.ph);
+      ctx.fillStyle = 'rgba(' + p.hue + ',' + tw.toFixed(3) + ')';
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /** Draws one landmark — its baked sprite scaled to a multi-tile footprint, centered on
+   *  its world anchor, plus a gentle pulsing glow overlay so it doesn't read as static. */
+  function drawLandmark(ex, ey, s, rr, now) {
+    var sz = rr.tiles * s;
+    ctx.drawImage(rr.spr, ex - sz / 2, ey - sz * 0.56, sz, sz);
+    if (rr.type === 'ship') {
+      var pulse = 0.5 + 0.5 * Math.sin(now * 0.004);
+      var gs = s * 1.4;
+      ctx.globalAlpha = 0.5 + 0.4 * pulse;
+      ctx.drawImage(GLOW_WARN, ex + sz * 0.30 - gs / 2, ey - sz * 0.16 - gs / 2, gs, gs);
+      ctx.globalAlpha = 1;
+    } else if (rr.type === 'dome') {
+      var shimmer = 0.35 + 0.2 * Math.sin(now * 0.0009);
+      var gs2 = sz * 0.9;
+      ctx.globalAlpha = shimmer;
+      ctx.drawImage(GLOW_CRYS, ex - gs2 / 2, ey - sz * 0.5 - gs2 / 2, gs2, gs2);
+      ctx.globalAlpha = 1;
+    }
   }
 
   // ---------- species / creature forms ------------------------------------
@@ -2382,6 +2552,20 @@
     if (dr.x < Z_X0 || dr.x > Z_X1 || dr.y < Z_Y0 || dr.y > Z_Y1) return;
     znew(dr.y + 0.5, 5, dr);
   }
+  /** The two static space-colony landmarks (see resolveLandmarks()) — decorative only,
+   *  y-sorted into the same pass as every other entity so the player can walk in front
+   *  of or behind them. A generous view-bounds margin (their footprint is several tiles
+   *  wide) keeps them from popping in right at the screen edge. */
+  function takeLandmarks() {
+    resolveLandmarks();
+    if (!LANDMARKS || !LANDMARKS.length) return;
+    for (var i = 0; i < LANDMARKS.length; i++) {
+      var lm = LANDMARKS[i], margin = lm.tiles;
+      if (lm.x < Z_X0 - margin || lm.x > Z_X1 + margin || lm.y < Z_Y0 - margin || lm.y > Z_Y1 + margin) continue;
+      if (!lm.rx) { lm.rx = lm.x; lm.ry = lm.y; }
+      znew(lm.y + lm.tiles * 0.3, 6, lm);
+    }
+  }
   function takeMon(m) {
     var tx = m.x - m.rx, ty = m.y - m.ry, klerp = Math.min(1, S.dt * 14);
     m.rx += tx * klerp; m.ry += ty * klerp;
@@ -2509,6 +2693,7 @@
 
     // ---- entities, y-sorted so what is in front overlaps what is behind ----
     zi = 0; zlist.length = 0; nodeN = 0;
+    takeLandmarks();
     S.nodes.forEach(takeNode);
     S.drops.forEach(takeDrop);
     S.mons.forEach(takeMon);
@@ -2525,6 +2710,7 @@
       if (kk === 1) drawNodeSprite(ex, ey, s, rr, now);
       else if (kk === 5) drawDropSprite(ex, ey, s, now);
       else if (kk === 2) drawMonster(ex, ey, s, rr, now);
+      else if (kk === 6) drawLandmark(ex, ey, s, rr, now);
       else if (kk === 3) {
         drawAvatar(ex, ey, s, now, rr.body || '#b7c8dc', rr.trim || '#7f93a8', rr.faceX, rr.faceY, rr.walk, rr.moving, -1, 0, rr.hat, rr.cloak, rr.scarf);
         ctx.font = '10px ui-monospace,monospace'; ctx.textAlign = 'center';
@@ -2585,10 +2771,16 @@
       }
     }
 
+    // ---- ambient atmosphere motes (screen-space, drawn before the vignette settles
+    // over them for depth — see drawMotes()'s own comment) ----
+    if (S.ready) drawMotes(dt, now);
+
     // ---- atmosphere, damage flash, death ----
     ctx.imageSmoothingEnabled = true;
     ctx.globalAlpha = 0.5;
     ctx.drawImage(VIG_DARK, 0, 0, cw, ch);
+    ctx.globalAlpha = 0.6;
+    ctx.drawImage(VIG_ALIEN, 0, 0, cw, ch);
     if (S.hurt > 0.01) {
       ctx.globalAlpha = Math.min(1, S.hurt) * 0.9;
       ctx.drawImage(VIG_RED, 0, 0, cw, ch);
@@ -3094,6 +3286,7 @@
     GLOW_CRYS = mkGlow('150,230,255', 64);
     GLOW_WARN = mkGlow('255,120,80', 64);
     buildVignette();
+    bakeLandmarkSprites();
     buildMapBase(0);
     buildGateSwatches();
     var nameIn = document.getElementById('name-in');

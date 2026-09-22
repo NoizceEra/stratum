@@ -178,6 +178,17 @@ world looks like, because there is only one implementation.
 against reach, bounds, ownership, material and energy. Movement is rate-limited. Respawn timers
 are the server's.
 
+### Space-colony ambience
+
+Purely client-side, purely decorative — no server state, no new dependency, same
+canvas-baked-sprite technique `public/game.js` already uses for glow effects and water
+shimmer (`spr()`/`mkGlow()`). On map 0, near spawn: a landed dropship and a terraformed
+glass dome, both baked once from canvas primitives and placed at the first dry (non-water)
+tile found from a short list of candidate offsets — see `resolveLandmarks()`. Also: a slow
+drift of glowing atmosphere motes (screen-space, `drawMotes()`) and a faint violet/cyan
+`VIG_ALIEN` wash layered under the existing dark vignette. Nothing here touches collision,
+the tile grid, or gameplay — it's backdrop, the same way the existing water shimmer is.
+
 ---
 
 ## Commerce (Robinhood Chain)
