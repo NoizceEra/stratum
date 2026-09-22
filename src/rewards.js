@@ -29,12 +29,22 @@
 
   function zero() { return { gold: 0, token: 0 }; }
 
-  /** Base tables — whole units (token is pre-decimals ledger units). */
+  /** Base tables — whole units (token is pre-decimals ledger units).
+   *
+   * Bumped from the original 1x baseline (2026-09-21 "increased yields" pass): harvest
+   * doubled (mining is the game's PRIMARY activity — see README.md's Crafting section
+   * for how tool tiers already multiply this further; this is the base multiplied), the
+   * others raised ~1.5x so mining stays the clear highest-frequency income source relative
+   * to crafting/combat/idle collection, not so they trail behind it. These are still the
+   * PRE-bonus numbers: src/holder-bonus.js, src/mining-streak.js, and
+   * src/colony-milestone.js each apply an independent multiplier on top at the server
+   * integration layer — this table is the floor everyone earns regardless of wallet
+   * balance, mining pace, or the colony's collective progress. */
   var RATES = deepFreeze({
-    harvest: { gold: 1, token: 1 },
-    craft: { goldBase: 2, goldPerTier: 1, token: 2 },
-    kill: { gold: 2, token: 2 },
-    collect: { gold: 1, token: 0 }
+    harvest: { gold: 2, token: 2 },
+    craft: { goldBase: 3, goldPerTier: 2, token: 3 },
+    kill: { gold: 3, token: 3 },
+    collect: { gold: 2, token: 0 }
   });
 
   var ACTIONS = deepFreeze(['harvest', 'craft', 'kill', 'collect']);

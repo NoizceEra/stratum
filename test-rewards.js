@@ -73,29 +73,32 @@ check('ca-describe-with-key-presence-only', (function () {
 
 // ---- rewards ----
 check('actions-4', R.ACTIONS.length === 4);
+// Rates bumped 2026-09-21 ("increased yields" pass) — harvest doubled (1->2/1->2,
+// mining is the primary activity), others raised ~1.5x. See src/rewards.js's RATES
+// comment for the full reasoning.
 check('harvest', (function () {
   var r = R.rewardFor('harvest');
-  return r.gold === 1 && r.token === 1;
+  return r.gold === 2 && r.token === 2;
 })());
 check('craft-tier0', (function () {
   var r = R.rewardFor('craft', { tier: 0 });
-  return r.gold === 2 && r.token === 2;
+  return r.gold === 3 && r.token === 3;
 })());
 check('craft-tier3', (function () {
   var r = R.rewardFor('craft', { tier: 3 });
-  return r.gold === 5 && r.token === 2;
+  return r.gold === 9 && r.token === 3; // 3 + 2*3
 })());
 check('kill-flat', (function () {
   var r = R.rewardFor('kill');
-  return r.gold === 2 && r.token === 2;
+  return r.gold === 3 && r.token === 3;
 })());
 check('kill-xp-bonus', (function () {
   var r = R.rewardFor('kill', { xp: 25 });
-  return r.gold === 2 && r.token === 4; // 2 + floor(25/10)
+  return r.gold === 3 && r.token === 5; // 3 + floor(25/10)
 })());
 check('collect-gold-only', (function () {
   var r = R.rewardFor('collect');
-  return r.gold === 1 && r.token === 0;
+  return r.gold === 2 && r.token === 0;
 })());
 check('unknown-zero', (function () {
   var r = R.rewardFor('dance');

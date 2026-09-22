@@ -169,6 +169,52 @@ check('isConfigured-false-without-signer-even-when-marked-real', CA.isConfigured
   // which threw out of settleClaim() — is itself the "never throws" proof; every check
   // above exercises a distinct throwing fake, so no separate vacuous assertion is needed.
 
+  // -------------------------------------------------------- readBalance()
+  const r1b = await CA.readBalance(WALLET, {});
+  check('readBalance-not-configured-by-default', r1b.ok === false && r1b.reason === 'not_configured');
+
+  const r2b = await CA.readBalance(WALLET, fullEnv);
+  check('readBalance-still-not-configured-while-placeholder', r2b.ok === false && r2b.reason === 'not_configured');
+  check('readBalance-detail-names-the-placeholder-as-whats-missing',
+    typeof r2b.detail === 'string' && r2b.detail.indexOf('non-placeholder') >= 0);
+
+  const r3b = await CA.readBalance('not-an-address', realEnv);
+  check('readBalance-bad-address-is-bad-request', r3b.ok === false && r3b.reason === 'bad_request');
+
+  // readBalance never needs a signer — only makeProvider/makeContract, and never queues,
+  // so a fake here is even simpler than settleClaim()'s (no wallet, no transfer).
+  function fakeReadDeps(balanceRaw, overrides) {
+    return Object.assign({
+      makeProvider: function (rpcUrl) { return { __fakeProvider: true, rpcUrl: rpcUrl }; },
+      makeContract: function (address, abi, runner) {
+        return { balanceOf: async function () { return balanceRaw; } };
+      }
+    }, overrides || {});
+  }
+
+  const okRead = await CA.readBalance(WALLET, realEnv, fakeReadDeps(12345n));
+  check('readBalance-succeeds-against-a-fake-chain', okRead.ok === true && okRead.balance === 12345);
+
+  const zeroRead = await CA.readBalance(WALLET, realEnv, fakeReadDeps(0n));
+  check('readBalance-zero-balance-is-ok-not-an-error', zeroRead.ok === true && zeroRead.balance === 0);
+
+  const readBalanceRpcErrDeps = {
+    makeProvider: function (rpcUrl) { return { rpcUrl: rpcUrl }; },
+    makeContract: function () { return { balanceOf: async function () { throw new Error('rpc down'); } }; }
+  };
+  const rpcErrRead = await CA.readBalance(WALLET, realEnv, readBalanceRpcErrDeps);
+  check('readBalance-reports-rpc_error-when-the-read-throws', rpcErrRead.ok === false && rpcErrRead.reason === 'rpc_error');
+
+  const readBalanceProviderErrDeps = { makeProvider: function () { throw new Error('bad rpc'); } };
+  const providerErrRead = await CA.readBalance(WALLET, realEnv, readBalanceProviderErrDeps);
+  check('readBalance-reports-signer_error-when-provider-construction-throws',
+    providerErrRead.ok === false && providerErrRead.reason === 'signer_error');
+
+  // Decimals: realEnv pins STRATUM_TOKEN_DECIMALS to '0' (see its own comment above), so
+  // a raw balance and the reported human balance should match exactly with no scaling.
+  const decCheckRead = await CA.readBalance(WALLET, realEnv, fakeReadDeps(777n));
+  check('readBalance-applies-decimals-correctly-at-0-decimals', decCheckRead.balance === 777);
+
   // -------------------------------------------------------- settleClaim() — queue serializes real sends
   // The treasury is ONE signer with ONE nonce (see chain-adapter.js's file header). Two
   // settleClaim() calls fired without awaiting between them must never let their chain-

@@ -54,8 +54,8 @@
  *
  * CONTRACT
  *   - `describe()` / `isConfigured()` are pure, synchronous, given an env snapshot.
- *   - `settleClaim()` always resolves (never rejects/throws) — every failure path returns
- *     a typed { ok:false, reason, detail } instead.
+ *   - `settleClaim()` and `readBalance()` always resolve (never reject/throw) — every
+ *     failure path returns a typed { ok:false, reason, detail } instead.
  */
 'use strict';
 const { ethers } = require('ethers');
@@ -196,6 +196,64 @@ function enqueueSend(req, env, amount, deps) {
 }
 
 /**
+ * Read-only on-chain STRM balance check for an arbitrary address — powers
+ * src/holder-bonus.js's yield tier (a wallet holding more STRM earns a permanent reward
+ * multiplier). Unlike settleClaim(), this needs no signer key and never queues: it's a
+ * plain `eth_call`, not a transaction, so concurrent reads can't collide the way
+ * concurrent sends could. Gated the same way as settlement — an RPC/token misconfiguration
+ * or the still-placeholder contract (see README.md's Robinhood Chain note) both resolve
+ * { ok:false, reason:'not_configured' }, never a fabricated balance. Always resolves
+ * (never rejects); returns `balance` as a whole-STRM-unit integer (decimals already
+ * applied and floored), matching src/holder-bonus.js's tier table.
+ *
+ * `deps` is the same test-only injection as settleClaim() — { makeProvider, makeContract }.
+ */
+async function readBalance(address, env, deps) {
+  try {
+    if (!isAddr(address)) {
+      return { ok: false, reason: 'bad_request', detail: 'invalid address' };
+    }
+    var d = describe(env);
+    if (!d.rpcConfigured || !d.tokenConfigured || d.tokenIsPlaceholder) {
+      var missing = [];
+      if (!d.rpcConfigured) missing.push('rpc');
+      if (!d.tokenConfigured) missing.push('token');
+      if (d.tokenIsPlaceholder) missing.push('a real (non-placeholder) token contract');
+      return {
+        ok: false,
+        reason: 'not_configured',
+        detail: 'balance read not live yet (missing: ' + missing.join(', ') + ')'
+      };
+    }
+
+    var e = env;
+    var rpc = e.STRATUM_CLAIM_RPC_URL || e.STRATUM_RPC_URL;
+    var tokenAddr = e.STRATUM_CLAIM_TOKEN_ADDR || e.STRATUM_TOKEN_ADDRESS;
+    var dec = tokenDecimals(env);
+    var fns = Object.assign(defaultDeps(), deps || {});
+
+    var provider, contract;
+    try {
+      provider = fns.makeProvider(rpc);
+      // Read-only: a Provider works fine as the Contract's runner, no signer needed.
+      contract = fns.makeContract(tokenAddr, ERC20_ABI, provider);
+    } catch (eProvider) {
+      return { ok: false, reason: 'signer_error', detail: eProvider && eProvider.message };
+    }
+
+    try {
+      var raw = await contract.balanceOf(address);
+      var human = Math.floor(Number(ethers.formatUnits(raw, dec)));
+      return { ok: true, balance: human };
+    } catch (eRead) {
+      return { ok: false, reason: 'rpc_error', detail: 'could not read balance: ' + (eRead && eRead.message) };
+    }
+  } catch (e) {
+    return { ok: false, reason: 'internal_error', detail: e && e.message };
+  }
+}
+
+/**
  * Attempt to settle one claim on-chain. Always resolves (never rejects).
  * Not configured (still the common case today — see the placeholder-contract note in
  * README.md) -> { ok:false, reason:'not_configured', ... }; pending balance must stay put.
@@ -242,5 +300,6 @@ async function settleClaim(req, env, deps) {
 module.exports = {
   describe: describe,
   isConfigured: isConfigured,
-  settleClaim: settleClaim
+  settleClaim: settleClaim,
+  readBalance: readBalance
 };

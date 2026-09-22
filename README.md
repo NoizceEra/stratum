@@ -318,6 +318,41 @@ tool tier). `src/crafting.js` adds depth on top, in the craft panel HUD:
   refund, which would make crafting free to "try" indefinitely). Reverses a crafting
   mistake; grants no gold or STRM (it's undoing a purchase, not earning a new one).
 
+## Reward yield bonuses
+
+Base rates (`src/rewards.js`) were raised across the board (2026-09-21 — harvest 2x,
+others ~1.5x, mining kept the clear leader since it's the primary loop). On top of that,
+three independent multipliers compose at `applyCommerceReward()`'s single choke point in
+`server.js`, floored once at the end so rounding is lost at most once, never chained:
+
+- **`src/holder-bonus.js`** — "simple as holding the token": a linked wallet's real
+  on-chain STRM balance (verified server-side via `chain-adapter.js`'s new `readBalance()`
+  — a client-reported balance would be trivially spoofable, so the server never trusts one)
+  puts a player into one of five tiers, Colonist (1.0x, the base) up to Silverlord (2.0x at
+  100,000+ STRM). Refreshed on wallet-link and on reconnect; **always 1.0x today**, gated
+  behind the same non-placeholder-contract check as real settlement (see the Commerce
+  section above) — this is real, tested code sitting dormant until the real STRM contract
+  exists, exactly like `chain-adapter.js`'s settlement itself.
+- **`src/mining-streak.js`** — mining at a steady, human pace (roughly one harvest every
+  1-15 seconds, with natural jitter) builds a personal streak worth up to +50%. Explicitly
+  designed to sit inside `src/anti-cheat.js`'s normal-pacing territory rather than fight it
+  — going faster earns nothing extra, it just isn't punished either (see that module's
+  header for the full reasoning). Session-only, resets on reconnect. Only harvest actions
+  build or break it; crafting/killing/collecting between mines never touches it.
+- **`src/colony-milestone.js`** — a community-wide bonus, the same for every player at any
+  given moment, driven by the server's running `colonyQuota` (total STRM ever burned via
+  the sinks above). As the whole colony spends together, everyone's yield permanently rises
+  — Outpost (1.0x) up to Dominion (1.20x at 1,000,000+ burned). A flywheel: burning STRM
+  destroys it, but it's also what makes future earning better for everyone, giving a reason
+  to spend beyond the immediate sink. Public on `/api/stats.colonyMilestone` (including
+  `next`, for a future "X STRM until the next milestone" HUD readout).
+
+All three were built as independent pure modules by parallel agents against this
+codebase's existing module contract (dependency-free UMD, no `Date.now()`/`Math.random()`,
+floor-never-below-original on every multiplier application), then integrated and tested
+end-to-end in one pass — see `test-holder-bonus.js`, `test-mining-streak.js`,
+`test-colony-milestone.js`, and `test-yield-bonus-integration.js`.
+
 ## Anti-cheat
 
 STRATUM has no admins and no moderation queue — see "The idea" above — which was a fine,

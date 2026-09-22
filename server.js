@@ -32,6 +32,9 @@ const Rewards = require('./src/rewards.js');
 const TokenSink = require('./src/token-sink.js');
 const AntiCheat = require('./src/anti-cheat.js');
 const Crafting = require('./src/crafting.js');
+const HolderBonus = require('./src/holder-bonus.js');
+const MiningStreak = require('./src/mining-streak.js');
+const ColonyMilestone = require('./src/colony-milestone.js');
 
 /** Optional local `.env` (never committed). Existing process.env wins — so hosting
  *  platform secrets always override a checked-out file. Zero-dep, KEY=VALUE only. */
@@ -577,6 +580,17 @@ const server = http.createServer((req, res) => {
       // Total STRM ever burned via a sink — the actual "silver shipped to Earth" mission
       // metric this game's whole story is about. Never decreases; nothing owed for it.
       colonyQuota: burnedTotal(),
+      // The community-wide yield bonus every player currently earns (src/colony-
+      // milestone.js) — the same for everyone, at any given moment, regardless of who
+      // did the spending. `next` is null once the final tier is reached.
+      colonyMilestone: (function () {
+        const q = burnedTotal();
+        return {
+          name: ColonyMilestone.milestoneFor(q).name,
+          multiplier: ColonyMilestone.multiplierFor(q),
+          next: ColonyMilestone.nextMilestone(q)
+        };
+      })(),
       commerce: TokenConfig.publicConfig(COMMERCE)
     }, null, 2);
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -753,6 +767,12 @@ server.on('upgrade', (req, socket) => {
     // it's a short-timescale behavioral signal that fully decays within minutes (see that
     // module's header), so a fresh connection starting at zero is correct, not a gap.
     acHistory: [], acScore: 0, acLastAt: null, acWasThrottled: false,
+    // Reward-yield bonuses (2026-09-21 round) — all in-memory only, all safe defaults:
+    // streakState decays/rebuilds purely from play, holderBalance stays 0 (base 1.0x,
+    // see holderBalanceLookup() below) until a real, non-placeholder token contract
+    // exists and a balance read actually succeeds.
+    streakState: { streak: 0, lastAt: null },
+    holderBalance: 0, holderMultiplier: HolderBonus.BASE_MULTIPLIER,
     ready: false, lastMove: Date.now(), dead: false,
     gone: false, bad: 0, lastRx: Date.now(), tokenAt: Date.now(), tokens: MSG_BURST, dropped: 0,
     send(obj) {
@@ -934,6 +954,18 @@ function ipEarnerCount(ip, key, now) {
   return byKey.size;
 }
 
+/** floor(amount * mult), never below `amount` — the one combining rule every yield-bonus
+ *  module here already promises individually (holder-bonus.js, mining-streak.js,
+ *  colony-milestone.js); applying it ONCE to the combined multiplier (instead of chaining
+ *  three separate per-module floors) is both simpler and loses less to rounding. */
+function boostByMultiplier(amount, mult) {
+  const a = (Number.isInteger(amount) && amount >= 0) ? amount : 0;
+  if (a === 0) return 0;
+  const m = (typeof mult === 'number' && isFinite(mult) && mult > 1) ? mult : 1;
+  const boosted = Math.floor(a * m);
+  return boosted > a ? boosted : a;
+}
+
 /**
  * Dual commerce payout: soft gold into inv + hard token units into token_ledger.
  * Returns the reward applied (or zeros). Never throws.
@@ -945,6 +977,19 @@ function ipEarnerCount(ip, key, now) {
  * gain, harvest depletion, craft materials spent, kill XP, ...) is untouched either way —
  * only the ECONOMIC reward is ever suppressed, never the action itself, never a ban, never
  * anything requiring a human to review or undo (ROADMAP.md's no-admins rule, honored).
+ *
+ * This is ALSO the one place the three 2026-09-21 yield bonuses compose, on top of the
+ * base reward (and any batch `multiplier`, applied first — see that param's own comment):
+ *   - src/colony-milestone.js — global, from the server-wide burnedTotal() (everyone gets
+ *     the same colony-wide multiplier at any given moment, regardless of action type).
+ *   - src/mining-streak.js — personal, harvest-only (mining is this game's primary loop;
+ *     see that module's header for why only 'harvest' actions build or break the streak —
+ *     crafting/killing/collecting between harvests never touches it either way).
+ *   - src/holder-bonus.js — personal, from c.holderMultiplier (refreshed by
+ *     refreshHolderBonus() below; always 1.0x until a real, non-placeholder token exists
+ *     — see that module's header for why it never guesses at a balance).
+ * All three multiply together into one combined factor, applied once via
+ * boostByMultiplier() so rounding is lost at most once, not three times.
  */
 function applyCommerceReward(c, action, ctx, multiplier) {
   try {
@@ -958,8 +1003,9 @@ function applyCommerceReward(c, action, ctx, multiplier) {
     // an artifact of how this function was called, not because of anything the player
     // actually did. One evaluation, scaled reward, is both more honest and immune to that.
     const mult = (typeof multiplier === 'number' && isFinite(multiplier) && multiplier > 0) ? Math.floor(multiplier) : 1;
+    let now;
     if (c.key) {
-      const now = Date.now();
+      now = Date.now();
       const ipCount = ipEarnerCount(c.ip, c.key, now);
       const ev = AntiCheat.evaluate({ history: c.acHistory, score: c.acScore, lastAt: c.acLastAt }, now, ipCount);
       c.acHistory = ev.history; c.acScore = ev.score; c.acLastAt = ev.lastAt;
@@ -975,13 +1021,51 @@ function applyCommerceReward(c, action, ctx, multiplier) {
     }
     const r = Rewards.rewardFor(action, ctx || {});
     if (!Rewards.hasReward(r)) return { gold: 0, token: 0, tokenPending: c.tokenPending | 0 };
-    const gold = (r.gold | 0) * mult, token = (r.token | 0) * mult;
+    const baseGold = (r.gold | 0) * mult, baseToken = (r.token | 0) * mult;
+
+    // Mining streak only ever moves for a real harvest, on a real (keyed) player — see
+    // the function-level comment above for why crafting/killing/collecting never touch it.
+    let streakMult = MiningStreak.BASE_MULTIPLIER;
+    if (action === 'harvest' && c.key) {
+      const sev = MiningStreak.evaluate(c.streakState, now);
+      c.streakState = { streak: sev.streak, lastAt: sev.lastAt };
+      streakMult = sev.multiplier;
+    }
+    const colonyMult = ColonyMilestone.multiplierFor(burnedTotal());
+    const holderMult = (typeof c.holderMultiplier === 'number' && c.holderMultiplier >= 1)
+      ? c.holderMultiplier : HolderBonus.BASE_MULTIPLIER;
+    const combinedMult = colonyMult * streakMult * holderMult;
+
+    const gold = boostByMultiplier(baseGold, combinedMult);
+    const token = boostByMultiplier(baseToken, combinedMult);
     if (gold > 0) gain(c, 'gold', gold);
     if (token > 0 && c.key) c.tokenPending = creditToken(c.key, token);
     return { gold, token, tokenPending: c.tokenPending | 0 };
   } catch (e) {
     return { gold: 0, token: 0, tokenPending: c.tokenPending | 0 };
   }
+}
+
+/**
+ * Best-effort, fire-and-forget refresh of a connection's on-chain STRM holder tier
+ * (src/holder-bonus.js). Never awaited by its caller — the WS handlers that trigger this
+ * (wallet-link, and 'welcome' for a returning player whose wallet was already linked)
+ * finish synchronously either way; this just updates c.holderBalance/c.holderMultiplier
+ * whenever the read eventually resolves (or leaves them at their prior/base value on any
+ * failure — see chain-adapter.js's readBalance(), which is itself always a no-op today:
+ * gated behind the same non-placeholder-contract check as real settlement). A successful
+ * refresh also pushes a 'holder-tier' message so the HUD can update without a reconnect.
+ */
+function refreshHolderBonus(c) {
+  if (!c || !c.tokenWallet) return;
+  ChainAdapter.readBalance(c.tokenWallet, claimEnv()).then((res) => {
+    if (c.gone || !res.ok) return; // silent no-op — see the comment above; never surfaced as an error
+    c.holderBalance = res.balance;
+    c.holderMultiplier = HolderBonus.multiplierFor(res.balance);
+    const tier = HolderBonus.tierFor(res.balance);
+    c.send({ t: 'holder-tier', balance: res.balance, multiplier: c.holderMultiplier, tier: tier.name });
+  }).catch(() => {}); // readBalance() itself never rejects, but this is the one async
+  // fire-and-forget call in the whole codebase not awaited by a caller — defend anyway.
 }
 
 /** Best owned bonus of a gear kind: weapons add damage, armour soaks it. Zero when bare. */
@@ -1211,8 +1295,22 @@ function onMessage(c, msg) {
         gold: (c.inv.gold | 0),
         tokenPending: c.tokenPending | 0,
         tokenWallet: c.tokenWallet || null,
-        colonyQuota: burnedTotal()
+        colonyQuota: burnedTotal(),
+        // Reward-yield bonuses (2026-09-21 round) — see applyCommerceReward()'s header for
+        // how these three compose. holderBalance/holderMultiplier are whatever was last
+        // successfully refreshed (0 / base 1.0x for a brand-new connection — refreshed
+        // below, fire-and-forget, if a wallet is already linked); miningStreak is always 0
+        // fresh off a reconnect (the streak is intentionally session-only, see
+        // src/mining-streak.js); colonyMilestone is the current global tier, same for
+        // every player right now.
+        holderBalance: c.holderBalance | 0,
+        holderMultiplier: c.holderMultiplier,
+        holderTier: HolderBonus.tierFor(c.holderBalance).name,
+        miningStreak: c.streakState.streak | 0,
+        colonyMilestone: ColonyMilestone.milestoneFor(burnedTotal()).name,
+        colonyMultiplier: ColonyMilestone.multiplierFor(burnedTotal())
       });
+      refreshHolderBonus(c); // fire-and-forget — no-op if no wallet is linked yet
       // returning players get their unlocked state without a round-trip; a fresh
       // arrival's stats (e.g. having now "visited" their spawn map) are checked right after.
       c.send({ t: 'achievements', unlocked: [...c.achIds], title: c.achTitle });
@@ -1355,7 +1453,10 @@ function onMessage(c, msg) {
         const gains = { [r.yields]: amount };
         if (pay.gold) gains.gold = pay.gold;
         if (pay.token) gains.token = pay.token;
-        c.send({ t: 'harvested', x, y, kind: r.kind, state: 0, ripeSec, gains, inv: c.inv, tokenPending: c.tokenPending | 0 });
+        c.send({
+          t: 'harvested', x, y, kind: r.kind, state: 0, ripeSec, gains, inv: c.inv,
+          tokenPending: c.tokenPending | 0, streak: c.streakState.streak | 0
+        });
         creditNearby(c, x, y, HARVEST_XP * GROUP_XP_SHARE);   // light grouping (ROADMAP_COZY §5)
       } else {
         c.send({ t: 'harvested', x, y, kind: r.kind, state: 1, partial: true, inv: c.inv });
@@ -1504,6 +1605,7 @@ function onMessage(c, msg) {
         tokenPending: cur.pending | 0,
         commerce: TokenConfig.publicConfig(COMMERCE)
       });
+      refreshHolderBonus(c); // fire-and-forget — see that function's header
       break;
     }
 
@@ -2249,9 +2351,14 @@ every(5000, 'trade sweep', () => {
 every(5000, 'stats tick', () => {
   const n = live();
   if (!n) return;
+  const quota = burnedTotal();
+  const colonyMultiplier = ColonyMilestone.multiplierFor(quota);
   for (const c of clients.values()) {
     if (!c.ready) continue;
-    c.send({ t: 'stats', claimed: countClaims(c.map), total: W * H, online: n, volatile: world.stats(), colonyQuota: burnedTotal() });
+    c.send({
+      t: 'stats', claimed: countClaims(c.map), total: W * H, online: n, volatile: world.stats(),
+      colonyQuota: quota, colonyMultiplier
+    });
   }
 });
 
