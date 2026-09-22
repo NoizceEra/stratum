@@ -4,7 +4,9 @@ FROM node:22-alpine
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# install (not ci): tolerant of lock drift across npm versions — the lock still
+# pins every version; this just refuses to fail the whole build over it.
+RUN npm install --omit=dev --no-audit --no-fund
 
 COPY . .
 

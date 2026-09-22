@@ -1,0 +1,9 @@
+# Keep the Docker build context lean: deps reinstall inside the image,
+# and nothing local-only (saves, secrets, logs, history) should ship.
+node_modules
+.git
+data
+.env
+cloudflared*
+*.log
+.opencode
