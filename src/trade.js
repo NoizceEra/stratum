@@ -116,13 +116,16 @@
     return (now - offer.createdAt) > offer.ttlMs;
   }
 
+  /** Display name for a resource key. Saves + wire protocol still say `gold`. */
+  function dispKey(k) { return k === 'gold' ? 'silver' : k; }
+
   /** A short human line for an offer: '3 wood for 1 ore', or '3 wood (gift)'. */
   function describe(offer) {
     if (!offer || typeof offer !== 'object' || !isName(offer.giveItem) || !isFiniteInt(offer.giveQty)) {
       return 'an empty offer';
     }
-    var give = offer.giveQty + ' ' + offer.giveItem;
-    if (offer.wantItem && offer.wantQty > 0) return give + ' for ' + offer.wantQty + ' ' + offer.wantItem;
+    var give = offer.giveQty + ' ' + dispKey(offer.giveItem);
+    if (offer.wantItem && offer.wantQty > 0) return give + ' for ' + offer.wantQty + ' ' + dispKey(offer.wantItem);
     return give + ' (gift)';
   }
 

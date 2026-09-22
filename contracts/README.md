@@ -1,86 +1,60 @@
-# STRM token contract
+# STRM token mint (Solana SPL)
 
-`StratumToken.sol` is the official STRATUM game token — a standard, fixed-supply,
-burnable ERC-20 built on OpenZeppelin (see the contract's own header comment for why
-this is the one place the project uses a third-party library instead of hand-rolling).
+STRM is an SPL token on Solana mainnet-beta: 9 decimals, fixed supply, mint
+authority revoked at creation so nobody — not even the operator — can inflate
+it later.
 
-**This contract has not been deployed anywhere.** The address currently wired into
-`src/token-config.js` is a placeholder pointing at an unrelated, already-deployed
-contract on Robinhood Chain (see `README.md`'s Commerce section) — it is not STRM and
-must never be used for real settlement.
+**This mint has not been created yet.** `src/token-config.js` still carries the
+sentinel `STRM_MINT_NOT_YET_DEPLOYED`, which is deliberately not a valid address,
+so `src/chain-adapter.js` refuses to settle and the holder-bonus stays at 1.0x.
+Nothing settles, mints, or transfers until the real mint address is wired in.
 
-**Deploying is not something this coding session does.** It's an irreversible on-chain
-action, it spends real gas from a real wallet, and it creates a real, permanent supply of
-value — that's the operator's own action, with their own wallet, not something to run
-from inside an agent session. The rest of this file is the walkthrough for doing it
-yourself.
+**Creating the mint is not something a coding session does.** It's an
+irreversible on-chain action, it spends real SOL from a real wallet, and it
+creates a real, permanent supply of value — that's the operator's own action,
+with their own wallet. `scripts/create-strm-mint.mjs` is the walkthrough turned
+into a script; the rest of this file is what to do around it.
 
-## Compiling / verifying the source
+## Creating the mint
 
-The contract was compiled and its bytecode/ABI checked as part of building it (fixed
-9,154-byte deployed bytecode, well under the 24KB EIP-170 limit; ABI confirms no `mint`
-function exists anywhere in the inheritance chain — supply really is fixed at deploy).
-To re-verify yourself with a local toolchain:
+1. Fund a wallet with a little SOL (mint rent + a few transaction fees — well
+   under 0.1 SOL).
+2. From the project root:
+   ```
+   MINT_AUTHORITY_SECRET='[...]' node scripts/create-strm-mint.mjs --supply 1000000000 --lock
+   ```
+   `MINT_AUTHORITY_SECRET` is your funded wallet's secret (base58 export or JSON
+   array). `--supply` is the whole-token supply (default one billion).
+   `--lock` revokes the mint authority afterwards — recommended, this is what
+   makes the fixed-supply promise real.
+3. Copy the printed mint address.
 
-```bash
-npm install --no-save @openzeppelin/contracts@5.1.0 solc@0.8.24
-# then compile contracts/StratumToken.sol with solc, resolving
-# @openzeppelin/contracts/... imports from node_modules
-```
+## Wiring the mint into the game
 
-Or just paste the contract into [Remix](https://remix.ethereum.org) — its compiler
-resolves `@openzeppelin/contracts` imports automatically from npm, no local setup needed.
-This is also the easiest path to actually deploy (next section).
-
-## Deploying via Remix (no local toolchain needed)
-
-1. Open **[remix.ethereum.org](https://remix.ethereum.org)**, create a new file, paste in
-   `StratumToken.sol`.
-2. **Solidity Compiler** tab → compiler version `0.8.24` (or any `0.8.24+`) → Compile.
-   Remix pulls the `@openzeppelin/contracts` imports automatically.
-3. **Deploy & Run Transactions** tab → Environment: **Injected Provider** (MetaMask or
-   whatever wallet holds the deployer key — should be the real treasury wallet, or a
-   wallet that will immediately transfer ownership/supply to it).
-4. Before deploying, **add Robinhood Chain to your wallet** as a custom network if it
-   isn't already there:
-   - Chain ID: `4663`
-   - RPC URL: `https://rpc.mainnet.chain.robinhood.com`
-   - Currency symbol: `ETH`
-   - Block explorer: `https://robinhoodchain.blockscout.com`
-
-   (These are the values currently in `src/token-config.js` — reachability and the chain
-   ID were independently verified against the live RPC as part of this work; see the
-   README.md Commerce section for that check. Still worth re-confirming yourself before
-   sending a real deploy transaction.)
-5. Fill in the constructor args:
-   - `initialSupply` — whole-token amount, e.g. `1000000000` for one billion STRM. The
-     contract multiplies this by `10**18` itself — do not pre-scale it.
-   - `treasury` — the real STRATUM treasury address
-     (`0xE8896562619Fe0276d65952b51dcC11C17b8C144`, per `token-config.js` — confirm this
-     is still current before using it).
-6. Deploy. Confirm the transaction in your wallet.
-7. Copy the deployed contract address.
-
-## Wiring the real address into the game
-
-Once deployed and you have the address:
-
-1. Set `STRATUM_TOKEN_ADDRESS=0x...` in the server's `.env` (this alone flips
+1. Set `STRATUM_TOKEN_MINT=<mint>` in the server's `.env` (this alone flips
    `token-config.js`'s `placeholder` flag to `false` — see `withEnv()`).
-2. Verify `chain-adapter.js` picks it up: boot the server and check the startup log line
-   `[commerce] settlement live=...` — it only reads `true` once the token is real AND the
-   treasury/signer/rpc are all configured (see `chain-adapter.js`'s `isConfigured()`).
-3. **Fund the treasury** — real settlement transfers FROM the treasury's on-chain balance
-   TO a claiming player's wallet (see `chain-adapter.js`). If the deploy sent the full
-   supply straight to the treasury address (step 5 above), this is already done.
-4. Update the placeholder note in `README.md`'s Commerce section and the `| Placeholder
-   token CA |` table row once this is live — that table exists specifically to be edited
-   the day this stops being a placeholder.
+2. Verify `chain-adapter.js` picks it up: boot the server and check the startup
+   log line `[commerce] settlement live=...` — it only reads `true` once the
+   mint is real AND the treasury/secret/RPC are all configured.
+3. **Fund the treasury** — real settlement transfers STRM FROM the treasury's
+   associated token account TO a claiming player's associated token account
+   (see `chain-adapter.js`). Send part of the freshly minted supply to the
+   treasury address (`EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo`, per
+   `token-config.js` — confirm this is still current), plus a little SOL for
+   transaction fees. An unfunded treasury refuses claims with
+   `insufficient_treasury_balance` instead of burning SOL on doomed sends.
+4. Update the placeholder note in `README.md`'s Commerce section once live.
 
-## What this contract deliberately does not include
+## What this mint deliberately does not include
 
-No pause, no blocklist, no upgradeability, no transfer fee, no ongoing mint. See the
-contract's own header for the reasoning — a simple, permanent, unstoppable ERC-20 is a
-stronger promise to players than one an operator can freeze or inflate later. If real
-requirements emerge that need one of those, that's a new, deliberate contract version,
-not a change bolted onto this one after supply already exists.
+No freeze authority (set to `null` at creation), no ongoing mint (revoked with
+`--lock`), no transfer fee. A simple, standard, unstoppable SPL token is a
+stronger promise to players than one an operator can freeze or inflate later.
+If real requirements emerge that need one of those, that's a new, deliberate
+mint — not a change bolted on after supply already exists.
+
+## Legacy: the EVM contract
+
+`legacy-evm-StratumToken.sol` is the pre-switch ERC-20 drafted for Robinhood
+Chain. It was never deployed and is now superseded — kept for history only.
+Nothing in the server, client, or scripts references it.

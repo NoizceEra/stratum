@@ -1,25 +1,22 @@
 /**
- * token-config.js — Robinhood Chain commerce token for STRATUM.
+ * token-config.js — Solana commerce token for STRATUM.
  *
- * ✅ CHAIN VERIFIED 2026-09-17: chainId 4663, rpcUrl below both confirmed live against
- * the real RPC (eth_chainId -> 0x1237 = 4663; eth_blockNumber advancing). This really is
- * a reachable EVM chain with the chain ID this file claims.
+ * STRM lives on Solana mainnet-beta as an SPL token (9 decimals).
  *
- * ⚠️ TOKEN ADDRESS IS STILL WRONG: `tokenAddress` below is a real, already-deployed
- * contract on that chain — but it's "FLIR Technologies" (symbol FLIR), an unrelated
- * token with its own real circulating supply, NOT STRM. `chain-adapter.js`'s
- * settlementImplemented is real (it signs and broadcasts via `ethers`), but its
- * isConfigured() gate refuses to run while `placeholder` is true here — see
- * contracts/StratumToken.sol + contracts/README.md for deploying the real token, and
- * README.md's Commerce section for the full note.
+ * ⚠️ MINT IS STILL A PLACEHOLDER: `tokenMint` below is not a deployed mint —
+ * it is a sentinel string, deliberately NOT a valid base58 address, so every
+ * readiness gate in this codebase (chain-adapter.js's isConfigured(), the
+ * holder-bonus wiring in server.js) treats settlement as not-live until a real
+ * SPL mint exists. See contracts/README.md for creating the mint with
+ * scripts/create-strm-mint.mjs, and README.md's Commerce section.
  *
- * PLACEHOLDER: the token contract address below will be replaced with the official
- * deploy (see contracts/). The treasury *address* is public and safe to ship; the
- * treasury *private key* lives only in a local, gitignored `.env`
- * (STRATUM_CLAIM_SIGNER_KEY) on the operator's machine — never in this file.
+ * The treasury *address* is public and safe to ship; the treasury *secret key*
+ * lives only in a local, gitignored `.env` (STRATUM_CLAIM_SIGNER_KEY, base58
+ * or JSON-array form) on the operator's machine — never in this file.
  *
  * Override at runtime (server only):
- *   STRATUM_TOKEN_ADDRESS / STRATUM_CHAIN_ID / STRATUM_RPC_URL /
+ *   STRATUM_TOKEN_MINT (aliases: STRATUM_TOKEN_ADDRESS, STRATUM_CLAIM_TOKEN_ADDR) /
+ *   STRATUM_CLUSTER / STRATUM_SOLANA_RPC (alias: STRATUM_RPC_URL) /
  *   STRATUM_TOKEN_SYMBOL / STRATUM_TOKEN_DECIMALS / STRATUM_TREASURY_ADDRESS
  *
  * CONTRACT
@@ -43,35 +40,44 @@
     return v;
   }
 
+  var B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+  /** Solana addresses are base58-encoded 32-byte ed25519 public keys. */
   function isAddr(s) {
-    return typeof s === 'string' && /^0x[0-9a-fA-F]{40}$/.test(s);
+    if (typeof s !== 'string' || s.length < 32 || s.length > 44) return false;
+    for (var i = 0; i < s.length; i++) {
+      if (B58.indexOf(s.charAt(i)) === -1) return false;
+    }
+    return true;
   }
 
   /**
-   * Defaults — Robinhood Chain mainnet (chain reachability verified — see file header)
-   * + temporary commerce CA (wrong on purpose today — also see file header) + treasury
-   * address. Treasury private key is NOT here (lives only in a local .env).
+   * Defaults — Solana mainnet-beta + placeholder mint sentinel + treasury
+   * address. Treasury secret key is NOT here (lives only in a local .env).
    */
   var DEFAULTS = deepFreeze({
-    chainId: 4663,
-    chainName: 'Robinhood Chain',
-    rpcUrl: 'https://rpc.mainnet.chain.robinhood.com',
-    explorerUrl: 'https://robinhoodchain.blockscout.com',
-    explorerTokenUrl: 'https://robinhoodchain.blockscout.com/token/',
-    explorerAddressUrl: 'https://robinhoodchain.blockscout.com/address/',
-    nativeCurrency: deepFreeze({ name: 'ETH', symbol: 'ETH', decimals: 18 }),
-    tokenAddress: '0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7',
-    /** On-chain payout wallet (public). Generated 2026-09-15. */
-    treasuryAddress: '0xE8896562619Fe0276d65952b51dcC11C17b8C144',
+    cluster: 'mainnet-beta',
+    chainName: 'Solana',
+    rpcUrl: 'https://api.mainnet-beta.solana.com',
+    explorerUrl: 'https://explorer.solana.com',
+    explorerTokenUrl: 'https://explorer.solana.com/address/',
+    explorerAddressUrl: 'https://explorer.solana.com/address/',
+    nativeCurrency: deepFreeze({ name: 'SOL', symbol: 'SOL', decimals: 9 }),
+    /** SPL mint for STRM — sentinel until the real mint is created (see contracts/). */
+    tokenMint: 'STRM_MINT_NOT_YET_DEPLOYED',
+    /** Alias kept so existing client/server code reading `tokenAddress` keeps working. */
+    tokenAddress: 'STRM_MINT_NOT_YET_DEPLOYED',
+    /** On-chain payout wallet (public). Fresh Solana keypair generated 2026-09-22. */
+    treasuryAddress: 'EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo',
     symbol: 'STRM',
     name: 'STRATUM',
-    decimals: 18,
+    decimals: 9,
     placeholder: true
   });
 
   function copy(cfg) {
     return {
-      chainId: cfg.chainId,
+      cluster: cfg.cluster,
       chainName: cfg.chainName,
       rpcUrl: cfg.rpcUrl,
       explorerUrl: cfg.explorerUrl,
@@ -82,6 +88,7 @@
         symbol: cfg.nativeCurrency.symbol,
         decimals: cfg.nativeCurrency.decimals
       },
+      tokenMint: cfg.tokenMint,
       tokenAddress: cfg.tokenAddress,
       treasuryAddress: cfg.treasuryAddress,
       symbol: cfg.symbol,
@@ -91,11 +98,11 @@
     };
   }
 
-  /** Public snapshot safe to send to clients (no secrets — address only). */
+  /** Public snapshot safe to send to clients (no secrets — addresses only). */
   function publicConfig(cfg) {
     var c = cfg || DEFAULTS;
     return {
-      chainId: c.chainId,
+      cluster: c.cluster,
       chainName: c.chainName,
       rpcUrl: c.rpcUrl,
       explorerUrl: c.explorerUrl,
@@ -106,6 +113,7 @@
         symbol: c.nativeCurrency.symbol,
         decimals: c.nativeCurrency.decimals
       },
+      tokenMint: c.tokenMint,
       tokenAddress: c.tokenAddress,
       treasuryAddress: c.treasuryAddress,
       symbol: c.symbol,
@@ -117,22 +125,28 @@
 
   /**
    * Apply process.env overrides. Only used on the Node server.
-   * Unknown / malformed values are ignored so a typo cannot blank the CA.
+   * Unknown / malformed values are ignored so a typo cannot blank the mint.
    */
   function withEnv(env) {
     var out = copy(DEFAULTS);
     if (!env || typeof env !== 'object') return out;
-    if (isAddr(env.STRATUM_TOKEN_ADDRESS)) {
-      out.tokenAddress = env.STRATUM_TOKEN_ADDRESS;
+    var mint = env.STRATUM_TOKEN_MINT || env.STRATUM_TOKEN_ADDRESS || env.STRATUM_CLAIM_TOKEN_ADDR;
+    if (isAddr(mint)) {
+      out.tokenMint = mint;
+      out.tokenAddress = mint;
       out.placeholder = false;
     }
     if (isAddr(env.STRATUM_TREASURY_ADDRESS)) {
       out.treasuryAddress = env.STRATUM_TREASURY_ADDRESS;
     }
-    var cid = Number(env.STRATUM_CHAIN_ID);
-    if (Number.isFinite(cid) && cid > 0) out.chainId = cid | 0;
-    if (typeof env.STRATUM_RPC_URL === 'string' && /^https?:\/\//i.test(env.STRATUM_RPC_URL)) {
-      out.rpcUrl = env.STRATUM_RPC_URL;
+    if (typeof env.STRATUM_CLUSTER === 'string' &&
+        (env.STRATUM_CLUSTER === 'mainnet-beta' || env.STRATUM_CLUSTER === 'devnet' ||
+         env.STRATUM_CLUSTER === 'testnet' || env.STRATUM_CLUSTER === 'localhost')) {
+      out.cluster = env.STRATUM_CLUSTER;
+    }
+    var rpc = env.STRATUM_SOLANA_RPC || env.STRATUM_RPC_URL;
+    if (typeof rpc === 'string' && /^https?:\/\//i.test(rpc)) {
+      out.rpcUrl = rpc;
     }
     if (typeof env.STRATUM_TOKEN_SYMBOL === 'string' && env.STRATUM_TOKEN_SYMBOL.length && env.STRATUM_TOKEN_SYMBOL.length <= 12) {
       out.symbol = env.STRATUM_TOKEN_SYMBOL;
@@ -141,15 +155,19 @@
       out.name = env.STRATUM_TOKEN_NAME;
     }
     var dec = Number(env.STRATUM_TOKEN_DECIMALS);
-    if (Number.isFinite(dec) && dec >= 0 && dec <= 36) out.decimals = dec | 0;
+    if (Number.isFinite(dec) && dec >= 0 && dec <= 9) out.decimals = dec | 0;
     if (env.STRATUM_TOKEN_PLACEHOLDER === '0' || env.STRATUM_TOKEN_PLACEHOLDER === 'false') out.placeholder = false;
     if (env.STRATUM_TOKEN_PLACEHOLDER === '1' || env.STRATUM_TOKEN_PLACEHOLDER === 'true') out.placeholder = true;
+    // A real mint is the switch that turns settlement on. .env.example ships
+    // STRATUM_TOKEN_PLACEHOLDER=true next to the sentinel; once the operator
+    // replaces the mint, that leftover flag must not put the gate back.
+    if (isAddr(mint)) out.placeholder = false;
     return out;
   }
 
   function explorerTokenLink(cfg) {
     var c = cfg || DEFAULTS;
-    return c.explorerTokenUrl + c.tokenAddress;
+    return c.explorerTokenUrl + c.tokenMint;
   }
 
   function explorerTreasuryLink(cfg) {

@@ -172,7 +172,7 @@ class Client {
   const wa = await a.waitFor(m => m.t === 'welcome');
   ok(wa.commerce && typeof wa.commerce.tokenAddress === 'string', 'welcome carries the commerce/token config', wa.commerce);
   ok(wa.commerce && wa.commerce.placeholder === true, 'the shipped token config is still explicitly a placeholder', wa.commerce);
-  ok(wa.commerce && typeof wa.commerce.treasuryAddress === 'string' && /^0x[0-9a-fA-F]{40}$/.test(wa.commerce.treasuryAddress),
+  ok(wa.commerce && typeof wa.commerce.treasuryAddress === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wa.commerce.treasuryAddress),
     'welcome carries the public treasury wallet address', wa.commerce && wa.commerce.treasuryAddress);
   ok(wa.commerce && !('privateKey' in wa.commerce) && !('signerKey' in wa.commerce),
     'welcome commerce config never includes a private key field', wa.commerce);
@@ -213,7 +213,7 @@ class Client {
   const badLink = await a.waitNew(m => m.t === 'wallet-linked');
   ok(badLink.err === 'invalid address', 'a malformed address is refused, not silently accepted', badLink);
 
-  const realWallet = '0x' + 'c'.repeat(40);
+  const realWallet = 'HkFGG3tbNNfc6kCkrueDuaxa2i6LjDr7cwpD2EZuSTLp';
   a.send({ t: 'wallet-link', address: realWallet });
   const goodLink = await a.waitNew(m => m.t === 'wallet-linked' && !m.err);
   ok(goodLink.address === realWallet, 'a well-formed address is linked and echoed back', goodLink);
@@ -230,7 +230,7 @@ class Client {
   const noWallet = await b.waitNew(m => m.t === 'claimed');
   ok(noWallet.ok === false && noWallet.err === 'link a wallet first', 'claiming with no linked wallet is refused', noWallet);
 
-  b.send({ t: 'wallet-link', address: '0x' + 'd'.repeat(40) });
+  b.send({ t: 'wallet-link', address: 'So11111111111111111111111111111111111111112' });
   await b.waitNew(m => m.t === 'wallet-linked' && !m.err);
   b.send({ t: 'claim' });
   const nothingPending = await b.waitNew(m => m.t === 'claimed');

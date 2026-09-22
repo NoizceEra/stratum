@@ -170,6 +170,9 @@
     return (now - drop.at) > drop.ttlMs;
   }
 
+  /** Display name for a resource key. Saves + wire protocol still say `gold`. */
+  function dispKey(key) { return key === 'gold' ? 'silver' : key; }
+
   /** A short human line for a drop: '2 wood + 1 ore', or 'an empty cache'. */
   function describe(drop) {
     if (!drop || typeof drop !== 'object' || !drop.res || typeof drop.res !== 'object') {
@@ -178,7 +181,7 @@
     var parts = [];
     for (var i = 0; i < RESOURCES.length; i++) {
       var key = RESOURCES[i];
-      if (isInt(drop.res[key]) && drop.res[key] > 0) parts.push(drop.res[key] + ' ' + key);
+      if (isInt(drop.res[key]) && drop.res[key] > 0) parts.push(drop.res[key] + ' ' + dispKey(key));
     }
     return parts.length ? parts.join(' + ') : 'an empty cache';
   }

@@ -882,6 +882,7 @@
         if (m.commerce) applyCommerceConfig(m.commerce);
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
         if (m.tokenWallet) S.walletAddress = m.tokenWallet;
+        if (m.payout) S.payout = m.payout;
         if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
         if (m.look) {
           S.paletteId = m.look.paletteId; S.bodyHue = m.look.bodyHue; S.trimHue = m.look.trimHue;
@@ -1105,7 +1106,7 @@
             float(mm.rx, mm.ry - 0.4, 'SLAIN', mm.pal.hex, 2);
             burst(mm.rx, mm.ry, mm.pal, 16, 2.6);
             if (m.gains) {
-              if (m.gains.gold) float(mm.rx, mm.ry - 0.7, '+' + m.gains.gold + ' gold', '#e8c76a', 0);
+              if (m.gains.gold) float(mm.rx, mm.ry - 0.7, '+' + m.gains.gold + ' silver', '#e8c76a', 0);
               if (m.gains.token) float(mm.rx, mm.ry - 1.0, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), '#8fe4ff', 0);
             }
             S.mons.delete(m.id);
@@ -1181,7 +1182,7 @@
         var craftedN = m.count | 0 || 1;
         S.crafts += craftedN;
         toast((craftedN > 1 ? craftedN + 'x ' : 'CRAFTED: ') + String(m.item || '').toUpperCase(), true);
-        if (m.gains && m.gains.gold) float(S.x, S.y - 0.6, '+' + m.gains.gold + ' gold', '#e8c76a', 0);
+        if (m.gains && m.gains.gold) float(S.x, S.y - 0.6, '+' + m.gains.gold + ' silver', '#e8c76a', 0);
         if (m.gains && m.gains.token) float(S.x, S.y - 0.9, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), '#8fe4ff', 0);
         sfx('craft');
         if (S.craftOpen) buildCraft();
@@ -1199,12 +1200,34 @@
         if (S.craftOpen) buildCraft();
         break;
       }
+      case 'wallet-challenge': {
+        if (challengeWait) { var done = challengeWait; challengeWait = null; done(m.nonce); }
+        break;
+      }
       case 'wallet-linked': {
+        if (m.payout) S.payout = m.payout;
+        if (m.resumeKey && m.resumeKey !== S.key) {
+          S.key = m.resumeKey;
+          try { localStorage.setItem('stratum_key', m.resumeKey); } catch (e) {}
+          if (m.address) {
+            S.walletAddress = m.address;
+            try { localStorage.setItem('stratum_wallet', m.address); } catch (e2) {}
+          }
+          toast('THIS WALLET IS YOUR COLONIST — RESUMING', true);
+          updateWalletHud();
+          try { if (ws) ws.close(); } catch (e3) {}
+          break;
+        }
         if (m.err) { toast(String(m.err).toUpperCase()); break; }
         S.walletAddress = m.address || null;
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
         if (m.commerce) applyCommerceConfig(m.commerce);
+        try {
+          if (m.address) localStorage.setItem('stratum_wallet', m.address);
+          else localStorage.removeItem('stratum_wallet');
+        } catch (e) {}
         updateWalletHud();
+        if (m.address) toast('WALLET LINKED — ' + (window.StratumWallet ? window.StratumWallet.shortAddr(m.address).toUpperCase() : ''), true);
         break;
       }
       case 'claimed': {
@@ -1216,16 +1239,40 @@
         }
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
         if (m.ok) {
-          // Not reachable today — src/chain-adapter.js has no real signer wired in yet
-          // (see its own header) — but written correctly for the day it is.
           if (typeof m.tokenClaimed === 'number') S.tokenClaimed = m.tokenClaimed;
           if (statusEl) statusEl.textContent = 'SETTLED';
-          toast('CLAIMED ' + m.amount + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), true);
+          var sym = (S.commerce && S.commerce.symbol) || 'STRM';
+          toast('CLAIMED ' + (m.payout != null ? m.payout : m.amount) + ' ' + sym +
+            (m.fee ? ' (FEE ' + m.fee + ')' : ''), true);
         } else if (m.queued) {
           // The honest, expected answer right now: recorded, not lost, not yet on-chain.
           if (statusEl) statusEl.textContent = 'QUEUED — ON-CHAIN SETTLEMENT NOT YET LIVE';
           toast('CLAIM RECORDED — ON-CHAIN SETTLEMENT NOT YET LIVE', true);
         }
+        updateWalletHud();
+        break;
+      }
+      case 'converted': {
+        var cvStatus = document.getElementById('h-convert-status');
+        if (!m.ok) {
+          if (cvStatus) cvStatus.textContent = String(m.err || '').toUpperCase();
+          toast(String(m.err || 'CANNOT CONVERT').toUpperCase());
+          sfx('deny');
+          if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+          if (typeof m.gold === 'number' && S.inv) S.inv.gold = m.gold;
+          updateWalletHud();
+          break;
+        }
+        if (m.inv) S.inv = m.inv;
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.gold === 'number' && S.inv) S.inv.gold = m.gold;
+        if (cvStatus) cvStatus.textContent = 'CONVERTED';
+        var csym = (S.commerce && S.commerce.symbol) || 'STRM';
+        toast((m.dir === 'to-gold'
+          ? ('CONVERTED TO ' + (m.goldOut | 0) + ' SILVER')
+          : ('CONVERTED TO ' + (m.payout | 0) + ' ' + csym)) +
+          (m.fee ? ' (FEE ' + m.fee + ' ' + csym + ')' : ''), true);
+        sfx('ui');
         updateWalletHud();
         break;
       }
@@ -1836,28 +1883,44 @@
     if (chainEl) {
       if (S.tokenOnChain == null) chainEl.textContent = 'on-chain —';
       else {
-        var dec = (S.commerce && S.commerce.decimals) | 18;
+        var dec = (S.commerce && S.commerce.decimals) | 9;
         var formatted = window.StratumWallet
           ? window.StratumWallet.formatUnits(S.tokenOnChain, dec) : String(S.tokenOnChain);
         chainEl.textContent = 'on-chain ' + formatted;
       }
     }
+    var note = document.getElementById('h-payout-note');
+    if (note && S.payout) {
+      var claimPct = (S.payout.claimBps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+      var convPct = (S.payout.convertBps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+      note.textContent = 'Play first. Claim fee ' + claimPct + '% · convert fee ' + convPct +
+        '% · ' + S.payout.goldPerStrm + ' silver = 1 STRM';
+    }
+  }
+  var challengeWait = null;
+  function requestChallenge() {
+    return new Promise(function (resolve, reject) {
+      var timer = setTimeout(function () {
+        challengeWait = null;
+        reject(new Error('Wallet challenge timed out'));
+      }, 8000);
+      challengeWait = function (nonce) { clearTimeout(timer); resolve(nonce); };
+      send({ t: 'wallet-challenge' });
+    });
   }
   async function onWalletClick() {
     if (!window.StratumWallet) return toast('WALLET HELPER MISSING');
     if (!S.commerce) return toast('COMMERCE CONFIG NOT LOADED YET');
+    if (!S.ready) return toast('ENTER THE WORLD FIRST');
     try {
-      var addr = S.walletAddress || await window.StratumWallet.connect();
+      var addr = await window.StratumWallet.connect();
       await window.StratumWallet.ensureChain(S.commerce);
-      if (!S.walletAddress) {
-        S.walletAddress = addr;
-        try { localStorage.setItem('stratum_wallet', addr); } catch (e) {}
-        send({ t: 'wallet-link', address: addr });
-      }
-      var bal = await window.StratumWallet.balanceOf(S.commerce, S.walletAddress);
+      var nonce = await requestChallenge();
+      var signature = await window.StratumWallet.signLink(addr, S.key, nonce);
+      send({ t: 'wallet-link', address: addr, signature: signature, nonce: nonce });
+      var bal = await window.StratumWallet.balanceOf(S.commerce, addr);
       S.tokenOnChain = bal;
       updateWalletHud();
-      toast('WALLET LINKED — ' + window.StratumWallet.shortAddr(S.walletAddress).toUpperCase(), true);
     } catch (e) {
       toast(String((e && e.message) || e).toUpperCase().slice(0, 80));
     }
@@ -2008,10 +2071,13 @@
   // ---------- craft ----------------------------------------------------------
   // The server ships the whole catalogue inside the welcome message (costs, recipes,
   // tool tiers), so this panel renders from S.catalog and never needs economy.js.
+  // Display name for a resource key. The data model + saves + wire protocol still
+  // call the soft currency `gold`; players only ever see `silver`.
+  function dispKey(k) { return k === 'gold' ? 'silver' : k; }
   function costText(cost) {
     if (!cost || typeof cost !== 'object') return 'nothing';
     var parts = [];
-    for (var k in cost) if (cost[k] > 0) parts.push(cost[k] + ' ' + k);
+    for (var k in cost) if (cost[k] > 0) parts.push(cost[k] + ' ' + dispKey(k));
     return parts.length ? parts.join(' + ') : 'nothing';
   }
   function canPay(cost) {
@@ -2021,6 +2087,7 @@
     return true;
   }
   function itemName(id) {
+    if (id === 'gold') return 'silver';
     if (S.catalog && S.catalog.items && S.catalog.items[id]) return S.catalog.items[id].name;
     return String(id).replace(/_/g, ' ');
   }
@@ -2364,7 +2431,7 @@
         var deed = S.parcelCache && S.parcelCache[deedId];
         wrap.innerHTML = '<div class="mcard"><div class="nm">LIST ' + (deed ? deed.name : 'DEED').toUpperCase() + '</div>' +
           '<div class="tier">PRICE ITEM</div>' +
-          '<input type="text" id="parcel-price-item" placeholder="gold, wood, ore, herb, crystal…" style="width:100%;padding:8px;margin:4px 0;background:#1a1812;color:#e8e6df;border:1px solid #3a362c;border-radius:4px">' +
+          '<input type="text" id="parcel-price-item" placeholder="silver, wood, ore, herb, crystal…" style="width:100%;padding:8px;margin:4px 0;background:#1a1812;color:#e8e6df;border:1px solid #3a362c;border-radius:4px">' +
           '<div class="tier">PRICE QUANTITY</div>' +
           '<input type="number" id="parcel-price-qty" placeholder="1" min="1" max="1000000" style="width:100%;padding:8px;margin:4px 0;background:#1a1812;color:#e8e6df;border:1px solid #3a362c;border-radius:4px">' +
           '<button class="btn" id="parcel-confirm-list">CONFIRM LIST</button> ' +
@@ -2824,7 +2891,7 @@
   }
 
   // ---------- death drops (src/drops.js) -----------------------------------
-  // Deliberately minimal: a pulsing gold dot marks a loot cache. It is not the focus.
+  // Deliberately minimal: a pulsing silver dot marks a loot cache. It is not the focus.
   function drawDropSprite(x, y, s, now) {
     var pulse = 0.72 + 0.22 * Math.sin(now * 0.006);
     var r = s * 0.16 * pulse;
@@ -3203,7 +3270,7 @@
     }
     rct(ax2 - s * 0.03, ay2 - s * 0.08, Math.max(1, s * 0.06), Math.max(2, s * 0.26), '#5a4326');
     rct(ax2 - s * 0.09, ay2 - s * 0.14, Math.max(2, s * 0.2), Math.max(1, s * 0.07), '#b9bec9');
-    // gold ring so you never lose yourself in the crowd
+    // silver ring so you never lose yourself in the crowd
     ctx.strokeStyle = 'rgba(201,165,92,.85)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(x, y + s * 0.32, w * 0.8, 0, TAU); ctx.stroke();
   }
@@ -3247,7 +3314,7 @@
     INV_HTML.length = 0;
     INV_KEYS.forEach(invChip, inv);
     // crafted gear rides in the same inventory under its item id — chip anything else.
-    // gold is shown on its own HUD row (commerce), so skip it here.
+    // silver is shown on its own HUD row (commerce), so skip it here.
     for (var ck in inv) {
       if (ck === 'gold') continue;
       if (INV_KEYS.indexOf(ck) < 0 && inv[ck] > 0) INV_HTML.push('<span class="chip">' + ck + ' ' + inv[ck] + '</span>');
@@ -3303,6 +3370,17 @@
       var statusEl = document.getElementById('h-claim-status');
       if (statusEl) statusEl.textContent = 'CLAIMING…';
     });
+    function convert(dir) {
+      if (!S.ready) return;
+      if (!S.walletAddress) { toast('LINK A WALLET FIRST'); return; }
+      send({ t: 'convert', dir: dir });
+      var st = document.getElementById('h-convert-status');
+      if (st) st.textContent = 'CONVERTING…';
+    }
+    var convertGoldBtn = document.getElementById('convert-gold-btn');
+    if (convertGoldBtn) convertGoldBtn.addEventListener('click', function () { convert('to-token'); });
+    var convertStrmBtn = document.getElementById('convert-strm-btn');
+    if (convertStrmBtn) convertStrmBtn.addEventListener('click', function () { convert('to-gold'); });
     var requisitionBtn = document.getElementById('requisition-btn');
     if (requisitionBtn) requisitionBtn.addEventListener('click', function () {
       if (!S.ready) return;
@@ -3313,7 +3391,7 @@
     });
     try {
       var savedW = localStorage.getItem('stratum_wallet');
-      if (savedW && /^0x[0-9a-fA-F]{40}$/.test(savedW)) S.walletAddress = savedW;
+      if (savedW && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(savedW)) S.walletAddress = savedW;
     } catch (e) {}
     updateWalletHud();
     function enter() {

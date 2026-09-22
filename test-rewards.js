@@ -10,33 +10,39 @@ function check(name, cond) {
 }
 
 // ---- token-config ----
-check('tc-defaults-chain', TC.DEFAULTS.chainId === 4663);
-check('tc-defaults-ca', TC.DEFAULTS.tokenAddress.toLowerCase() === '0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7');
-check('tc-defaults-treasury', TC.DEFAULTS.treasuryAddress.toLowerCase() === '0xe8896562619fe0276d65952b51dcc11c17b8c144');
+check('tc-defaults-cluster', TC.DEFAULTS.cluster === 'mainnet-beta');
+check('tc-defaults-chain-name', TC.DEFAULTS.chainName === 'Solana');
+check('tc-defaults-mint-sentinel', TC.DEFAULTS.tokenMint === 'STRM_MINT_NOT_YET_DEPLOYED');
+check('tc-defaults-treasury', TC.DEFAULTS.treasuryAddress === 'EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo');
 check('tc-defaults-placeholder', TC.DEFAULTS.placeholder === true);
 check('tc-defaults-symbol', TC.DEFAULTS.symbol === 'STRM');
+check('tc-defaults-decimals', TC.DEFAULTS.decimals === 9);
 check('tc-frozen', Object.isFrozen(TC.DEFAULTS));
-check('tc-isAddr-ok', TC.isAddr('0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7'));
+check('tc-isAddr-ok', TC.isAddr('EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo'));
+check('tc-isAddr-evm-no-longer-ok', TC.isAddr('0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7') === false);
 check('tc-isAddr-bad', TC.isAddr('not-an-address') === false);
-check('tc-public-has-ca', TC.publicConfig().tokenAddress === TC.DEFAULTS.tokenAddress);
+check('tc-public-has-mint', TC.publicConfig().tokenMint === TC.DEFAULTS.tokenMint);
 check('tc-public-has-treasury', TC.publicConfig().treasuryAddress === TC.DEFAULTS.treasuryAddress);
-check('tc-public-no-key-field', !('privateKey' in TC.publicConfig()) && !('signerKey' in TC.publicConfig()));
+check('tc-public-no-key-field', !('privateKey' in TC.publicConfig()) && !('signerKey' in TC.publicConfig()) && !('secretKey' in TC.publicConfig()));
 check('tc-treasury-link', TC.explorerTreasuryLink().indexOf(TC.DEFAULTS.treasuryAddress) >= 0);
 
 var enved = TC.withEnv({
-  STRATUM_TOKEN_ADDRESS: '0x1111111111111111111111111111111111111111',
-  STRATUM_TREASURY_ADDRESS: '0x2222222222222222222222222222222222222222',
-  STRATUM_CHAIN_ID: '4663',
+  STRATUM_TOKEN_MINT: 'So11111111111111111111111111111111111111112',
+  STRATUM_TREASURY_ADDRESS: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+  STRATUM_CLUSTER: 'devnet',
   STRATUM_TOKEN_SYMBOL: 'GOLDX',
-  STRATUM_TOKEN_DECIMALS: '9'
+  STRATUM_TOKEN_DECIMALS: '6'
 });
-check('tc-env-address', enved.tokenAddress === '0x1111111111111111111111111111111111111111');
-check('tc-env-treasury', enved.treasuryAddress === '0x2222222222222222222222222222222222222222');
+check('tc-env-mint', enved.tokenMint === 'So11111111111111111111111111111111111111112');
+check('tc-env-treasury', enved.treasuryAddress === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+check('tc-env-cluster', enved.cluster === 'devnet');
 check('tc-env-clears-placeholder', enved.placeholder === false);
 check('tc-env-symbol', enved.symbol === 'GOLDX');
-check('tc-env-decimals', enved.decimals === 9);
-check('tc-env-bad-addr-ignored', TC.withEnv({ STRATUM_TOKEN_ADDRESS: 'nope' }).tokenAddress === TC.DEFAULTS.tokenAddress);
-check('tc-explorer-link', TC.explorerTokenLink().indexOf(TC.DEFAULTS.tokenAddress) >= 0);
+check('tc-env-decimals', enved.decimals === 6);
+check('tc-env-bad-mint-ignored', TC.withEnv({ STRATUM_TOKEN_MINT: 'nope' }).tokenMint === TC.DEFAULTS.tokenMint);
+check('tc-env-evm-mint-ignored', TC.withEnv({ STRATUM_TOKEN_MINT: '0x1111111111111111111111111111111111111111' }).tokenMint === TC.DEFAULTS.tokenMint);
+check('tc-env-decimals-clamped-to-spl-max', TC.withEnv({ STRATUM_TOKEN_DECIMALS: '18' }).decimals === 9);
+check('tc-explorer-link', TC.explorerTokenLink().indexOf(TC.DEFAULTS.tokenMint) >= 0);
 
 var CA = require('./src/chain-adapter.js');
 check('ca-not-configured-empty', CA.isConfigured({}) === false);
@@ -48,27 +54,30 @@ check('ca-describe-missing', (function () {
   return d.signerPresent === false && d.treasuryConfigured === false && d.settlementImplemented === true;
 })());
 check('ca-describe-with-key-presence-only', (function () {
-  // Dummy hex key for shape/presence checks ONLY — never the real treasury key.
-  var dummyKey = '0x' + 'ab'.repeat(32);
+  // Dummy secret (JSON-array form) for shape/presence checks ONLY — a throwaway
+  // keypair generated on the spot, never the real treasury key.
+  var dummyKp = require('@solana/web3.js').Keypair.generate();
+  var dummyKey = JSON.stringify(Array.from(dummyKp.secretKey));
   var d = CA.describe({
-    STRATUM_CLAIM_RPC_URL: 'https://rpc.mainnet.chain.robinhood.com',
-    STRATUM_CLAIM_TOKEN_ADDR: TC.DEFAULTS.tokenAddress,
+    STRATUM_SOLANA_RPC: 'https://api.mainnet-beta.solana.com',
+    STRATUM_TOKEN_MINT: TC.DEFAULTS.tokenMint === 'STRM_MINT_NOT_YET_DEPLOYED'
+      ? 'So11111111111111111111111111111111111111112' : TC.DEFAULTS.tokenMint,
     STRATUM_TREASURY_ADDRESS: TC.DEFAULTS.treasuryAddress,
     STRATUM_CLAIM_SIGNER_KEY: dummyKey
   });
   // Key presence is visible as a boolean — the key value must never appear in describe()
   var blob = JSON.stringify(d);
   return d.signerPresent === true && d.treasuryConfigured === true && d.rpcConfigured === true &&
-    d.tokenConfigured === true && d.settlementImplemented === true &&
-    // Still not actually configured: this env never says the token is a real (non-
-    // placeholder) deploy, which isConfigured() requires — see chain-adapter.js.
+    d.mintConfigured === true && d.settlementImplemented === true &&
+    // Still not actually configured: this env never says the mint is a real (non-
+    // placeholder) mint, which isConfigured() requires — see chain-adapter.js.
     CA.isConfigured({
-      STRATUM_CLAIM_RPC_URL: 'https://rpc.mainnet.chain.robinhood.com',
-      STRATUM_CLAIM_TOKEN_ADDR: TC.DEFAULTS.tokenAddress,
+      STRATUM_SOLANA_RPC: 'https://api.mainnet-beta.solana.com',
+      STRATUM_TOKEN_MINT: 'So11111111111111111111111111111111111111112',
       STRATUM_TREASURY_ADDRESS: TC.DEFAULTS.treasuryAddress,
       STRATUM_CLAIM_SIGNER_KEY: dummyKey
     }) === false &&
-    blob.indexOf('abababab') === -1;
+    blob.indexOf(String(dummyKp.secretKey[0]) + ',' + String(dummyKp.secretKey[1])) === -1;
 })());
 
 // ---- rewards ----

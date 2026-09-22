@@ -1,0 +1,14 @@
+# Railway deployment for STRATUM (persistent shared world).
+# Steps in the Railway dashboard after connecting this repo:
+#   1. Add a Volume, mount path /data  (this is where the world lives — without it,
+#      every redeploy wipes every claim, which defeats the entire game).
+#   2. Variables: STRATUM_DB=/data/world.db
+#      (PORT is set by Railway itself; HOST defaults to 0.0.0.0 already.)
+#      Commerce secrets when ready: STRATUM_TOKEN_MINT, STRATUM_CLAIM_SIGNER_KEY.
+[build]
+builder = "dockerfile"
+
+[deploy]
+healthcheckPath = "/api/stats"
+healthcheckTimeout = 60
+restartPolicyType = "on-failure"

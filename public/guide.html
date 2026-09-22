@@ -94,7 +94,7 @@
 <header>
   <h1>STRATUM</h1>
   <div class="sub">Colonist's Guide — everything you need, nothing you don't</div>
-  <a class="back" href="/">← BACK TO THE WORLD</a>
+  <a class="back" href="/play">← BACK TO THE WORLD</a>
 </header>
 
 <div class="quickstart">
@@ -108,7 +108,7 @@
       <div class="qs-step">
         <div class="n">02</div>
         <div class="t">Mine it</div>
-        <div class="d">Left-click a tree, ore seam, herb patch, or crystal. This is where wood, ore, herb, crystal, gold and STRM come from.</div>
+        <div class="d">Left-click a tree, ore seam, herb patch, or crystal. This is where wood, ore, herb, crystal, silver and STRM come from.</div>
       </div>
       <div class="qs-step">
         <div class="n">03</div>
@@ -131,7 +131,7 @@
       <li><a href="#mining">Mining</a></li>
       <li><a href="#crafting">Crafting</a></li>
       <li><a href="#land">Claiming land</a></li>
-      <li><a href="#currency">Gold &amp; STRM</a></li>
+      <li><a href="#currency">Silver &amp; STRM</a></li>
       <li><a href="#spending">Spending STRM</a></li>
       <li><a href="#combat">Combat</a></li>
       <li><a href="#structures">Structures</a></li>
@@ -150,7 +150,7 @@
     <h2>Mining — this is the game</h2>
     <p>Everything in STRATUM starts with mining. Walk up to a resource node — a tree,
       an ore seam, an herb patch, a crystal formation — and left-click it. That's it.
-      Every hit gives you a raw material, some gold, and (usually) a small amount of
+      Every hit gives you a raw material, some silver, and (usually) a small amount of
       pending STRM.</p>
 
     <h3>What you're mining</h3>
@@ -231,18 +231,18 @@
 
   <section id="currency">
     <div class="tag">ECONOMY</div>
-    <h2>Gold &amp; STRM — two currencies, two jobs</h2>
+    <h2>Silver &amp; STRM — two currencies, two jobs</h2>
     <p>Almost everything that earns you something pays in both at once:</p>
     <div class="grid2">
       <div class="card">
-        <div class="h">GOLD</div>
+        <div class="h">SILVER</div>
         Soft, in-game only. Spend it freely on shop listings and parcel deeds — there's
         no reason to hoard it.
       </div>
       <div class="card">
         <div class="h">STRM</div>
-        The hard currency — STRATUM's real token, meant to move on-chain (Robinhood
-        Chain). Every action that grants it adds to your <b>pending</b> balance first.
+        The hard currency — STRATUM's real token, meant to move on-chain (Solana).
+        Every action that grants it adds to your <b>pending</b> balance first.
       </div>
     </div>
     <p>Mining, crafting, and fighting all pay a small amount of pending STRM per action.
@@ -271,7 +271,7 @@
     <div class="tag">RISK &amp; REWARD</div>
     <h2>Combat</h2>
     <p>Creatures roam every map with real AI — they notice you, chase, and hit back.
-      Left-click one in range to strike. Kills grant XP, gold, and STRM, and your level
+      Left-click one in range to strike. Kills grant XP, silver, and STRM, and your level
       climbs as you fight. Better gear (see <a href="#crafting">Crafting</a>) makes this
       safer and faster.</p>
     <div class="warn"><b>Dying has a real cost:</b> a death drops half your carried raw
@@ -305,13 +305,19 @@
   <section id="wallet">
     <div class="tag">GETTING STRM OFF-WORLD</div>
     <h2>Wallet &amp; claiming</h2>
-    <p>Connect a wallet from the HUD to link your address and read your real on-chain
-      balance. The CLAIM STRM button turns your pending balance into a real settlement
-      request.</p>
-    <div class="warn"><b>Honest status:</b> on-chain settlement is not live yet.
-      Every claim today is genuinely recorded and queued — nothing is ever lost — but it
-      won't pay out on-chain until STRATUM's official token contract is deployed. Keep
-      playing; nothing you've earned goes away while this catches up.</div>
+    <p>You can play, mine, and earn silver and pending STRM with no wallet. Connect a
+      Solana wallet from the HUD when you want to cash out. One wallet is one colonist.</p>
+    <ul>
+      <li><b>Claim</b> sends your pending STRM to that wallet on Solana. A fee stays
+        with the treasury; you receive the rest. Until the STRM mint is live, a claim
+        is recorded and your pending balance is left untouched.</li>
+      <li><b>Convert</b> swaps silver for pending STRM, or pending STRM for silver. Same
+        idea: a fee goes to the treasury, and the button does nothing until a wallet
+        is linked.</li>
+    </ul>
+    <div class="warn"><b>Honest status:</b> on-chain settlement pays out only once a
+      real STRM mint and a funded treasury are configured. Until then every claim is
+      queued, not lost. Convert still runs in the game ledger.</div>
   </section>
 
   <section id="controls">
@@ -343,7 +349,7 @@
     <ul>
       <li>STRATUM has <b>no admins and no moderation queue</b>, by design. Ownership of
         land is absolute and enforced by the server, not a person.</li>
-      <li>There is <b>no way yet to buy gold or STRM with real money</b>. Everything is
+      <li>There is <b>no way yet to buy silver or STRM with real money</b>. Everything is
         earned by playing — mining, crafting, and fighting.</li>
       <li>On-chain settlement (turning pending STRM into a real on-chain payout) is
         built but not yet switched on — see <a href="#wallet">Wallet &amp; claiming</a>.</li>
@@ -357,7 +363,7 @@
 
 <footer>
   <div>The land never resets. The provisions always do.</div>
-  <div style="margin-top:6px"><a href="/">Return to STRATUM →</a></div>
+  <div style="margin-top:6px"><a href="/play">Return to STRATUM →</a></div>
 </footer>
 
 </body>

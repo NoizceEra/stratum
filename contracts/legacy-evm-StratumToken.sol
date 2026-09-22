@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: MIT
+// ⚠️ LEGACY — SUPERSEDED 2026-09-22. STRATUM moved to Solana SPL; this EVM
+// contract was never deployed and must never be deployed. Kept for history only.
+// See contracts/README.md.
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";

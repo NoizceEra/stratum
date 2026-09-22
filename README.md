@@ -54,10 +54,13 @@ contest lives. Once you claim a tile, only you can alter it, and you can always 
 npm start
 ```
 
-Then open <http://127.0.0.1:8090>. (Or double-click `START.bat`, which starts the server and
+Then open <http://127.0.0.1:8090> — the landing page, with live world stats and a
+**PLAY** button into the game itself at <http://127.0.0.1:8090/play>.
+(Or double-click `START.bat`, which starts the server and
 opens the browser for you.)
 
-To play **with someone else**: they open `http://<your-lan-ip>:8090` from the same network.
+To play **with someone else**: they open `http://<your-lan-ip>:8090` (landing) or
+`http://<your-lan-ip>:8090/play` (straight into the game) from the same network.
 For anyone outside it, the server needs to be reachable — a static host will not work, because
 a persistent world needs a long-lived process and a database. Railway/Fly/a VPS will.
 
@@ -115,6 +118,13 @@ and claim unclaimed land.
 **3. Real hosting (permanent).** Railway, Fly.io, or any VPS. What a persistent world needs:
 a long-lived Node process, a persistent volume for `data/`, and a host that allows WebSocket
 upgrades. Railway and Fly both do; a static host never will.
+
+Deploy files ship in the repo: `Dockerfile` (used by `railway.toml`), with
+`/api/stats` as the healthcheck. The server already honors `PORT` (set by the host),
+binds `HOST` (default `0.0.0.0` — all interfaces, so LAN peers and tunnels work), and
+reads the world from `STRATUM_DB` — set `STRATUM_DB=/data/world.db` and mount the
+volume at `/data` or every redeploy wipes every claim. Commerce secrets
+(`STRATUM_TOKEN_MINT`, `STRATUM_CLAIM_SIGNER_KEY`) go in the host's env, never in `.env`.
 
 ### Mobile
 
@@ -191,106 +201,117 @@ the tile grid, or gameplay — it's backdrop, the same way the existing water sh
 
 ---
 
-## Commerce (Robinhood Chain)
+## Commerce (Solana)
 
-> ✅ **Verified 2026-09-17: Robinhood Chain is real and reachable.** `STRATUM_RPC_URL`
-> (`https://rpc.mainnet.chain.robinhood.com`) answers `eth_chainId` with `0x1237` = `4663`
-> decimal, matching `src/token-config.js`, and `eth_blockNumber` returns a live, advancing
-> block height — this is a real, running EVM chain, not a placeholder RPC.
+> ⚠️ **The STRM mint does not exist yet.** `STRATUM_TOKEN_MINT` is the sentinel
+> `STRM_MINT_NOT_YET_DEPLOYED` — deliberately not a valid address, so every
+> readiness gate treats settlement as not-live. Create the mint first
+> (`contracts/README.md` + `scripts/create-strm-mint.mjs`), set
+> `STRATUM_TOKEN_MINT` to the real address, fund the treasury, and settlement
+> engages. Until then, `chain-adapter.js` refuses to settle — see "The claim
+> pipeline" below.
 >
-> ⚠️ **But the token contract address is still wrong.** `0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7`
-> (the `tokenAddress` default) is a real, already-deployed contract on that chain — but it's
-> called **"FLIR Technologies" (symbol `FLIR`)**, an unrelated token with its own real
-> total supply already in circulation. It is **not** STRM. Nothing should settle, mint, or
-> transfer against this address — the official token needs to be deployed fresh (see
-> `contracts/StratumToken.sol` + `contracts/README.md`) and its real address set via
-> `STRATUM_TOKEN_ADDRESS` before real settlement can safely engage. Until then,
-> `chain-adapter.js` refuses to settle against it — see "The claim pipeline" below.
+> (History: STRATUM was originally wired to an EVM chain. The 2026-09-22 switch
+> moved everything to Solana SPL — `contracts/legacy-evm-StratumToken.sol` is the
+> old, never-deployed contract, kept for history only.)
 
-Harvesting, crafting, and kills award **in-game gold** plus pending **STRM** token units
-(`src/rewards.js`). Two separate marketplaces charge a real treasury fee on top of that —
+Play does not ask for a wallet. Harvesting, crafting, and kills award **in-game silver**
+plus pending **STRM** (`src/rewards.js`) straight into the server ledger. Connecting a
+Solana wallet is only for cashing out, and one wallet is one colonist
+(`wallet_players`). Two exits charge a treasury fee (`src/payout.js`, default 2.5%):
+
+- **Claim** — pending STRM becomes an SPL transfer to that wallet. The chain transfer
+  is the net; the fee never leaves the treasury token account. If the mint is still the
+  placeholder, the claim is recorded and pending is left untouched (no fee taken).
+- **Convert** — silver becomes pending STRM, or pending STRM becomes silver (`10` silver per
+  STRM before the fee). The fee is credited to the in-game treasury vault. Convert does
+  not broadcast a transaction.
+
+Two separate marketplaces charge a real treasury fee on top of that —
 parcel deeds (`src/parcels.js`) and player shops (`src/shops.js`), both 2.5% by default,
 both tunable via `STRATUM_PARCEL_FEE_BPS` / `STRATUM_SHOP_FEE_BPS`. Direct player-to-player
 trade (`src/trade.js` — gifting/barter, not a priced marketplace) deliberately charges
 nothing; taking a cut of a gift is a different, worse product decision. `/api/stats`
 reports the treasury's running total across both fee sources.
 
-The token + treasury are configured in `src/token-config.js` (Robinhood Chain `4663`).
+The mint + treasury are configured in `src/token-config.js` (Solana `mainnet-beta`).
 See `.env.example` for overrides.
 
 | | Address |
 |--|--|
-| Placeholder token CA (⚠️ "FLIR Technologies" — NOT STRM, replace via `contracts/`) | `0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7` |
-| Treasury wallet (public) | `0xE8896562619Fe0276d65952b51dcC11C17b8C144` |
+| Placeholder mint (⚠️ sentinel `STRM_MINT_NOT_YET_DEPLOYED` — NOT STRM, replace via `contracts/`) | `STRM_MINT_NOT_YET_DEPLOYED` |
+| Treasury wallet (public) | `EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo` |
 
-The treasury **private key** is not in this repo. It lives in a local `.env`
-(`STRATUM_CLAIM_SIGNER_KEY=…`, gitignored) on the operator's machine — never commit `.env`.
+The treasury **secret key** is not in this repo. It lives in a local `.env`
+(`STRATUM_CLAIM_SIGNER_KEY=…`, gitignored, base58 or JSON-array form) on the
+operator's machine — never commit `.env`.
 
 ```
-STRATUM_TOKEN_ADDRESS=0x…            # the REAL StratumToken deploy — see contracts/
-STRATUM_TREASURY_ADDRESS=0xE8896562619Fe0276d65952b51dcC11C17b8C144
-STRATUM_CHAIN_ID=4663
-STRATUM_RPC_URL=https://rpc.mainnet.chain.robinhood.com
+STRATUM_TOKEN_MINT=<the REAL SPL mint — see contracts/>
+STRATUM_TREASURY_ADDRESS=EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo
+STRATUM_CLUSTER=mainnet-beta
+STRATUM_SOLANA_RPC=https://api.mainnet-beta.solana.com
 STRATUM_TOKEN_SYMBOL=STRM
+STRATUM_TOKEN_DECIMALS=9
 # STRATUM_CLAIM_SIGNER_KEY=…   # local .env only — never committed, never logged
 ```
 
-Connect a wallet in the HUD to switch to Robinhood Chain and read on-chain `balanceOf`
+Connect a wallet in the HUD (Phantom / Solflare) to read on-chain STRM
 (read-only — `public/wallet.js` never signs or sends a transaction). Pending STRM accrues
 in a server ledger (`token_ledger`); a **CLAIM STRM** button in the HUD sends it toward
 settlement, but read the next section before assuming that means a payout happens.
 `/api/stats` exposes both the soft fee vault (`treasury`) and the on-chain wallet
 (`treasuryWallet` / `commerce`) for operators — the HUD does not show the treasury address.
 
-### The claim pipeline — real signing code, gated behind a real contract
+### The claim pipeline — real signing code, gated behind a real mint
 
 Every claim is genuinely recorded end-to-end: `token_ledger.pending` → a `claim_requests`
 row (id, wallet, amount, status, full audit trail) → `src/chain-adapter.js`. That last step
-now contains **real** ERC-20 transfer-signing code (`treasury.transfer(player, amount)`,
-via `ethers` — see below), not a stub — but it still answers `not_configured` today,
-because the deployed token is the wrong contract (see the warning above). The pending
+now contains **real** SPL transfer code (treasury ATA → player ATA, creating the player's
+ATA in the same transaction when needed, via `@solana/web3.js` + `@solana/spl-token` —
+see below), not a stub — but it still answers `not_configured` today,
+because the STRM mint doesn't exist yet (see the warning above). The pending
 balance is **never decremented** on a `not_configured` answer, so nothing is ever silently
 lost. The HUD reports this plainly ("QUEUED — ON-CHAIN SETTLEMENT NOT YET LIVE"), not as a
 payout, until the gate actually lifts.
 
-`chain-adapter.js`'s `isConfigured()` requires ALL of: a well-formed RPC URL, token
-address, treasury address, and signer key — **and** the token must be explicitly flagged
+`chain-adapter.js`'s `isConfigured()` requires ALL of: a well-formed RPC URL, mint
+address, treasury address, and secret key — **and** the mint must be explicitly flagged
 as NOT the placeholder (`STRATUM_TOKEN_IS_PLACEHOLDER`, derived automatically from
 `token-config.js`'s `placeholder` flag — never hand-set this). That flag flips the moment
-`STRATUM_TOKEN_ADDRESS` is overridden with a real deploy. A pre-flight `balanceOf` check
-refuses a claim the treasury can't actually afford instead of burning gas on a guaranteed
-revert. See `chain-adapter.js`'s header for the full safety-gate writeup.
+`STRATUM_TOKEN_MINT` is set to a real mint. A pre-flight treasury-balance check
+refuses a claim the treasury can't actually afford instead of burning SOL on a guaranteed
+failure. See `chain-adapter.js`'s header for the full safety-gate writeup.
 
-**Two more protections for the treasury's gas float**, both purely server-side (no chain
+**Two more protections for the treasury's SOL**, both purely server-side (no chain
 interaction needed to enforce either):
 - A minimum claim floor (`STRATUM_MIN_CLAIM_AMOUNT`, default 50 STRM) — real settlement
-  pays the same gas for a 1-STRM claim as a 1000-STRM one, so with no floor a player (or a
-  bot) could bleed the gas float one dust-sized claim at a time. Refused claims never touch
+  pays the same SOL fee for a 1-STRM claim as a 1000-STRM one, so with no floor a player (or a
+  bot) could bleed the SOL float one dust-sized claim at a time. Refused claims never touch
   `claim_requests` or `chain-adapter.js` at all — same "nothing spent on a refusal" contract
   as every other economy gate in `server.js`.
 - A send queue in `chain-adapter.js` serializing every real transfer through the one
-  treasury signer — the treasury has a single on-chain nonce, and `ethers` fetches "the
-  current nonce" right before sending; two claims settling at the same moment could
-  otherwise race for it. Every `settleClaim()` call's actual chain-touching work now runs
+  treasury signer — concurrent claims building transactions at the same moment could
+  otherwise collide. Every `settleClaim()` call's actual chain-touching work now runs
   strictly one-at-a-time via a promise-chain queue, proven with an offline concurrency test
   in `test-chain-adapter.js` (two calls fired without awaiting between them, asserted to
   never interleave). Validation and the `isConfigured()` gate stay outside the queue, so a
   claim that's going to be refused anyway still answers immediately.
 
-**`ethers` is this project's one intentional dependency.** Every other module is
-hand-rolled and zero-dependency by design; hand-rolling secp256k1 ECDSA + RLP encoding +
-keccak256 for code that moves real funds is exactly the wrong place to save a dependency —
-see `chain-adapter.js`'s header for why this exception is scoped to exactly that one file.
-`test-chain-adapter.js` exercises the real signing/transfer code path entirely offline via
+**`@solana/web3.js` + `@solana/spl-token` (+ tiny `bs58` for scripts) are this project's
+intentional dependencies.** Every other module is hand-rolled and zero-dependency by
+design; hand-rolling ed25519 signing + Solana's transaction format for code that moves
+real funds is exactly the wrong place to save a dependency — see `chain-adapter.js`'s
+header for why this exception is scoped to exactly that one file.
+`test-chain-adapter.js` exercises the real transfer-construction path entirely offline via
 injected fakes (`settleClaim(req, env, deps)`) — no test in this repo ever signs or
 broadcasts a real transaction, and none should; a live-chain dry run against the real
-deployed contract is the operator's own call to make.
+mint is the operator's own call to make.
 
-**Deploying the real STRM contract is a separate step, not done by an agent session** —
-see `contracts/StratumToken.sol` (a fixed-supply, burnable, OpenZeppelin-based ERC-20 —
-no `mint()` exists anywhere in it, so a compromised signer key can drain at most the
-treasury's existing balance, never inflate supply) and `contracts/README.md` for the full
-deploy-and-wire-in walkthrough.
+**Creating the real STRM mint is a separate step, not done by an agent session** —
+see `contracts/README.md` (fixed supply via `--lock`, no freeze authority — so a
+compromised treasury key can drain at most the treasury's existing balance, never
+inflate supply) for the full create-and-wire-in walkthrough.
 
 ### Token sinks — where pending STRM actually goes
 
@@ -327,7 +348,7 @@ tool tier). `src/crafting.js` adds depth on top, in the craft panel HUD:
   crafted you currently hold; clicking one breaks it down for a partial materials refund
   (`STRATUM_SALVAGE_REFUND_BPS`, default 50%, floored per material — never a full-value
   refund, which would make crafting free to "try" indefinitely). Reverses a crafting
-  mistake; grants no gold or STRM (it's undoing a purchase, not earning a new one).
+  mistake; grants no silver or STRM (it's undoing a purchase, not earning a new one).
 
 ## Reward yield bonuses
 
@@ -341,8 +362,8 @@ three independent multipliers compose at `applyCommerceReward()`'s single choke 
   — a client-reported balance would be trivially spoofable, so the server never trusts one)
   puts a player into one of five tiers, Colonist (1.0x, the base) up to Silverlord (2.0x at
   100,000+ STRM). Refreshed on wallet-link and on reconnect; **always 1.0x today**, gated
-  behind the same non-placeholder-contract check as real settlement (see the Commerce
-  section above) — this is real, tested code sitting dormant until the real STRM contract
+  behind the same non-placeholder-mint check as real settlement (see the Commerce
+  section above) — this is real, tested code sitting dormant until the real STRM mint
   exists, exactly like `chain-adapter.js`'s settlement itself.
 - **`src/mining-streak.js`** — mining at a steady, human pace (roughly one harvest every
   1-15 seconds, with natural jitter) builds a personal streak worth up to +50%. Explicitly
@@ -390,7 +411,7 @@ kill, collect) through the single choke point every one of them already passes t
 
 These combine into one rolling, decaying suspicion score per player (session-only, never
 persisted — it's a short-timescale behavioral signal, not a permanent mark). Crossing the
-threshold **throttles the economic reward of that one action** — gold and STRM both come
+threshold **throttles the economic reward of that one action** — silver and STRM both come
 back zero — while the action itself (materials consumed, item crafted, node depleted, XP
 awarded) proceeds completely normally. Never a block, never a ban, never a lockout, never
 anything requiring a human to review or undo. A false positive costs a legitimate player a
@@ -402,20 +423,22 @@ under a real rapid-fire burst) in `test-anti-cheat.js` and `test-anti-cheat-inte
 
 Playable and tested. Honest gaps:
 
-- **On-chain settlement is not live** — the signing code is real (see "The claim pipeline"
-  above), but the deployed token contract is still a placeholder (actually an unrelated
-  real token, "FLIR Technologies" — see the Commerce warning above), so `chain-adapter.js`
-  refuses to run. Every claim today queues; none settle. Deploying the real
-  `contracts/StratumToken.sol` and setting `STRATUM_TOKEN_ADDRESS` lifts this.
-- **No way to buy in-game currency with real money or crypto yet.** Gold and STRM are
-  earned by playing only — there's no fiat on-ramp, no "buy gold with STRM" or "buy STRM
+- **On-chain settlement is not live** — the transfer code is real (see "The claim pipeline"
+  above), but the STRM mint doesn't exist yet (the sentinel `STRM_MINT_NOT_YET_DEPLOYED`
+  stands in — see the Commerce warning above), so `chain-adapter.js`
+  refuses to run. Every claim today queues; none settle. Creating the real SPL mint
+  (`contracts/README.md` + `scripts/create-strm-mint.mjs`) and setting `STRATUM_TOKEN_MINT`
+  lifts this.
+- **No way to buy in-game currency with real money or crypto yet.** Silver and STRM are
+  earned by playing only — there's no fiat on-ramp, no "buy silver with STRM" or "buy STRM
   with a card" flow, and no payment processor wired in anywhere in this codebase. This is
   a separate, not-yet-designed feature, not a bug in the claim pipeline above.
-- **Not deployed.** It runs locally. Hosting needs a long-lived process (Railway/Fly/VPS) plus the
+- **Not deployed.** It runs locally. Hosting needs a long-lived process (Railway/Fly/VPS —
+  see `railway.toml` + `Dockerfile`) with a persistent volume for `data/`, plus the
   static client — not a static host alone.
 - **Anti-cheat now covers economic abuse specifically** (see the Anti-cheat section
   above) — rate/rhythm/IP-density detection on every reward-earning action, throttling
-  gold/STRM without ever blocking play. Movement rate-limiting and server-side validation
+  silver/STRM without ever blocking play. Movement rate-limiting and server-side validation
   on everything else remain as before; this doesn't add anything like device fingerprinting,
   CAPTCHA, or persistent per-account suspicion history — a determined, patient bot working
   well under the rate/rhythm thresholds is still not caught by this.

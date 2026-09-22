@@ -227,13 +227,13 @@
 <div id="hud-br" class="panel">
   <div class="k">carried</div>
   <div style="margin-top:3px" id="h-inv">—</div>
-  <!-- On touch this whole block (gold/wallet/combat/achievements) starts collapsed —
+  <!-- On touch this whole block (silver/wallet/combat/achievements) starts collapsed —
        it's a lot of always-on chrome for a phone screen, and none of it needs to be
        glanceable mid-harvest the way HP/will/carried do. Desktop keeps it open, always. -->
   <button type="button" id="hud-br-toggle">MORE ▾</button>
   <div id="hud-br-detail">
     <div style="margin-top:7px">
-      <span class="k">gold</span> <span class="v gold" id="h-gold">0</span>
+      <span class="k">silver</span> <span class="v gold" id="h-gold">0</span>
       <span class="k" style="margin-left:8px" id="h-token-sym">STRM</span>
       <span class="v" id="h-token-pending">0</span>
       <span class="k" style="margin-left:4px;font-size:9px">pending</span>
@@ -243,13 +243,15 @@
       <button type="button" id="wallet-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">CONNECT WALLET</button>
       <span class="k" id="h-wallet" style="margin-left:6px;font-size:10px"></span>
     </div>
-    <!-- Claiming turns pending STRM into a real claim_requests row server-side, but
-         nothing settles on-chain yet (src/chain-adapter.js is an honest, unconfigured
-         stub) — every claim today answers "queued", and h-claim-status says exactly
-         that rather than implying a payout happened. -->
+    <div class="k" id="h-payout-note" style="margin-top:6px;font-size:10px;max-width:280px">Play first. Connect a wallet to claim or convert — a fee applies then.</div>
     <div style="margin-top:6px">
       <button type="button" id="claim-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">CLAIM STRM</button>
       <span class="k" id="h-claim-status" style="margin-left:6px;font-size:10px"></span>
+    </div>
+    <div style="margin-top:6px">
+      <button type="button" id="convert-gold-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">SILVER → STRM</button>
+      <button type="button" id="convert-strm-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer;margin-left:4px">STRM → SILVER</button>
+      <span class="k" id="h-convert-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <!-- Earth Requisition: the actual STRM sink. Most of what you ship is burned
          forever; a slice funds the treasury. This is the first real reason STRM is
@@ -339,7 +341,9 @@
         Stratum isn't a quarry you empty, it's a world you settle.<br>
       <b>You can only release a claim</b> — you can never take one from another colonist.<br>
       <b>Refine what you mine.</b> A kiln turns ore into silver — the reason Earth sent you.<br>
-      <b>Commerce.</b> Mining and crafting earn gold and STRM on Robinhood Chain.
+      <b>Play first.</b> Mining and crafting earn silver and STRM with no wallet.<br>
+      <b>Wallet when you cash out.</b> Connect a Solana wallet to claim STRM or convert silver.
+        A fee is taken only on claim and convert.
     </div>
     <input id="name-in" maxlength="18" placeholder="COLONIST NAME" autocomplete="off">
     <div id="gateswatch"></div>

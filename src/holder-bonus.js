@@ -1,6 +1,6 @@
 /**
  * holder-bonus.js — "simple as holding the token": a wallet's on-chain STRM balance
- * grants a permanent multiplier on the gold/STRM a player earns from playing.
+ * grants a permanent multiplier on the silver/STRM a player earns from playing.
  *
  * WHY THIS FILE EXISTS
  *   Every other commerce module here answers "what happens when you spend/earn STRM
@@ -8,13 +8,13 @@
  *   module answers a different question the project owner asked for: "why would anyone
  *   HOLD STRM instead of immediately spending it?" The answer is a yield-style tier
  *   table — the more STRM your linked wallet holds, the bigger a multiplier is applied
- *   to every gold/token reward src/rewards.js hands you. It is deliberately the
+ *   to every silver/token reward src/rewards.js hands you. It is deliberately the
  *   simplest possible hook: no staking, no lockup, no claim step — just holding more
  *   moves you up a tier, permanently, for as long as the balance is above threshold.
  *
  * WHY THIS MODULE NEVER TOUCHES A CHAIN BALANCE ITSELF
- *   STRM has no live on-chain contract yet — src/token-config.js's CA is still a
- *   placeholder (an unrelated real contract, "FLIR Technologies"), and src/chain-adapter.js
+ *   STRM has no live on-chain mint yet — src/token-config.js carries the
+ *   `STRM_MINT_NOT_YET_DEPLOYED` sentinel, and src/chain-adapter.js
  *   gates all real settlement behind that flag (see its header + README.md's Commerce
  *   section for the full story). Any balance this module were handed today could be
  *   meaningless, or worse, wrong. So this module simply never decides what "the
@@ -31,7 +31,7 @@
  *   - Fully pure and deterministic: no Date.now(), no Math.random(), no globals written.
  *     Every helper returns fresh values (or a shared frozen tier reference) and never
  *     mutates its arguments.
- *   - Integer math for reward amounts — gold/STRM are always whole ledger units
+ *   - Integer math for reward amounts — silver/STRM are always whole ledger units
  *     elsewhere in this codebase (src/rewards.js). The multiplier itself is a float
  *     (e.g. 1.25); applying it to an amount floors to an integer, matching
  *     token-sink.js's splitBurn "floor, never round up" convention — except here the

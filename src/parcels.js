@@ -159,7 +159,7 @@
 
   /**
    * Treasury fee on a sale price, in the same units as the price. Integer math,
-   * floored — a 1-gold sale yields a 0 fee, which is fine (no dust chasing).
+   * floored — a 1-silver sale yields a 0 fee, which is fine (no dust chasing).
    * `bps` defaults to FEE_BPS; the caller (server) passes the live value so a
    * future fee change is a one-line config edit, not a module edit.
    */
@@ -205,13 +205,16 @@
     };
   }
 
-  /** Human line for a deed: 'Moss & Stone — 24 tiles @ 40 gold'. Never throws. */
+  /** Display name for a resource key. Saves + wire protocol still say `gold`. */
+  function dispKey(k) { return k === 'gold' ? 'silver' : k; }
+
+  /** Human line for a deed: 'Moss & Stone — 24 tiles @ 40 silver'. Never throws. */
   function describe(deed) {
     try {
       var nm = (deed && typeof deed.name === 'string' && deed.name) || 'unnamed parcel';
       var n = (deed && Array.isArray(deed.tiles)) ? deed.tiles.length : 0;
       var price = (deed && isName(deed.priceItem) && isPosInt(deed.priceQty))
-        ? (' @ ' + deed.priceQty + ' ' + deed.priceItem) : '';
+        ? (' @ ' + deed.priceQty + ' ' + dispKey(deed.priceItem)) : '';
       return nm + ' — ' + n + ' tiles' + price;
     } catch (e) { return 'a parcel deed'; }
   }

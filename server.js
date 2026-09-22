@@ -35,6 +35,8 @@ const Crafting = require('./src/crafting.js');
 const HolderBonus = require('./src/holder-bonus.js');
 const MiningStreak = require('./src/mining-streak.js');
 const ColonyMilestone = require('./src/colony-milestone.js');
+const Payout = require('./src/payout.js');
+const WalletProof = require('./src/wallet-proof.js');
 
 /** Optional local `.env` (never committed). Existing process.env wins — so hosting
  *  platform secrets always override a checked-out file. Zero-dep, KEY=VALUE only. */
@@ -70,22 +72,25 @@ const COMMERCE = TokenConfig.withEnv(process.env);
 function claimEnv() {
   const e = process.env;
   return {
-    STRATUM_CLAIM_RPC_URL: e.STRATUM_CLAIM_RPC_URL || e.STRATUM_RPC_URL || COMMERCE.rpcUrl,
-    STRATUM_CLAIM_TOKEN_ADDR: e.STRATUM_CLAIM_TOKEN_ADDR || e.STRATUM_TOKEN_ADDRESS || COMMERCE.tokenAddress,
+    STRATUM_SOLANA_RPC: e.STRATUM_SOLANA_RPC || e.STRATUM_CLAIM_RPC_URL || e.STRATUM_RPC_URL || COMMERCE.rpcUrl,
+    STRATUM_TOKEN_MINT: e.STRATUM_TOKEN_MINT || e.STRATUM_CLAIM_TOKEN_ADDR || e.STRATUM_TOKEN_ADDRESS || COMMERCE.tokenMint,
     STRATUM_TREASURY_ADDRESS: e.STRATUM_TREASURY_ADDRESS || COMMERCE.treasuryAddress,
     STRATUM_CLAIM_SIGNER_KEY: e.STRATUM_CLAIM_SIGNER_KEY || e.STRATUM_TREASURY_KEY || '',
-    STRATUM_RPC_URL: e.STRATUM_RPC_URL || COMMERCE.rpcUrl,
-    STRATUM_TOKEN_ADDRESS: e.STRATUM_TOKEN_ADDRESS || COMMERCE.tokenAddress,
+    STRATUM_RPC_URL: e.STRATUM_SOLANA_RPC || e.STRATUM_RPC_URL || COMMERCE.rpcUrl,
+    STRATUM_TOKEN_ADDRESS: e.STRATUM_TOKEN_MINT || e.STRATUM_TOKEN_ADDRESS || COMMERCE.tokenMint,
     STRATUM_TOKEN_DECIMALS: String(COMMERCE.decimals),
     // Derived from COMMERCE (token-config.js), never hand-set: chain-adapter.js's only
-    // gate against settling real transfers against the known-wrong placeholder contract
-    // (see README.md's Robinhood Chain note). Flips to '0' automatically the moment
-    // STRATUM_TOKEN_ADDRESS is overridden with a real deploy.
+    // gate against settling real transfers against the placeholder mint sentinel
+    // (see README.md's Commerce note). Flips to '0' automatically the moment
+    // STRATUM_TOKEN_MINT is overridden with a real SPL mint.
     STRATUM_TOKEN_IS_PLACEHOLDER: COMMERCE.placeholder ? '1' : '0'
   };
 }
 
 const PORT = Number(process.env.PORT || 8090);
+// Bind all interfaces by default so LAN peers, tunnels, and hosts (Railway/Fly/VPS)
+// can reach the shared world. Override with HOST=127.0.0.1 to lock to loopback.
+const HOST = process.env.HOST || '0.0.0.0';
 const PUB = path.join(__dirname, 'public');
 const DATA = path.join(__dirname, 'data');
 fs.mkdirSync(DATA, { recursive: true });
@@ -177,10 +182,36 @@ const RUSH_COST_PER_UNIT = Number(process.env.STRATUM_RUSH_COST_PER_UNIT) > 0
 // (src/rewards.js grants 1-2 STRM per action) many times over before claiming is worthwhile.
 const MIN_CLAIM_AMOUNT = Number(process.env.STRATUM_MIN_CLAIM_AMOUNT) > 0
   ? Number(process.env.STRATUM_MIN_CLAIM_AMOUNT) | 0 : 50;
+// Fee cuts on the two wallet-gated exits. 0 is a legal "no fee" setting, so this
+// does not use envNum (which treats 0 as "missing"). Out-of-range values fall back
+// to the module defaults rather than clamping into a surprise rate.
+function envBps(name, fallback) {
+  if (process.env[name] === undefined || process.env[name] === '') return fallback;
+  const n = Number(process.env[name]);
+  return (Number.isFinite(n) && n >= 0 && n <= Payout.FEE_DENOM) ? (n | 0) : fallback;
+}
+const CLAIM_FEE_BPS = envBps('STRATUM_CLAIM_FEE_BPS', Payout.CLAIM_FEE_BPS);
+const CONVERT_FEE_BPS = envBps('STRATUM_CONVERT_FEE_BPS', Payout.CONVERT_FEE_BPS);
+const GOLD_PER_STRM = Number(process.env.STRATUM_GOLD_PER_STRM) > 0
+  ? Number(process.env.STRATUM_GOLD_PER_STRM) | 0 : Payout.GOLD_PER_STRM;
+const MIN_CONVERT_AMOUNT = Number(process.env.STRATUM_MIN_CONVERT_AMOUNT) > 0
+  ? Number(process.env.STRATUM_MIN_CONVERT_AMOUNT) | 0 : Payout.MIN_CONVERT_STRM;
+function payoutPublic() {
+  return {
+    claimBps: CLAIM_FEE_BPS,
+    convertBps: CONVERT_FEE_BPS,
+    goldPerStrm: GOLD_PER_STRM,
+    minClaim: MIN_CLAIM_AMOUNT,
+    minConvert: MIN_CONVERT_AMOUNT
+  };
+}
 // Salvage refund rate (src/crafting.js) — same "fall back to the real default, not to 0
 // or 100%" bps convention as every other tunable here.
 const SALVAGE_REFUND_BPS = Number(process.env.STRATUM_SALVAGE_REFUND_BPS) >= 0
   ? Number(process.env.STRATUM_SALVAGE_REFUND_BPS) | 0 : Crafting.SALVAGE_REFUND_BPS;
+// Display name for a resource key in player-facing strings. The data model +
+// saves + wire protocol still call the soft currency `gold`; players only see `silver`.
+function dispKey(k) { return k === 'gold' ? 'silver' : k; }
 // The fixed emote allowlist. No freeform text ever — see ROADMAP.md's no-chat non-goal.
 const EMOTES = ['wave', 'thanks', 'nice-place', 'gg'];
 
@@ -245,6 +276,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS claim_requests_k ON claim_requests(k);
   CREATE TABLE IF NOT EXISTS token_burned(
     id TEXT PRIMARY KEY, total INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS wallet_players(
+    wallet TEXT PRIMARY KEY,
+    k TEXT NOT NULL UNIQUE,
+    linked INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS convert_requests(
+    id TEXT PRIMARY KEY,
+    k TEXT NOT NULL,
+    wallet TEXT NOT NULL,
+    dir TEXT NOT NULL,
+    gross INTEGER NOT NULL,
+    fee INTEGER NOT NULL,
+    payout INTEGER NOT NULL,
+    createdAt INTEGER NOT NULL);
+  CREATE INDEX IF NOT EXISTS convert_requests_k ON convert_requests(k);
 `);
 
 // migrate a pre-maps tiles table (tiles used to be keyed by x,y only)
@@ -377,9 +422,24 @@ function creditToken(key, n) {
 // See src/chain-adapter.js's header for why nothing here ever actually pays out yet.
 // Every claim attempt is recorded regardless of outcome — "not configured" is a normal,
 // expected, fully-logged result, not a swallowed failure.
+(function migrateClaimFees() {
+  const cols = db.prepare('PRAGMA table_info(claim_requests)').all();
+  const names = new Set(cols.map(c => c.name));
+  if (cols.length && !names.has('feeUnits')) db.exec('ALTER TABLE claim_requests ADD COLUMN feeUnits INTEGER NOT NULL DEFAULT 0');
+  if (cols.length && !names.has('payoutUnits')) db.exec('ALTER TABLE claim_requests ADD COLUMN payoutUnits INTEGER NOT NULL DEFAULT 0');
+})();
 const qClaimIns = db.prepare(
-  'INSERT INTO claim_requests(id,k,wallet,amountUnits,status,reason,txHash,requestedAt,settledAt) VALUES(?,?,?,?,?,?,?,?,?)');
+  'INSERT INTO claim_requests(id,k,wallet,amountUnits,feeUnits,payoutUnits,status,reason,txHash,requestedAt,settledAt) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
 const qClaimUpdate = db.prepare('UPDATE claim_requests SET status=?,reason=?,txHash=?,settledAt=? WHERE id=?');
+const qWalletGet = db.prepare('SELECT wallet, k FROM wallet_players WHERE wallet=?');
+const qWalletByKey = db.prepare('SELECT wallet, k FROM wallet_players WHERE k=?');
+const qWalletIns = db.prepare('INSERT INTO wallet_players(wallet, k, linked) VALUES(?,?,?)');
+const qWalletDelByKey = db.prepare('DELETE FROM wallet_players WHERE k=?');
+const qConvertIns = db.prepare(
+  'INSERT INTO convert_requests(id,k,wallet,dir,gross,fee,payout,createdAt) VALUES(?,?,?,?,?,?,?,?)');
+/** One in-flight claim per player key. The chain send is async; a second click
+ *  before it settles must not pay the same pending balance twice. */
+const claimsInFlight = new Set();
 const qClaimHistory = db.prepare('SELECT id,amountUnits,status,reason,txHash,requestedAt,settledAt FROM claim_requests WHERE k=? ORDER BY requestedAt DESC LIMIT 20');
 
 /** authoritative in-memory idle structures: "map:y*W+x" -> {id,kind,map,x,y,owner,builtAt,lastCollectedAt}
@@ -572,11 +632,11 @@ const server = http.createServer((req, res) => {
       treasury: treasuryTotals(),
       // On-chain treasury wallet (public address) + fee knobs — no secrets.
       treasuryWallet: COMMERCE.treasuryAddress,
-      fees: {
+      fees: Object.assign({
         parcelBps: PARCEL_FEE_BPS, shopBps: SHOP_FEE_BPS, tokenBurnBps: TOKEN_BURN_BPS,
-        rushCostPerUnit: RUSH_COST_PER_UNIT, minClaim: MIN_CLAIM_AMOUNT,
+        rushCostPerUnit: RUSH_COST_PER_UNIT,
         salvageRefundBps: SALVAGE_REFUND_BPS, maxCraftBatch: Crafting.MAX_BATCH
-      },
+      }, payoutPublic()),
       // Total STRM ever burned via a sink — the actual "silver shipped to Earth" mission
       // metric this game's whole story is about. Never decreases; nothing owed for it.
       colonyQuota: burnedTotal(),
@@ -635,7 +695,8 @@ const server = http.createServer((req, res) => {
     return res.end(body);
   }
 
-  if (p === '/') p = '/index.html';
+  if (p === '/') p = '/landing.html';
+  if (p === '/play') p = '/index.html';
   const file = path.join(PUB, path.normalize(p));
   if (!file.startsWith(PUB)) { res.writeHead(403); return res.end('no'); }
   fs.readFile(file, (err, buf) => {
@@ -759,7 +820,7 @@ server.on('upgrade', (req, socket) => {
     id: nextId++, sock: socket, ip, key: null, name: null, hue: 0, map: 0,
     x: 0, y: 0, hp: PLAYER_HP, maxHp: PLAYER_HP, kills: 0, atk: BASE_ATK,
     inv: { wood: 0, ore: 0, herb: 0, crystal: 0, gold: 0 }, tool: 0, atkBoost: 0,
-    tokenPending: 0, tokenWallet: null,
+    tokenPending: 0, tokenWallet: null, walletNonce: null, walletNonceAt: 0,
     paletteId: CU.DEFAULT_PALETTE_ID, bodyHue: 0, trimHue: 0, accessories: { hat: null, cloak: null, scarf: null },
     achIds: new Set(), achMaps: new Set(), achCrafts: 0, achTitle: null,
     energy: ENERGY_MAX, subs: new Set(), sent: new Set(),
@@ -769,7 +830,7 @@ server.on('upgrade', (req, socket) => {
     acHistory: [], acScore: 0, acLastAt: null, acWasThrottled: false,
     // Reward-yield bonuses (2026-09-21 round) — all in-memory only, all safe defaults:
     // streakState decays/rebuilds purely from play, holderBalance stays 0 (base 1.0x,
-    // see holderBalanceLookup() below) until a real, non-placeholder token contract
+    // see holderBalanceLookup() below) until a real, non-placeholder token mint
     // exists and a balance read actually succeeds.
     streakState: { streak: 0, lastAt: null },
     holderBalance: 0, holderMultiplier: HolderBonus.BASE_MULTIPLIER,
@@ -967,7 +1028,7 @@ function boostByMultiplier(amount, mult) {
 }
 
 /**
- * Dual commerce payout: soft gold into inv + hard token units into token_ledger.
+ * Dual commerce payout: soft silver into inv + hard token units into token_ledger.
  * Returns the reward applied (or zeros). Never throws.
  *
  * Every call also feeds src/anti-cheat.js's rolling per-player suspicion score (this is
@@ -1053,7 +1114,7 @@ function applyCommerceReward(c, action, ctx, multiplier) {
  * finish synchronously either way; this just updates c.holderBalance/c.holderMultiplier
  * whenever the read eventually resolves (or leaves them at their prior/base value on any
  * failure — see chain-adapter.js's readBalance(), which is itself always a no-op today:
- * gated behind the same non-placeholder-contract check as real settlement). A successful
+ * gated behind the same non-placeholder-mint check as real settlement). A successful
  * refresh also pushes a 'holder-tier' message so the HUD can update without a reconnect.
  */
 function refreshHolderBonus(c) {
@@ -1184,7 +1245,7 @@ const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', '
   'build-structure', 'collect-structure', 'structure-rush', 'set-look',
   'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote',
   'parcel-mint', 'parcel-list', 'parcel-buy', 'parcel-cancel', 'parcel-browse', 'parcel-mine',
-  'wallet-link', 'claim', 'requisition', 'salvage']);
+  'wallet-link', 'wallet-challenge', 'claim', 'convert', 'requisition', 'salvage']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -1295,6 +1356,7 @@ function onMessage(c, msg) {
         gold: (c.inv.gold | 0),
         tokenPending: c.tokenPending | 0,
         tokenWallet: c.tokenWallet || null,
+        payout: payoutPublic(),
         colonyQuota: burnedTotal(),
         // Reward-yield bonuses (2026-09-21 round) — see applyCommerceReward()'s header for
         // how these three compose. holderBalance/holderMultiplier are whatever was last
@@ -1566,7 +1628,7 @@ function onMessage(c, msg) {
     // Salvage (src/crafting.js): break down `count` held crafted items back into a partial
     // materials refund (SALVAGE_REFUND_BPS, default 50%). Deliberately no commerce reward
     // here — this reverses a purchase, it doesn't earn a new one — and deliberately no
-    // anti-cheat evaluation either: salvaging never grants gold or STRM, so it isn't a
+    // anti-cheat evaluation either: salvaging never grants silver or STRM, so it isn't a
     // reward-earning action anti-cheat needs to watch (see applyCommerceReward()'s header).
     case 'salvage': {
       if (!c.ready || c.dead) return;
@@ -1590,30 +1652,78 @@ function onMessage(c, msg) {
       break;
     }
 
+    case 'wallet-challenge': {
+      if (!c.ready || !c.key) return;
+      c.walletNonce = crypto.randomBytes(16).toString('hex');
+      c.walletNonceAt = Date.now();
+      c.send({ t: 'wallet-challenge', nonce: c.walletNonce });
+      break;
+    }
+
+    // One wallet is one colonist. Play does not require this. Claim and convert do.
+    // A signature is optional for a first link (tests and wallets that only expose
+    // connect) and required to resume a colonist that already belongs to the wallet —
+    // an unsigned address must never take over someone else's key.
     case 'wallet-link': {
       if (!c.ready || !c.key) return;
       const addr = (typeof msg.address === 'string') ? msg.address.trim() : '';
-      if (addr && !TokenConfig.isAddr(addr)) {
+      if (!addr) {
+        qWalletDelByKey.run(c.key);
+        const cur0 = ledgerOf(c.key);
+        c.tokenWallet = null;
+        ledgerSave(c.key, cur0.pending, cur0.claimed, null);
+        return c.send({
+          t: 'wallet-linked', address: null, tokenPending: cur0.pending | 0,
+          commerce: TokenConfig.publicConfig(COMMERCE), payout: payoutPublic()
+        });
+      }
+      if (!TokenConfig.isAddr(addr)) {
         return c.send({ t: 'wallet-linked', err: 'invalid address' });
       }
+      let proved = false;
+      if (typeof msg.signature === 'string' && msg.signature.length) {
+        const nonce = (typeof msg.nonce === 'string') ? msg.nonce : '';
+        const fresh = c.walletNonce && nonce === c.walletNonce && (Date.now() - c.walletNonceAt) < 120000;
+        c.walletNonce = null;
+        if (!fresh || !WalletProof.verifyLink(addr, c.key, nonce, msg.signature)) {
+          return c.send({ t: 'wallet-linked', err: 'signature rejected' });
+        }
+        proved = true;
+      }
+      const bound = qWalletGet.get(addr);
+      if (bound && bound.k !== c.key) {
+        if (!proved) {
+          return c.send({ t: 'wallet-linked', err: 'wallet already belongs to another colonist' });
+        }
+        return c.send({
+          t: 'wallet-linked', address: addr, resumeKey: bound.k,
+          commerce: TokenConfig.publicConfig(COMMERCE), payout: payoutPublic()
+        });
+      }
+      const mine = qWalletByKey.get(c.key);
+      if (mine && mine.wallet !== addr) {
+        return c.send({ t: 'wallet-linked', err: 'this colonist already has a wallet' });
+      }
+      if (!mine) qWalletIns.run(addr, c.key, Date.now());
       const cur = ledgerOf(c.key);
-      c.tokenWallet = addr || null;
+      c.tokenWallet = addr;
       ledgerSave(c.key, cur.pending, cur.claimed, c.tokenWallet);
       c.send({
         t: 'wallet-linked',
         address: c.tokenWallet,
         tokenPending: cur.pending | 0,
-        commerce: TokenConfig.publicConfig(COMMERCE)
+        commerce: TokenConfig.publicConfig(COMMERCE),
+        payout: payoutPublic()
       });
       refreshHolderBonus(c); // fire-and-forget — see that function's header
       break;
     }
 
     // Turn a player's pending STRM ledger balance into a claim attempt. This is the
-    // ONE place src/chain-adapter.js gets called. Real ERC-20 signing code exists there
-    // now, but it still answers 'not_configured' today because the deployed token
-    // contract is a placeholder (see README.md's Robinhood Chain note) — that gate lifts
-    // automatically once a real STRM contract address is set via STRATUM_TOKEN_ADDRESS.
+    // ONE place src/chain-adapter.js gets called. Real SPL transfer code exists there
+    // now, but it still answers 'not_configured' today because the mint is still the
+    // placeholder sentinel (see README.md's Commerce note) — that gate lifts
+    // automatically once a real STRM mint is set via STRATUM_TOKEN_MINT.
     // The pending balance is NEVER decremented on a 'not_configured' answer: nothing was
     // lost, the claim just sits recorded and queued, exactly as owed as it was before the
     // request. The async settle call is why this handler (alone, today) doesn't finish
@@ -1621,6 +1731,9 @@ function onMessage(c, msg) {
     case 'claim': {
       if (!c.ready || !c.key) return;
       if (!c.tokenWallet) return c.send({ t: 'claimed', ok: false, err: 'link a wallet first' });
+      if (claimsInFlight.has(c.key)) {
+        return c.send({ t: 'claimed', ok: false, err: 'claim already in progress' });
+      }
       const cur = ledgerOf(c.key);
       const amount = cur.pending | 0;
       if (amount <= 0) return c.send({ t: 'claimed', ok: false, err: 'nothing pending' });
@@ -1628,37 +1741,91 @@ function onMessage(c, msg) {
       // adapter.js — same "nothing spent on a refusal" contract as every other economy
       // gate in this file (requisition, rush, shop-buy). The pending balance is untouched;
       // the player just keeps earning until they clear the floor.
-      if (amount < MIN_CLAIM_AMOUNT) {
+      const quote = Payout.quoteClaim(amount, CLAIM_FEE_BPS, MIN_CLAIM_AMOUNT);
+      if (!quote.ok) {
         return c.send({
-          t: 'claimed', ok: false, err: 'below minimum claim (' + MIN_CLAIM_AMOUNT + ')',
-          minClaim: MIN_CLAIM_AMOUNT, tokenPending: amount
+          t: 'claimed', ok: false, err: quote.error,
+          minClaim: MIN_CLAIM_AMOUNT, tokenPending: amount,
+          fee: quote.fee, payout: quote.payout
         });
       }
       const id = crypto.randomUUID();
       const wallet = c.tokenWallet, key = c.key, now = Date.now();
-      qClaimIns.run(id, key, wallet, amount, 'requested', null, null, now, null);
-      ChainAdapter.settleClaim({ key, wallet, amountUnits: amount }, claimEnv()).then((res) => {
+      const fee = quote.fee, payout = quote.payout;
+      qClaimIns.run(id, key, wallet, amount, fee, payout, 'requested', null, null, now, null);
+      claimsInFlight.add(key);
+      // The chain transfer is the net payout. The fee stays in the treasury's
+      // token account because it is never included in the transfer.
+      ChainAdapter.settleClaim({ key, wallet, amountUnits: payout }, claimEnv()).then((res) => {
         if (res.ok) {
-          // Unreachable today only because the deployed token is still the placeholder
-          // contract (see chain-adapter.js's isConfigured() gate) — this path is real,
-          // reviewed code, not a stub, so flipping it on is a config change (a real
-          // STRATUM_TOKEN_ADDRESS + funded treasury), not a rewrite of this handler.
           const latest = ledgerOf(key);
-          const claimed = (latest.claimed | 0) + amount;
+          const claimed = (latest.claimed | 0) + payout;
           const pending = Math.max(0, (latest.pending | 0) - amount);
           ledgerSave(key, pending, claimed, latest.wallet);
+          if (fee > 0) treasuryCredit('STRM', fee);
           qClaimUpdate.run('settled', null, res.txHash || null, Date.now(), id);
-          notifyPlayer(key, { t: 'claimed', ok: true, amount, txHash: res.txHash, tokenPending: pending, tokenClaimed: claimed });
+          notifyPlayer(key, {
+            t: 'claimed', ok: true, amount, fee, payout, txHash: res.txHash,
+            tokenPending: pending, tokenClaimed: claimed
+          });
         } else {
+          // Not configured, or the send failed: pending is unchanged and the fee
+          // is not taken. The row stays as the audit trail.
           qClaimUpdate.run('queued', res.reason || null, null, null, id);
           notifyPlayer(key, {
             t: 'claimed', ok: false, queued: true, reason: res.reason, detail: res.detail,
-            amount, tokenPending: ledgerOf(key).pending
+            amount, fee, payout, tokenPending: ledgerOf(key).pending
           });
         }
       }).catch((e) => {
         qClaimUpdate.run('queued', 'internal_error', null, null, id);
-        notifyPlayer(key, { t: 'claimed', ok: false, queued: true, reason: 'internal_error', amount, tokenPending: ledgerOf(key).pending });
+        notifyPlayer(key, {
+          t: 'claimed', ok: false, queued: true, reason: 'internal_error',
+          amount, fee, payout, tokenPending: ledgerOf(key).pending
+        });
+      }).finally(() => { claimsInFlight.delete(key); });
+      break;
+    }
+
+    // Silver <-> pending STRM. Wallet required. Fee is STRM added to the treasury
+    // vault. This does not broadcast a chain transaction — claim is the only
+    // path that moves STRM onto a wallet.
+    case 'convert': {
+      if (!c.ready || !c.key) return;
+      if (!c.tokenWallet) {
+        return c.send({
+          t: 'converted', ok: false, err: 'link a wallet first',
+          tokenPending: (ledgerOf(c.key).pending | 0), gold: (c.inv && c.inv.gold) | 0
+        });
+      }
+      const dir = msg.dir === 'to-gold' ? 'to-gold' : (msg.dir === 'to-token' ? 'to-token' : '');
+      if (!dir) return c.send({ t: 'converted', ok: false, err: 'bad direction' });
+      const led = ledgerOf(c.key);
+      const gold = (c.inv && c.inv.gold) | 0;
+      const pending = led.pending | 0;
+      const amount = (msg.amount === undefined) ? undefined
+        : (isFin(msg.amount) ? Math.trunc(msg.amount) : -1);
+      const q = Payout.quoteConvert(dir, amount, { gold: gold, pending: pending }, {
+        feeBps: CONVERT_FEE_BPS, goldPerStrm: GOLD_PER_STRM, minStrm: MIN_CONVERT_AMOUNT
+      });
+      if (!q.ok) {
+        return c.send({
+          t: 'converted', ok: false, err: q.error, dir: dir,
+          tokenPending: pending, gold: gold, minConvert: MIN_CONVERT_AMOUNT
+        });
+      }
+      const newPending = dir === 'to-token' ? (pending + q.payout) : (pending - q.gross);
+      const newGold = dir === 'to-token' ? (gold - q.spentGold) : (gold + q.goldOut);
+      ledgerSave(c.key, newPending, led.claimed, led.wallet);
+      c.tokenPending = newPending;
+      c.inv.gold = newGold;
+      if (q.fee > 0) treasuryCredit('STRM', q.fee);
+      qConvertIns.run(crypto.randomUUID(), c.key, c.tokenWallet, dir, q.gross, q.fee, q.payout, Date.now());
+      stateSave(c);
+      c.send({
+        t: 'converted', ok: true, dir: dir, gross: q.gross, fee: q.fee, payout: q.payout,
+        spentGold: q.spentGold, goldOut: q.goldOut,
+        tokenPending: newPending, gold: newGold, inv: c.inv
       });
       break;
     }
@@ -1872,7 +2039,7 @@ function onMessage(c, msg) {
       if (!knownItem(priceItem)) return c.send({ t: 'shop-listed', err: 'unknown price item' });
 
       const escrowed = Shops.escrow(c.inv, item, qty);
-      if (!escrowed) return c.send({ t: 'shop-listed', err: 'not enough ' + item });
+      if (!escrowed) return c.send({ t: 'shop-listed', err: 'not enough ' + dispKey(item) });
       c.inv = escrowed;                        // the goods leave live inventory THE MOMENT the listing exists
       const id = crypto.randomUUID();
       const now = Date.now();
@@ -1956,7 +2123,7 @@ function onMessage(c, msg) {
       if (v.wantItem && !knownItem2(v.wantItem)) return c.send({ t: 'trade-offered', err: 'unknown want item' });
 
       const escrowed = Trade.escrowGive(c.inv, giveItem, giveQty);
-      if (!escrowed) return c.send({ t: 'trade-offered', err: 'not enough ' + giveItem });
+      if (!escrowed) return c.send({ t: 'trade-offered', err: 'not enough ' + dispKey(giveItem) });
       c.inv = escrowed;                        // A's give-side leaves live inventory THE MOMENT the offer exists
 
       const id = crypto.randomUUID();
@@ -2429,8 +2596,9 @@ function shutdown(sig) {
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-server.listen(PORT, () => {
-  console.log(`[world] STRATUM listening on http://127.0.0.1:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`[world] STRATUM listening on http://${HOST === '0.0.0.0' ? '<lan-ip>' : HOST}:${PORT} (all interfaces)`);
+  console.log(`[world] local: http://127.0.0.1:${PORT}`);
   console.log(`[world] ${T.MAPS.length} maps, each ${W}x${H} = ${(W * H).toLocaleString()} tiles`);
   for (const m of T.MAPS) {
     const sp = T.spawnPoint(m.id);
@@ -2438,12 +2606,13 @@ server.listen(PORT, () => {
   }
   console.log(`[volatile] ${JSON.stringify(world.stats())}`);
   const ready = ChainAdapter.describe(claimEnv());
-  console.log(`[commerce] ${COMMERCE.symbol} @ ${COMMERCE.tokenAddress}` +
-    (COMMERCE.placeholder ? ' (placeholder CA)' : ''));
+  console.log(`[commerce] ${COMMERCE.symbol} mint ${COMMERCE.tokenMint}` +
+    (COMMERCE.placeholder ? ' (placeholder mint)' : '') +
+    ` on ${COMMERCE.chainName} ${COMMERCE.cluster}`);
   console.log(`[commerce] treasury ${COMMERCE.treasuryAddress}`);
-  console.log(`[commerce] fees parcel=${PARCEL_FEE_BPS}bps shop=${SHOP_FEE_BPS}bps`);
+  console.log(`[commerce] fees parcel=${PARCEL_FEE_BPS}bps shop=${SHOP_FEE_BPS}bps claim=${CLAIM_FEE_BPS}bps convert=${CONVERT_FEE_BPS}bps`);
   console.log(`[commerce] settlement live=${ChainAdapter.isConfigured(claimEnv())}` +
-    ` rpc=${ready.rpcConfigured} token=${ready.tokenConfigured}` +
+    ` rpc=${ready.rpcConfigured} mint=${ready.mintConfigured}` +
     ` treasury=${ready.treasuryConfigured} signer=${ready.signerPresent}` +
     ` implemented=${ready.settlementImplemented}`);
 });

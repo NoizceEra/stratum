@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STRATUM — a persistent shared world</title>
+<style>
+  :root {
+    --bg: #0b0e1a; --panel: #12172a; --rule: #2a3358;
+    --ink: #dfe6ff; --dim: #8b93b8; --accent: #8fe4ff; --gold: #ffd479;
+    --violet: #b49bff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: radial-gradient(1200px 700px at 50% -10%, #1a2140 0%, var(--bg) 60%) fixed, var(--bg);
+    color: var(--ink); font-family: "Segoe UI", system-ui, sans-serif; line-height: 1.6;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 48px 20px 80px; }
+  .kicker { letter-spacing: .35em; font-size: 11px; color: var(--dim); }
+  h1 {
+    font-size: clamp(48px, 9vw, 96px); margin: 8px 0 0; letter-spacing: .18em;
+    background: linear-gradient(180deg, #fff, var(--accent) 70%, var(--violet));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .tag { font-size: 18px; color: var(--dim); margin: 4px 0 28px; }
+  .play {
+    display: inline-block; margin: 6px 0 34px; padding: 16px 54px;
+    font-size: 18px; letter-spacing: .25em; text-decoration: none; color: #06121a;
+    background: linear-gradient(180deg, #c8f3ff, var(--accent)); border-radius: 6px; font-weight: 700;
+  }
+  .play:hover { filter: brightness(1.1); }
+  .ghost {
+    display: inline-block; margin: 6px 0 34px 12px; padding: 15px 30px;
+    font-size: 14px; letter-spacing: .2em; text-decoration: none; color: var(--ink);
+    border: 1px solid var(--rule); border-radius: 6px;
+  }
+  .panel {
+    background: rgba(18, 23, 42, .85); border: 1px solid var(--rule); border-radius: 8px;
+    padding: 20px 22px; margin: 18px 0;
+  }
+  .panel h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: .3em; color: var(--accent); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .stat b { display: block; font-size: 26px; color: var(--gold); }
+  .stat span { font-size: 11px; letter-spacing: .18em; color: var(--dim); }
+  table.layers { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.layers td, table.layers th {
+    border: 1px solid var(--rule); padding: 10px 12px; text-align: left; vertical-align: top;
+  }
+  table.layers th { letter-spacing: .2em; font-size: 11px; color: var(--dim); }
+  .maps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .map { border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; font-size: 13px; }
+  .map b { display: block; letter-spacing: .15em; font-size: 12px; color: var(--accent); margin-bottom: 4px; }
+  .map span { color: var(--dim); }
+  kbd {
+    background: #1d2440; border: 1px solid var(--rule); border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 7px; font-family: Consolas, monospace; font-size: 12px;
+  }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; font-size: 14px; }
+  footer { margin-top: 40px; color: var(--dim); font-size: 12px; letter-spacing: .08em; }
+  footer a { color: var(--accent); }
+  #live-err { color: var(--dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">EARTH'S SILVER IS GONE</div>
+  <h1>STRATUM</h1>
+  <p class="tag">One finite world. Everyone builds in it. Nothing anyone places is ever lost.</p>
+  <a class="play" href="/play">▶&nbsp; PLAY</a><a class="ghost" href="/guide.html">COLONIST'S GUIDE</a>
+
+  <div class="panel">
+    <h2>● LIVE WORLD</h2>
+    <div class="stats" id="live" hidden>
+      <div class="stat"><b id="s-online">–</b><span>ONLINE NOW</span></div>
+      <div class="stat"><b id="s-claimed">–</b><span>WORLD CLAIMED</span></div>
+      <div class="stat"><b id="s-quota">–</b><span>SILVER SHIPPED</span></div>
+      <div class="stat"><b id="s-mile">–</b><span>COLONY TIER</span></div>
+    </div>
+    <div id="live-err">Contacting the world…</div>
+  </div>
+
+  <div class="panel">
+    <h2>THE IDEA — TWO LAYERS, TWO RULES</h2>
+    <table class="layers">
+      <tr><th>LAYER</th><th>WHAT IT IS</th><th>RULE</th></tr>
+      <tr><td><b>Persistent</b></td><td>Land you claim and build on</td><td><b>Never resets.</b> Yours forever — nobody can overwrite it, ever.</td></tr>
+      <tr><td><b>Volatile</b></td><td>Ore, timber, crystal, beasts</td><td><b>Regrows on timers.</b> The planet provides; it is not a quarry you empty.</td></tr>
+    </table>
+    <p style="color:var(--dim);font-size:14px">No moderators, no admins, no wipes. Ownership is absolute and enforced by the server. Land is finite — the HUD shows exactly how much of the world is claimed.</p>
+  </div>
+
+  <div class="panel">
+    <h2>THREE SECTORS</h2>
+    <div class="maps">
+      <div class="map"><b>0 · THE FIRST ACRE</b><span>Landing Zone Alpha. Verdant and open — every colonist's first foothold.</span></div>
+      <div class="map"><b>1 · ASHEN HOLLOW</b><span>A volcanic mining district. Heavy ore — bring your own timber.</span></div>
+      <div class="map"><b>2 · THE SUNKEN SHELF</b><span>A flooded coastal claim. Solid ground is scarce and contested.</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>STRM — REAL TOKEN, EARNED BY PLAYING</h2>
+    <p style="font-size:14px;margin:0 0 8px">Mining, crafting, and fighting pay silver plus pending <b>STRM</b>, the SPL token on Solana. Ship it to Earth, spend it to rush your kilns — or claim it on-chain to your own wallet once the mint is live.</p>
+    <p style="color:var(--dim);font-size:13px;margin:0">No purchase necessary. Silver and STRM are earned by playing only.</p>
+  </div>
+
+  <div class="panel">
+    <h2>CONTROLS</h2>
+    <div class="cols">
+      <div><kbd>WASD</kbd> / arrows — walk<br><kbd>Left click</kbd> — strike · harvest · build<br><kbd>Right click</kbd> — release land</div>
+      <div><kbd>1</kbd>–<kbd>0</kbd> / wheel — material<br><kbd>M</kbd> map · <kbd>T</kbd> travel · <kbd>+</kbd>/<kbd>−</kbd> zoom<br>Fully playable on touch screens</div>
+    </div>
+  </div>
+
+  <footer>
+    STRATUM is one shared, persistent world — it never resets and never expands.
+    Play free at <a href="/play">/play</a> · <a href="/guide.html">guide</a> ·
+    <span id="foot-ver"></span>
+  </footer>
+</div>
+<script>
+(function () {
+  function fmt(n) { return Number(n || 0).toLocaleString('en-US'); }
+  async function tick() {
+    try {
+      var r = await fetch('/api/stats', { cache: 'no-store' });
+      if (!r.ok) throw 0;
+      var s = await r.json();
+      var pct = (s.claimed && s.world) ? (100 * s.claimed / (s.world.tiles * 3)).toFixed(4) + '%' : '0%';
+      document.getElementById('s-online').textContent = fmt(s.online);
+      document.getElementById('s-claimed').textContent = pct;
+      document.getElementById('s-quota').textContent = fmt(s.colonyQuota);
+      document.getElementById('s-mile').textContent =
+        (s.colonyMilestone && s.colonyMilestone.name || 'OUTPOST').toUpperCase();
+      document.getElementById('live').hidden = false;
+      document.getElementById('live-err').hidden = true;
+    } catch (e) {
+      var el = document.getElementById('live-err');
+      el.hidden = false;
+      el.textContent = 'The world is asleep — it wakes the moment the server runs.';
+    }
+  }
+  tick();
+  setInterval(tick, 10000);
+})();
+</script>
+</body>
+</html>

@@ -1,47 +1,18 @@
 /**
- * One-shot treasury wallet generator. Uses ethers via npx resolution if needed.
- * Prints JSON { address, privateKey } to stdout. Never writes to disk itself.
+ * One-shot treasury wallet generator (Solana).
+ * Prints JSON { address, secretKeyBase58, secretKeyArray } to stdout.
+ * Never writes to disk itself — paste the secret into the server's local .env
+ * as STRATUM_CLAIM_SIGNER_KEY (gitignored), never into chat/logs/notes.
+ *
+ *   node scripts/gen-treasury-wallet.mjs
  */
-import { createRequire } from 'node:module';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
+import { Keypair } from '@solana/web3.js';
+import bs58 from 'bs58';
 
-const require = createRequire(import.meta.url);
-
-function viaEthers() {
-  try {
-    const { Wallet } = require('ethers');
-    const w = Wallet.createRandom();
-    return { address: w.address, privateKey: w.privateKey, method: 'ethers' };
-  } catch {
-    return null;
-  }
-}
-
-function viaNpx() {
-  const script = [
-    "const {Wallet}=require('ethers');",
-    'const w=Wallet.createRandom();',
-    "process.stdout.write(JSON.stringify({address:w.address,privateKey:w.privateKey,method:'npx-ethers'}));"
-  ].join('');
-  const r = spawnSync('npx', ['--yes', 'ethers@6.13.5', '-e', script], {
-    encoding: 'utf8',
-    shell: true,
-    cwd: path.dirname(fileURLToPath(import.meta.url))
-  });
-  if (r.status !== 0) {
-    process.stderr.write(r.stderr || r.stdout || 'npx ethers failed\n');
-    process.exit(1);
-  }
-  const line = (r.stdout || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-    .reverse().find((l) => l.startsWith('{'));
-  if (!line) {
-    process.stderr.write('no JSON from npx ethers\n' + (r.stdout || ''));
-    process.exit(1);
-  }
-  return JSON.parse(line);
-}
-
-const out = viaEthers() || viaNpx();
-process.stdout.write(JSON.stringify(out) + '\n');
+const kp = Keypair.generate();
+process.stdout.write(JSON.stringify({
+  address: kp.publicKey.toBase58(),
+  secretKeyBase58: bs58.encode(Buffer.from(kp.secretKey)),
+  secretKeyArray: JSON.stringify(Array.from(kp.secretKey)),
+  method: 'solana-keypair'
+}) + '\n');

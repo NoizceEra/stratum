@@ -171,7 +171,7 @@ class Client {
   const mustLive = () => { if (srv.exited !== null) { srvDead = true; ok(false, 'test server died mid-suite', srv.exited); } return !srvDead; };
 
   const KEY_A = 'floor-key-AAAA-0001';
-  const WALLET_A = '0x' + 'e'.repeat(40);
+  const WALLET_A = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
   // Establish the player row for real (a genuine hello), then seed a pending STRM balance
   // just under the real default floor.
