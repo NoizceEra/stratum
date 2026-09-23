@@ -382,6 +382,10 @@
   // S.map is known to be trustworthy (see resolveLandmarks()). Nothing here touches
   // collision, the tile grid, or any server state — purely a client-side backdrop.
   var LANDMARK_SHIP = null, LANDMARK_DOME = null;
+  // Landing-camp art + anchor. Same client-only-decor contract as the landmarks:
+  // baked once, never collidable, never server state. CAMP is null until resolved,
+  // false when there is no camp (wrong map or no Settlers module).
+  var CAMP_FIRE = null, CAMP_TENT = null, CAMP = null;
   var LANDMARKS = null; // null = not yet resolved; [] or [ship, dome] after resolveLandmarks()
   var MOTES = null;     // lazily-built array of drifting screen-space glow particles
 
@@ -592,6 +596,48 @@
       g.fillStyle = 'rgba(160,230,150,.10)';
       g.beginPath(); g.ellipse(cx, cy - r * 0.15, r * 0.55, r * 0.5, 0, 0, TAU); g.fill();
     });
+
+    // Landing-camp fire: stone ring, crossed logs, a still flame. The living flicker
+    // is layered at render time by drawLandmark() (type 'fire'), same split as the
+    // ship's beacon — baked shape, animated light.
+    CAMP_FIRE = spr(128, function (g) {
+      var cx = 64, cy = 74;
+      g.fillStyle = 'rgba(10,10,8,.4)';
+      g.beginPath(); g.ellipse(cx, cy + 22, 44, 12, 0, 0, TAU); g.fill();
+      g.fillStyle = '#5a564c';
+      for (var i = 0; i < 7; i++) {
+        var a = (i / 7) * TAU;
+        g.beginPath(); g.ellipse(cx + Math.cos(a) * 34, cy + 14 + Math.sin(a) * 10, 8, 6, a, 0, TAU); g.fill();
+      }
+      g.strokeStyle = '#4a3320'; g.lineWidth = 7; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(cx - 22, cy + 12); g.lineTo(cx + 22, cy + 4); g.stroke();
+      g.beginPath(); g.moveTo(cx - 20, cy + 4); g.lineTo(cx + 20, cy + 14); g.stroke();
+      g.fillStyle = '#e07830';
+      g.beginPath(); g.moveTo(cx, cy - 34); g.quadraticCurveTo(cx + 16, cy - 8, cx + 6, cy + 10);
+      g.quadraticCurveTo(cx, cy + 4, cx - 6, cy + 10);
+      g.quadraticCurveTo(cx - 16, cy - 8, cx, cy - 34); g.fill();
+      g.fillStyle = '#f6c453';
+      g.beginPath(); g.moveTo(cx, cy - 16); g.quadraticCurveTo(cx + 8, cy - 2, cx + 3, cy + 8);
+      g.quadraticCurveTo(cx, cy + 4, cx - 3, cy + 8);
+      g.quadraticCurveTo(cx - 8, cy - 2, cx, cy - 16); g.fill();
+    });
+
+    // Landing-camp tent: an A-frame canvas shelter, warm lamplight inside the flap.
+    CAMP_TENT = spr(128, function (g) {
+      var cx = 64, cy = 78;
+      g.fillStyle = 'rgba(10,10,8,.4)';
+      g.beginPath(); g.ellipse(cx, cy + 30, 46, 10, 0, 0, TAU); g.fill();
+      g.fillStyle = '#6b5f45';
+      g.beginPath(); g.moveTo(cx - 40, cy + 28); g.lineTo(cx, cy - 38); g.lineTo(cx + 40, cy + 28); g.closePath(); g.fill();
+      g.fillStyle = '#7d7050';
+      g.beginPath(); g.moveTo(cx, cy - 38); g.lineTo(cx + 40, cy + 28); g.lineTo(cx + 8, cy + 28); g.closePath(); g.fill();
+      g.strokeStyle = 'rgba(0,0,0,.4)'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(cx - 40, cy + 28); g.lineTo(cx, cy - 38); g.lineTo(cx + 40, cy + 28); g.stroke();
+      g.fillStyle = 'rgba(255,190,110,.55)';
+      g.beginPath(); g.moveTo(cx - 10, cy + 28); g.lineTo(cx, cy - 2); g.lineTo(cx + 10, cy + 28); g.closePath(); g.fill();
+      g.strokeStyle = '#4a3320'; g.lineWidth = 3;
+      g.beginPath(); g.moveTo(cx, cy - 38); g.lineTo(cx, cy - 48); g.stroke();
+    });
   }
 
   /** Lazily resolves the two landmarks' fixed world tile-coordinates on map 0, choosing
@@ -619,6 +665,55 @@
       Object.assign({ type: 'ship', spr: LANDMARK_SHIP, tiles: 6.5 }, firstDry(shipCandidates)),
       Object.assign({ type: 'dome', spr: LANDMARK_DOME, tiles: 8 }, firstDry(domeCandidates))
     ];
+  }
+
+  /** Landing-camp anchor: first dry candidate near map-0 spawn, cached. Settlers and
+   *  scenery hang offsets off this tile (see src/settlers.js CAMP_SPOTS). false when
+   *  there is no camp to draw — wrong map, or the Settlers module failed to load. */
+  function resolveCamp() {
+    if (CAMP !== null) return CAMP || null;
+    if (S.map !== 0 || !window.Settlers) { CAMP = false; return null; }
+    var sp = T.spawnPoint(0);
+    var cands = [[9, -7], [13, -3], [-11, 7], [11, 9], [-7, -11]];
+    for (var i = 0; i < cands.length; i++) {
+      var m = tileAt(sp.x + cands[i][0], sp.y + cands[i][1]);
+      if (m !== VOID && m !== WATER) { CAMP = { x: sp.x + cands[i][0], y: sp.y + cands[i][1] }; return CAMP; }
+    }
+    CAMP = { x: sp.x + cands[0][0], y: sp.y + cands[0][1] }; // fall back — still just decor
+    return CAMP;
+  }
+
+  /** World tile of a settler def, or null when there is no camp. */
+  function settlerPos(def) {
+    var c = resolveCamp();
+    if (!c || !def) return null;
+    return { x: c.x + def.dx, y: c.y + def.dy };
+  }
+
+  /** Settler def whose tile is within a generous tap radius of (x, y), or null.
+   *  Generous on purpose: on a phone, hitting one exact tile is the whole battle. */
+  function settlerNear(x, y) {
+    if (S.map !== 0 || !window.Settlers) return null;
+    var best = null, bd = 2.0;
+    for (var i = 0; i < window.Settlers.SETTLERS.length; i++) {
+      var p = settlerPos(window.Settlers.SETTLERS[i]);
+      if (!p) continue;
+      var d = Math.hypot(p.x + 0.5 - (x + 0.5), p.y + 0.5 - (y + 0.5));
+      if (d < bd) { bd = d; best = window.Settlers.SETTLERS[i]; }
+    }
+    return best;
+  }
+
+  /** Does this settler have something new for the player right now (the "!" bubble)?
+   *  Sable always (she mirrors the active quest); Dray on craft/upgrade steps; Ilo
+   *  when a claim-sized pending balance is waiting. Reads lastQuestId, which
+   *  refreshQuest() keeps current — no extra quest evaluation per frame. */
+  function settlerNews(id) {
+    if (document.body.classList.contains('quests-done')) return id === 'ilo' && ((S.tokenPending | 0) >= 50);
+    if (id === 'sable') return true;
+    if (id === 'dray') return lastQuestId === 'craft' || lastQuestId === 'upgrade';
+    if (id === 'ilo') return (S.tokenPending | 0) >= 50;
+    return false;
   }
 
   /** Slow-drifting glowing atmosphere motes — pure screen-space, wrap around the
@@ -667,6 +762,34 @@
       ctx.globalAlpha = shimmer;
       ctx.drawImage(GLOW_CRYS, ex - gs2 / 2, ey - sz * 0.5 - gs2 / 2, gs2, gs2);
       ctx.globalAlpha = 1;
+    } else if (rr.type === 'fire') {
+      // living flicker over the baked flame — the camp's heartbeat
+      var fl = 0.5 + 0.5 * Math.sin(now * 0.011 + ex * 0.05);
+      var fl2 = 0.5 + 0.5 * Math.sin(now * 0.023 + 1.7);
+      var fg = s * (1.6 + fl * 0.5);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.30 + fl2 * 0.25;
+      ctx.drawImage(GLOW_LAMP, ex - fg / 2, ey - s * 0.9 - fg / 2, fg, fg);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ---------- settlers ------------------------------------------------------
+  // Colonists, drawn with the same avatar rig as players (idle breathing, never
+  // walking) plus a name tag and a gold "!" when they have something new for you.
+  // Tap/click within a generous radius talks — see contextAction, not the tile grid.
+  function drawSettler(x, y, s, rr, now) {
+    var def = rr.def;
+    drawAvatar(x, y, s, now, def.body, def.trim, 0, 1, 0, 0, -1, 0, null, null, null);
+    ctx.font = '10px ui-monospace,monospace'; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText(def.name, x + 1, y - s * 0.95 + 1);
+    ctx.fillStyle = '#e8e6df'; ctx.fillText(def.name, x, y - s * 0.95);
+    if (settlerNews(def.id)) {
+      var bob = Math.sin(now * 0.005) * s * 0.06;
+      ctx.font = 'bold ' + Math.max(10, s * 0.5) + 'px ui-monospace,monospace';
+      ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText('!', x + 1, y - s * 1.35 + bob + 1);
+      ctx.fillStyle = '#ffd479'; ctx.fillText('!', x, y - s * 1.35 + bob);
     }
   }
 
@@ -1527,6 +1650,18 @@
 
   /** One button, context-sensitive: strike a beast, else harvest, else build. */
   function contextAction(x, y) {
+    // Settlers first: a tap near a colonist talks, never harvests or strikes.
+    // Talking is UI, not world action — generous radius, no energy, no reach check
+    // beyond "walk over" (10 tiles); the camp is the point, not the precision.
+    var stl = settlerNear(x, y);
+    if (stl) {
+      var p = settlerPos(stl);
+      var tdx = (x + 0.5) - (p.x + 0.5), tdy = (y + 0.5) - (p.y + 0.5);
+      if (tdx * tdx + tdy * tdy > 100) return toast('WALK OVER TO TALK');
+      faceTowards(tdx, tdy);
+      openDialogue(stl.id);
+      return;
+    }
     // Sanctuary maps have no click-to-attack — proximity alone resolves ambient combat
     // server-side, so a creature there is not a valid click target at all; a click over
     // one falls through to whatever's under it (a node, a drop, or bare ground to build).
@@ -1631,7 +1766,7 @@
         if (k === 'k') { toggleWardrobe(); sfx('ui'); e.preventDefault(); return; }
         if (k === 'p') { toggleParcels(); sfx('ui'); e.preventDefault(); return; }
         if (k === 'g') { toggleEmoteWheel(); e.preventDefault(); return; }
-        if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); if (S.wardrobeOpen) closeWardrobe(); if (S.parcelsOpen) closeParcels(); if (emoteWheelOpen) closeEmoteWheel(); if (S.menuSheetOpen) closeMenuSheet(); return; }
+        if (e.key === 'Escape') { if (S.mapOpen) toggleMap(); if (S.travelOpen) closeTravel(); if (S.craftOpen) closeCraft(); if (S.idleOpen) closeIdle(); if (S.lbOpen) closeLeaderboard(); if (S.wardrobeOpen) closeWardrobe(); if (S.parcelsOpen) closeParcels(); if (emoteWheelOpen) closeEmoteWheel(); if (S.menuSheetOpen) closeMenuSheet(); if (S.npcOpen) closeDialogue(); return; }
     if (e.key === '+' || e.key === '=') { S.zoom = Math.min(3, S.zoom * 2); e.preventDefault(); return; }
     if (e.key === '-' || e.key === '_') { S.zoom = Math.max(0.5, S.zoom / 2); e.preventDefault(); return; }
     var n = parseInt(e.key, 10);
@@ -1649,7 +1784,7 @@
   cv.addEventListener('mousedown', function (e) {
     e.preventDefault();
     unlockAudio();
-    if (S.mapOpen || S.travelOpen || S.craftOpen || S.lbOpen || S.wardrobeOpen) return;
+    if (S.mapOpen || S.travelOpen || S.craftOpen || S.lbOpen || S.wardrobeOpen || S.npcOpen) return;
     // Act on where this click is, not on where the cursor last was: a click can arrive
     // without a preceding move (programmatic clicks, some touch/pen paths).
     var r = cv.getBoundingClientRect();
@@ -1720,7 +1855,7 @@
 
   cv.addEventListener('touchstart', function (e) {
     unlockAudio();
-    if (S.mapOpen || S.travelOpen || S.craftOpen || S.lbOpen || S.wardrobeOpen) return;                 // overlays handle their own taps
+    if (S.mapOpen || S.travelOpen || S.craftOpen || S.lbOpen || S.wardrobeOpen || S.npcOpen) return;                 // overlays handle their own taps
     e.preventDefault();
     if (tapId !== null) return;
     var t = e.changedTouches[0];
@@ -2071,7 +2206,8 @@
     }
     var active = window.Quests.activeQuest(stats);
     if (!active) return;
-    window.StratumHud.setQuest(active.title.toUpperCase(), active.hint);
+    var prog = window.Quests.progress(stats);
+    window.StratumHud.setQuest(active.title.toUpperCase() + ' · ' + prog.done + '/' + prog.total, active.hint);
     if (announce && active.id !== lastQuestId && lastQuestId) {
       toast('NEXT: ' + active.title.toUpperCase(), true);
     }
@@ -2106,6 +2242,58 @@
     toastEl.className = 'on' + (good ? ' good' : '');
     clearTimeout(toastTo);
     toastTo = setTimeout(function () { toastEl.className = ''; }, 1900);
+  }
+
+  // ---------- settler dialogue ----------------------------------------------
+  // The tap alternative to hotkeys: talk, read one quest-aware line, press a button
+  // that opens the right panel. Same full-screen-overlay pattern as craft/travel —
+  // tap-outside and ESC close, opening any panel closes this first.
+  function dialogueCtx() {
+    var stats = questStats();
+    var active = (window.Quests && window.Quests.activeQuest(stats)) || null;
+    var prog = (window.Quests && window.Quests.progress(stats)) || { done: 0, total: 7 };
+    return {
+      activeQuestId: active ? active.id : null,
+      done: prog.done | 0, total: prog.total | 0,
+      tokenPending: S.tokenPending | 0
+    };
+  }
+  function openDialogue(npcId) {
+    if (!window.Settlers) return;
+    var t = window.Settlers.talk(npcId, dialogueCtx());
+    if (!t) return;
+    document.getElementById('npc-name').textContent = t.name;
+    document.getElementById('npc-role').textContent = t.role;
+    document.getElementById('npc-line').textContent = t.line;
+    var box = document.getElementById('npc-actions');
+    box.innerHTML = '';
+    t.actions.forEach(function (a) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'hud-btn'; b.textContent = a.label;
+      b.addEventListener('click', function () { dialogueAction(a.do); });
+      box.appendChild(b);
+    });
+    document.getElementById('npc').classList.add('on');
+    S.npcOpen = true;
+    sfx('ui');
+    if (window.StratumHud) window.StratumHud.noteAction();
+  }
+  function closeDialogue() {
+    var el = document.getElementById('npc');
+    if (el) el.classList.remove('on');
+    S.npcOpen = false;
+  }
+  function dialogueAction(do_) {
+    if (!window.Settlers || !window.Settlers.isAction(do_)) { closeDialogue(); return; }
+    if (do_ === 'close') { closeDialogue(); sfx('ui'); return; }
+    closeDialogue();
+    if (do_ === 'craft') toggleCraft();
+    else if (do_ === 'idle') toggleIdle();
+    else if (do_ === 'travel') toggleTravel();
+    else if (do_ === 'map') toggleMap();
+    else if (do_ === 'wallet') onWalletClick();
+    else if (do_ === 'guide') window.open('/guide.html', '_blank', 'noopener');
+    sfx('ui');
   }
 
   function toggleTravel() {
@@ -2699,6 +2887,31 @@
     if (st.x < Z_X0 || st.x > Z_X1 || st.y < Z_Y0 || st.y > Z_Y1) return;
     znew(st.y + 0.6, 7, st);
   }
+  /** The landing camp: fire + tents + crates as kk=6 decor (the same y-sorted pass
+   *  as the ship/dome), then the three settlers as kk=8. Nothing here collides or
+   *  harvests — talk via contextAction, not the tile grid. */
+  function takeCamp() {
+    var c = resolveCamp();
+    if (!c) return;
+    function push(type, spr, tiles, dx, dy, margin) {
+      var x = c.x + dx, y = c.y + dy;
+      if (x < Z_X0 - margin || x > Z_X1 + margin || y < Z_Y0 - margin || y > Z_Y1 + margin) return;
+      znew(y + tiles * 0.3, 6, { type: type, spr: spr, tiles: tiles, x: x, y: y, rx: x, ry: y });
+    }
+    var spots = (window.Settlers && window.Settlers.CAMP_SPOTS) || { tents: [], crates: [] };
+    push('fire', CAMP_FIRE, 2.2, 0, 0, 3);
+    for (var i = 0; i < spots.tents.length; i++) push('tent', CAMP_TENT, 2.6, spots.tents[i][0], spots.tents[i][1], 3);
+  }
+  function takeSettlers() {
+    if (S.map !== 0 || !window.Settlers) return;
+    for (var i = 0; i < window.Settlers.SETTLERS.length; i++) {
+      var def = window.Settlers.SETTLERS[i];
+      var p = settlerPos(def);
+      if (!p) continue;
+      if (p.x < Z_X0 || p.x > Z_X1 || p.y < Z_Y0 || p.y > Z_Y1) continue;
+      znew(p.y + 0.5, 8, { def: def, x: p.x, y: p.y });
+    }
+  }
   /** The two static space-colony landmarks (see resolveLandmarks()) — decorative only,
    *  y-sorted into the same pass as every other entity so the player can walk in front
    *  of or behind them. A generous view-bounds margin (their footprint is several tiles
@@ -2841,9 +3054,11 @@
     // ---- entities, y-sorted so what is in front overlaps what is behind ----
     zi = 0; zlist.length = 0; nodeN = 0;
     takeLandmarks();
+    takeCamp();
     S.nodes.forEach(takeNode);
     S.drops.forEach(takeDrop);
     S.structures.forEach(takeStructure);
+    takeSettlers();
     S.mons.forEach(takeMon);
     S.remotes.forEach(takeRemote);
     SELF.x = S.x; SELF.y = S.y;
@@ -2854,13 +3069,14 @@
       var e = zlist[z], rr = e.r, kk = e.k;
       var ex, ey;
       if (kk === 4) { ex = ox + S.x * s; ey = oy + S.y * s; }
-      // Nodes, drops and walls are stationary (no walk/chase interpolation like
-      // mons/remotes carry, which is what .rx/.ry are for), so they anchor straight
-      // off tile coords. (Nodes/drops used to ride the .rx/.ry branch with fields
-      // they never have — NaN screen coords, silently never drawn.)
-      else if (kk === 7 || kk === 1 || kk === 5) { ex = ox + rr.x * s; ey = oy + rr.y * s; }
+      // Nodes, drops, walls and settlers are stationary (no walk/chase interpolation
+      // like mons/remotes carry, which is what .rx/.ry are for), so they anchor
+      // straight off tile coords. (Nodes/drops used to ride the .rx/.ry branch with
+      // fields they never have — NaN screen coords, silently never drawn.)
+      else if (kk === 7 || kk === 1 || kk === 5 || kk === 8) { ex = ox + rr.x * s; ey = oy + rr.y * s; }
       else { ex = ox + rr.rx * s; ey = oy + rr.ry * s; }
       if (kk === 1) drawNodeSprite(ex, ey, s, rr, now);
+      else if (kk === 8) drawSettler(ex, ey, s, rr, now);
       else if (kk === 5) drawDropSprite(ex, ey, s, now);
       else if (kk === 2) drawMonster(ex, ey, s, rr, now);
       else if (kk === 6) drawLandmark(ex, ey, s, rr, now);
@@ -3512,6 +3728,10 @@
     nameIn.value = S.name || '';
     document.getElementById('enter-btn').addEventListener('click', enter);
     nameIn.addEventListener('keydown', function (e) { if (e.key === 'Enter') enter(); });
+    // dialogue backdrop: tapping the dimmed area (not the card) closes, same as
+    // every other overlay's tap-outside contract.
+    var npcEl = document.getElementById('npc');
+    if (npcEl) npcEl.addEventListener('click', function (e) { if (e.target === npcEl) closeDialogue(); });
     var wbtn = document.getElementById('wallet-btn');
     if (wbtn) wbtn.addEventListener('click', function () { onWalletClick(); });
     var claimBtn = document.getElementById('claim-btn');

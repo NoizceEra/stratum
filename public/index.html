@@ -113,6 +113,19 @@
   .hud-btn.dim{color:var(--dim);border-color:rgba(255,255,255,.08);cursor:default}
   .hud-btn.dim:hover{border-color:rgba(255,255,255,.08);background:transparent}
   .hud-row{margin-top:6px}
+  /* settler dialogue — same full-screen pattern as #craft/#nodes/#map: fixed,
+     inset 0, inherits safe-area behaviour. The card itself is the tap target
+     column; every action clears the ~44px guideline, touch or not. */
+  #npc{position:fixed;inset:0;z-index:16;background:rgba(5,6,9,.72);display:none;
+    align-items:flex-end;justify-content:center;padding:0 12px calc(18px + env(safe-area-inset-bottom))}
+  #npc.on{display:flex}
+  #npc .box{width:min(560px,94vw);max-height:70vh;overflow-y:auto;background:var(--panel);
+    border:1px solid var(--rule);padding:16px 18px;backdrop-filter:blur(7px)}
+  #npc-name{font-size:15px;letter-spacing:.3em;color:var(--gold)}
+  #npc-role{font-size:10px;letter-spacing:.2em;color:var(--dim);margin-top:2px}
+  #npc-line{font-size:13px;line-height:1.75;margin:12px 0 4px;white-space:pre-wrap}
+  #npc-actions{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+  #npc-actions .hud-btn{text-align:left;padding:11px 12px;min-height:44px}
   /* craft overlay — same full-screen pattern as #nodes and #map: fixed, inset 0,
      inherits safe-area behaviour by covering the viewport instead of dodging it */
   #craft{position:fixed;inset:0;z-index:15;background:rgba(5,6,9,.95);display:none;
@@ -329,7 +342,19 @@
     <div class="disc touchhint" style="margin-top:4px">TAP OUTSIDE TO CLOSE</div>
   </div>
 
-  <div id="parcels">
+  <div id="npc">
+  <div class="box">
+    <div class="disc">LANDING CAMP</div>
+    <div id="npc-name">SABLE</div>
+    <div id="npc-role">Landing Guide</div>
+    <div id="npc-line">…</div>
+    <div id="npc-actions"></div>
+    <div class="disc kbdhint" style="margin-top:10px">[ESC] CLOSE</div>
+    <div class="disc touchhint" style="margin-top:10px">TAP OUTSIDE TO CLOSE</div>
+  </div>
+</div>
+
+<div id="parcels">
     <div class="disc">PARCELS — <button id="parcels-tab-mine" class="ptab active">MY DEEDS</button> <button id="parcels-tab-browse" class="ptab">BROWSE</button></div>
     <div id="parcels-content"></div>
     <div class="disc kbdhint" style="margin-top:4px">[P] CLOSE</div>
@@ -483,6 +508,7 @@
 <script src="terrain.js"></script>
 <script src="audio.js"></script>
 <script src="quests.js"></script>
+<script src="settlers.js"></script>
 <script src="wallet.js"></script>
 <script src="game.js"></script>
 </body>
