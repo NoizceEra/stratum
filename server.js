@@ -1153,7 +1153,7 @@ function ipEarnerCount(ip, key, now) {
 // pending. Both fully reversible and decaying: pending is re-read from the DB
 // each reward, so the signal collapses as soon as earning pauses.
 const ipPendingLogAt = new Map(); // ip -> last log timestamp (rate-limit amplifier logs)
-function medianPendingOfActive() {
+function computeMedianPendingOfActive() {
   var keys = new Set();
   for (const byKey of recentEarnersByIp.values()) for (const k of byKey.keys()) keys.add(k);
   for (const cl of clients.values()) if (cl.ready && cl.key) keys.add(cl.key);
@@ -1173,9 +1173,32 @@ function ipPendingTotal(ip) {
   }
   return sum;
 }
-function worldTotalPending() {
+function computeWorldTotalPending() {
   try { var row = qLedgerTotal.get(); return row ? (row.t | 0) : 0; } catch (e) { return 0; }
 }
+// medianPendingOfActive/worldTotalPending used to run their real query on every single
+// reward-earning action (applyCommerceReward() below is the hot path EVERY harvest hit,
+// kill, craft and structure-collect passes through) — medianPendingOfActive() alone does
+// one synchronous better-sqlite3 read PER active player, so with P concurrently-mining
+// players that was O(P) blocking reads per action, O(P^2) per second server-wide, on top
+// of worldTotalPending()'s full-table SUM every single time too. better-sqlite3 is
+// synchronous: every one of those reads stalls the entire event loop, so this was a real,
+// worsening-with-population lag source hit by EVERY connected player on EVERY other
+// player's every mining click, not just the acting player's own. Both signals are
+// amplifier-only heuristics meant to catch SUSTAINED abuse over tens of seconds to
+// minutes (see WEIGHT_LEDGER_VELOCITY's header) — they were never precision-critical to
+// the millisecond, so refreshing them on a coarse timer instead of per-action loses
+// nothing the design actually needed while turning O(P) reads-per-action into O(P)
+// reads-per-4-seconds, regardless of action rate.
+const PENDING_AGG_REFRESH_MS = 4000;
+let pendingAggCache = { median: 0, total: 0 };
+function refreshPendingAggCache() {
+  try { pendingAggCache = { median: computeMedianPendingOfActive(), total: computeWorldTotalPending() }; }
+  catch (e) {}
+}
+refreshPendingAggCache(); // seed it at boot instead of starting from all-zero for 4s
+var _pendingAggSweep = setInterval(refreshPendingAggCache, PENDING_AGG_REFRESH_MS);
+if (_pendingAggSweep && _pendingAggSweep.unref) _pendingAggSweep.unref();
 
 // Wallet-challenge nonce replay protection — single-use, 5-minute TTL, global.
 // The per-connection c.walletNonce/c.walletNonceAt already makes a nonce single-use
@@ -1265,9 +1288,14 @@ function applyCommerceReward(c, action, ctx, multiplier) {
       try {
         var led = ledgerOf(c.key);
         pendingAgg.pending = led.pending | 0;
-        pendingAgg.medianPending = medianPendingOfActive();
+        // Read from the coarse periodic cache, not a fresh O(active players) scan every
+        // action — see refreshPendingAggCache()'s header above for why. ipPendingTotal()
+        // stays synchronous-per-action: it's bounded by one IP's own recently-earning
+        // keys (a household/office, not the whole server), so it never has this signal's
+        // quadratic-with-population blowup.
+        pendingAgg.medianPending = pendingAggCache.median;
         pendingAgg.ipPending = ipPendingTotal(c.ip);
-        pendingAgg.totalPending = worldTotalPending();
+        pendingAgg.totalPending = pendingAggCache.total;
         // Keep the optional anti-cheat.js in-memory tracker in sync when the
         // server already knows the aggregates — no extra cost, and it satisfies
         // the "in-memory Map, decays like existing score" brief for callers that
