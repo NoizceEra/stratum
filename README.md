@@ -9,7 +9,7 @@ Browser client, zero dependencies. `npm start` and you're playing.
 
 ## The story
 
-Earth's silver is gone. You're one of the first off-world colonists sent to find more —
+Earth's gold is gone. You're one of the first off-world colonists sent to find more —
 dropped onto Stratum, an untouched, unmapped planet, with orders to extract, terraform and
 build. Every tile you claim is a plot in the colony you're founding. Every tree, ore seam
 and crystal vein you strip is raw material Earth is waiting on. Every creature you put down
@@ -18,7 +18,7 @@ is one less thing standing between the colony and the ground it needs.
 There's no story campaign and no NPCs handing out quests — the fiction is the *reason* for
 every mechanic already in the game, not a layer on top of it. Land scarcity is colonization
 pressure. The volatile layer resetting is the planet being genuinely alive, not a quarry you
-can empty. A kiln turning ore into silver (`src/idle.js`) is the actual point of the mission,
+can empty. A kiln turning ore into more gold (`src/idle.js`) is the actual point of the mission,
 not a random crafting recipe. The first-session quest chain (`public/quests.js`) is the
 onboarding briefing every new colonist gets. Achievements (`src/achievements.js`) are a
 colonist's service record.

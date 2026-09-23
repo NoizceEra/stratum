@@ -390,6 +390,29 @@ const qPlayLast = db.prepare('UPDATE players SET last=? WHERE k=?');
 const qLook = db.prepare('UPDATE players SET paletteId=?,bodyHue=?,trimHue=?,accessories=? WHERE k=?');
 const qState = db.prepare('INSERT OR REPLACE INTO player_state(k,map,x,y,hp,kills,inv,tool) VALUES(?,?,?,?,?,?,?,?)');
 const qStateGet = db.prepare('SELECT * FROM player_state WHERE k=?');
+
+// one-time data fold: the kiln used to produce a standalone 'silver' resource before it
+// was unified into 'gold' (src/idle.js). Any inv already holding silver from that window
+// gets it folded into gold here so it isn't silently stranded in an unread inventory key.
+(function migrateSilverIntoGold() {
+  try {
+    const rows = db.prepare("SELECT k, inv FROM player_state WHERE inv LIKE '%silver%'").all();
+    if (!rows.length) return;
+    const upd = db.prepare('UPDATE player_state SET inv=? WHERE k=?');
+    let n = 0;
+    for (const r of rows) {
+      let inv;
+      try { inv = JSON.parse(r.inv); } catch (e) { continue; }
+      if (!inv || !Number.isFinite(inv.silver) || inv.silver === 0) { delete inv?.silver; continue; }
+      inv.gold = (Number.isFinite(inv.gold) ? inv.gold : 0) + inv.silver;
+      delete inv.silver;
+      upd.run(JSON.stringify(inv), r.k);
+      n++;
+    }
+    if (n) console.log(`[db] folded stray silver into gold for ${n} player(s)`);
+  } catch (e) { console.log('[db] silver->gold migration skipped:', e && e.message); }
+})();
+
 const qAch = db.prepare('INSERT OR REPLACE INTO player_achievements(k,ids,maps,crafts,title) VALUES(?,?,?,?,?)');
 const qAchGet = db.prepare('SELECT * FROM player_achievements WHERE k=?');
 // achievements are keyed by player + map, so "claimed" only counts what THIS player owns
