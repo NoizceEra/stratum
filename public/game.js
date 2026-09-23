@@ -1889,7 +1889,32 @@
   var tgtEl = document.getElementById('h-target'), tgtName = document.getElementById('h-target-name'), tgtBar = document.getElementById('h-target-bar');
   // inventory chips are rebuilt from a reused array — no per-update allocation
   var INV_KEYS = ['wood', 'ore', 'herb', 'crystal'], INV_HTML = [];
-  function invChip(r) { INV_HTML.push('<span class="chip">' + r + ' ' + (this[r] || 0) + '</span>'); }
+  // Resource art lives in public/assets/ (copied from sprites/batch_2026-09-18/ —
+  // that folder is NOT served; only public/ is). JPGs are AI batch art on pure
+  // black, so the CSS renders them with mix-blend-mode:screen — black drops out
+  // against the dark HUD instead of showing as a black square. Keys with no art
+  // yet (crystal) return null and render as text-only, same as before.
+  var ICONS = {
+    wood: 'assets/01_oak_wood.jpg', ore: 'assets/02_stone_ore.jpg',
+    herb: 'assets/03_healing_herbs.jpg', gold: 'assets/06_wooden_chest.jpg',
+    honey: 'assets/10_wheat_bundle.jpg', tonic: 'assets/09_forest_mushroom.jpg',
+    charcoal: 'assets/05_cozy_campfire.jpg',
+    kiln: 'assets/05_cozy_campfire.jpg', apiary: 'assets/10_wheat_bundle.jpg',
+    still: 'assets/11_water_well.jpg', smoker: 'assets/05_cozy_campfire.jpg',
+    wall: 'assets/02_stone_ore.jpg'
+  };
+  function iconFor(id) {
+    if (ICONS[id]) return ICONS[id];
+    if (/(sword|dagger|axe|blade|rod)$/.test(id)) return 'assets/07_iron_sword.jpg';
+    if (/(vest|plate|mail|aegis|anvil)$/.test(id)) return 'assets/04_blacksmith_anvil.jpg';
+    if (/(bench|planter|lantern|table|chest|well)$/.test(id)) return 'assets/12_crafting_table.jpg';
+    return null;
+  }
+  function iconImg(id) {
+    var s = iconFor(id);
+    return s ? '<img class="ric" src="' + s + '" alt="" loading="lazy" onerror="this.remove()">' : '';
+  }
+  function invChip(r) { INV_HTML.push('<span class="chip">' + iconImg(r) + r + ' ' + (this[r] || 0) + '</span>'); }
 
   function applyCommerceConfig(cfg) {
     S.commerce = cfg;
@@ -1911,6 +1936,18 @@
         ? window.StratumWallet.shortAddr(S.walletAddress) : '';
     }
     if (btn) btn.textContent = S.walletAddress ? 'REFRESH BALANCE' : 'CONNECT WALLET';
+    // Currency buttons stay clickable exactly as before (same toast-guarded handlers),
+    // but now LOOK inert until their precondition is met instead of appearing identical
+    // to a live button that happens to reject the click.
+    var hasWallet = !!S.walletAddress;
+    var claimBtn2 = document.getElementById('claim-btn');
+    if (claimBtn2) claimBtn2.classList.toggle('dim', !hasWallet);
+    var cgBtn = document.getElementById('convert-gold-btn');
+    if (cgBtn) cgBtn.classList.toggle('dim', !hasWallet);
+    var csBtn = document.getElementById('convert-strm-btn');
+    if (csBtn) csBtn.classList.toggle('dim', !hasWallet);
+    var reqBtn = document.getElementById('requisition-btn');
+    if (reqBtn) reqBtn.classList.toggle('dim', !hasWallet || !(S.tokenPending | 0));
     if (chainEl) {
       if (S.tokenOnChain == null) chainEl.textContent = 'on-chain —';
       else {
@@ -2180,7 +2217,7 @@
         if (held <= 0) continue;
         any = true;
         html += '<div class="mcard" data-salvage="' + r.id + '">' +
-          '<div class="nm">' + itemName(r.output.item).toUpperCase() + ' <span class="tier">x' + held + ' HELD</span></div>' +
+          '<div class="nm">' + iconImg(r.output.item) + itemName(r.output.item).toUpperCase() + ' <span class="tier">x' + held + ' HELD</span></div>' +
           '<div class="cost can">SALVAGE 1 — PART OF ' + costText(r.inputs) + ' BACK</div></div>';
       }
       if (!any) html += '<div class="mcard"><div class="ds">NOTHING CRAFTED IS CURRENTLY HELD.</div></div>';
@@ -2198,7 +2235,7 @@
     var next = (S.tool | 0) + 1;
     if (next < tiers.length) {
       var ok = canPay(tiers[next].cost);
-      html += '<div class="mcard" data-toolup="1"><div class="nm">' + tiers[next].name.toUpperCase() + ' TOOLS</div>' +
+      html += '<div class="mcard" data-toolup="1"><div class="nm">' + iconImg('anvil') + tiers[next].name.toUpperCase() + ' TOOLS</div>' +
         '<div class="tier">HARVEST MORE PER SWING</div>' +
         '<div class="cost ' + (ok ? 'can' : 'cant') + '">' + costText(tiers[next].cost) + '</div></div>';
     } else if (tiers.length) {
@@ -2214,7 +2251,7 @@
       if (onboardCraft && locked) continue;
       var afford = !locked && canPay(r.inputs);
       html += '<div class="mcard' + (locked ? ' locked' : '') + '" data-recipe="' + r.id + '">' +
-        '<div class="nm">' + itemName(r.output.item).toUpperCase() +
+        '<div class="nm">' + iconImg(r.output.item) + itemName(r.output.item).toUpperCase() +
         (locked ? ' <span class="tier">— NEEDS ' + toolName(r.tier).toUpperCase() + '</span>' : '') + '</div>' +
         '<div class="cost ' + (afford ? 'can' : 'cant') + '">' + costText(r.inputs) + '</div></div>';
     }
@@ -2267,7 +2304,7 @@
         ? 'BLOCKS MOVEMENT — A PHYSICAL OBSTACLE, PLACE + CLICK TO REMOVE'
         : 'MAKES ' + d.produces.toUpperCase() + ' — ~' + (Math.round(d.ratePerMs * 60000 * 10) / 10) + '/min, CAPS AT ' + d.capacity;
       html += '<div class="mcard' + (locked ? ' locked' : '') + '" data-kind="' + d.id + '">' +
-        '<div class="nm">' + d.name.toUpperCase() +
+        '<div class="nm">' + iconImg(d.id) + d.name.toUpperCase() +
         (locked ? ' <span class="tier">— NEEDS TIER ' + d.tier + ' TOOLS</span>' : '') + '</div>' +
         '<div class="tier">' + descLine + '</div>' +
         '<div class="cost ' + (afford ? 'can' : 'cant') + '">' + costText(d.cost) + '</div></div>';
@@ -3425,7 +3462,7 @@
     // gold is shown on its own HUD row (commerce), so skip it here.
     for (var ck in inv) {
       if (ck === 'gold') continue;
-      if (INV_KEYS.indexOf(ck) < 0 && inv[ck] > 0) INV_HTML.push('<span class="chip">' + ck + ' ' + inv[ck] + '</span>');
+      if (INV_KEYS.indexOf(ck) < 0 && inv[ck] > 0) INV_HTML.push('<span class="chip">' + iconImg(ck) + dispKey(ck) + ' ' + inv[ck] + '</span>');
     }
     document.getElementById('h-inv').innerHTML = INV_HTML.join(' ');
     updateWalletHud();
@@ -3438,6 +3475,7 @@
     updateAchHud();
     refreshQuest(false);
     if (tlPanel) tlPanel.classList.toggle('hurt', S.hurt > 0.25);
+    if (tlPanel) tlPanel.classList.toggle('critical', S.hp > 0 && S.hp / S.maxHp < 0.25);
     // target frame
     var tg = S.target;
     var live = tg && S.mons.get(tg.id) && Date.now() < S.targetUntil;

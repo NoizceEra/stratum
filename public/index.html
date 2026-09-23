@@ -53,6 +53,13 @@
   .slot .n{font-size:8px;color:rgba(0,0,0,.62);background:rgba(255,255,255,.5);padding:0 2px;line-height:1.3}
   .slot.on{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset}
   .chip{display:inline-block;border:1px solid rgba(255,255,255,.14);padding:1px 6px;margin-left:5px;font-size:10px}
+  /* resource art: AI batch JPGs on pure black — screen blend drops the black out
+     against the dark panels instead of showing a black square. Fixed 1:1 box so a
+     slow/missing file never reflows the HUD (plus onerror removal in game.js). */
+  .chip .ric{width:16px;height:16px;object-fit:cover;border-radius:3px;
+    vertical-align:-3px;margin-right:4px;mix-blend-mode:screen;background:#000}
+  .mcard .nm .ric{width:24px;height:24px;object-fit:cover;border-radius:4px;
+    vertical-align:-5px;margin-right:8px;mix-blend-mode:screen;background:#000}
   #toast{position:fixed;left:50%;top:16%;transform:translateX(-50%);background:rgba(120,30,20,.9);
     border:1px solid rgba(255,120,100,.5);padding:7px 14px;letter-spacing:.09em;opacity:0;
     transition:opacity .18s;pointer-events:none;font-size:11px;text-align:center;max-width:80vw}
@@ -91,6 +98,21 @@
     transition:width .1s linear}
   /* struck — a quiet pulse on the frame the player is actually standing in */
   #hud-tl.hurt{border-color:rgba(214,90,70,.85);box-shadow:0 0 12px rgba(200,60,40,.32)}
+  /* sustained low health (not just a recent hit) — the life bar itself needs to read as
+     dangerous at a glance, not just the transient .hurt flash on the panel border. */
+  #hud-tl.critical #hpbar{animation:hp-pulse 1.1s ease-in-out infinite}
+  #hud-tl.critical .barlab:first-of-type span:first-child{color:#e08070}
+  @keyframes hp-pulse{0%,100%{box-shadow:0 0 0 rgba(200,60,40,0)}50%{box-shadow:0 0 8px rgba(220,80,60,.65)}}
+  /* shared currency/wallet button — was five copies of the same inline style; a single
+     class keeps them visually identical and gives a real disabled affordance instead of
+     a button that looks fully live right up until it toasts "LINK A WALLET FIRST". */
+  .hud-btn{font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;
+    border:1px solid var(--rule);padding:5px 9px;cursor:pointer;border-radius:2px}
+  .hud-btn:hover{border-color:var(--gold);background:rgba(201,165,92,.08)}
+  .hud-btn:active{background:rgba(201,165,92,.16)}
+  .hud-btn.dim{color:var(--dim);border-color:rgba(255,255,255,.08);cursor:default}
+  .hud-btn.dim:hover{border-color:rgba(255,255,255,.08);background:transparent}
+  .hud-row{margin-top:6px}
   /* craft overlay — same full-screen pattern as #nodes and #map: fixed, inset 0,
      inherits safe-area behaviour by covering the viewport instead of dodging it */
   #craft{position:fixed;inset:0;z-index:15;background:rgba(5,6,9,.95);display:none;
@@ -239,25 +261,25 @@
       <span class="k" style="margin-left:4px;font-size:9px">pending</span>
     </div>
     <div class="k" style="margin-top:4px;font-size:10px" id="h-token-chain">on-chain —</div>
-    <div style="margin-top:6px">
-      <button type="button" id="wallet-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">CONNECT WALLET</button>
+    <div class="hud-row">
+      <button type="button" id="wallet-btn" class="hud-btn">CONNECT WALLET</button>
       <span class="k" id="h-wallet" style="margin-left:6px;font-size:10px"></span>
     </div>
     <div class="k" id="h-payout-note" style="margin-top:6px;font-size:10px;max-width:280px">Play first. Connect a wallet to claim or convert — a fee applies then.</div>
-    <div style="margin-top:6px">
-      <button type="button" id="claim-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">CLAIM STRM</button>
+    <div class="hud-row">
+      <button type="button" id="claim-btn" class="hud-btn" title="Requires a connected wallet">CLAIM STRM</button>
       <span class="k" id="h-claim-status" style="margin-left:6px;font-size:10px"></span>
     </div>
-    <div style="margin-top:6px">
-      <button type="button" id="convert-gold-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">GOLD → STRM</button>
-      <button type="button" id="convert-strm-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer;margin-left:4px">STRM → GOLD</button>
+    <div class="hud-row">
+      <button type="button" id="convert-gold-btn" class="hud-btn" title="Requires a connected wallet">GOLD → STRM</button>
+      <button type="button" id="convert-strm-btn" class="hud-btn" style="margin-left:4px" title="Requires a connected wallet">STRM → GOLD</button>
       <span class="k" id="h-convert-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <!-- Earth Requisition: the actual STRM sink. Most of what you ship is burned
          forever; a slice funds the treasury. This is the first real reason STRM is
          worth anything beyond a number that goes up — see src/token-sink.js. -->
-    <div style="margin-top:6px">
-      <button type="button" id="requisition-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">SHIP TO EARTH</button>
+    <div class="hud-row">
+      <button type="button" id="requisition-btn" class="hud-btn" title="Requires a connected wallet and pending STRM">SHIP TO EARTH</button>
       <span class="k" id="h-requisition-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <div class="k" id="h-token-badge" style="margin-top:4px;font-size:9px;display:none">PLACEHOLDER CA</div>
@@ -399,6 +421,16 @@
   body.touch #hud-br-toggle{display:block}
   body.touch #hud-br-detail{display:none}
   body.touch #hud-br.expanded #hud-br-detail{display:block}
+  /* a one-line, 10px-font toggle is a poor touch target (well under the ~44px guideline)
+     for the only route to wallet/claim/convert on a phone — widen the hit area without
+     changing its look. Same treatment for the parcels tabs, which share the problem. */
+  body.touch #hud-br-toggle{padding:10px 0;font-size:11px}
+  body.touch .hud-btn{padding:9px 12px;min-height:38px}
+  body.touch .ptab{padding:8px 13px}
+  /* icon cards are the main tap targets in craft/structures — fatten them on touch
+     so every card clears the ~44px guideline even with a single-line cost. */
+  body.touch .mcard{padding:13px 14px}
+  body.touch .mcard .nm .ric{width:30px;height:30px}
   #stick{position:fixed;left:calc(16px + env(safe-area-inset-left));bottom:calc(16px + env(safe-area-inset-bottom));
     width:138px;height:138px;border-radius:50%;
     background:radial-gradient(circle,rgba(8,10,8,.5),rgba(8,10,8,.3) 60%,rgba(8,10,8,0) 74%);

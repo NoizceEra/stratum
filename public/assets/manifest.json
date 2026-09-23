@@ -1,0 +1,86 @@
+[
+  {
+    "name": "01_oak_wood",
+    "file": "01_oak_wood.jpg",
+    "bytes": 67945,
+    "prompt": "snes pixel art oak wood log pile, stacked logs, bark texture, flat colors, black background, game item sprite, centered, isolated object, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "02_stone_ore",
+    "file": "02_stone_ore.jpg",
+    "bytes": 72481,
+    "prompt": "snes pixel art stone ore rock cluster, gray boulders with mineral veins, flat colors, black background, game resource sprite, centered, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "03_healing_herbs",
+    "file": "03_healing_herbs.jpg",
+    "bytes": 61277,
+    "prompt": "snes pixel art healing herbs bundle, green leaves and small flowers tied with twine, flat colors, black background, game item sprite, centered, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "04_blacksmith_anvil",
+    "file": "04_blacksmith_anvil.jpg",
+    "bytes": 62481,
+    "prompt": "snes pixel art blacksmith anvil, heavy iron anvil with hammer, flat colors, black background, game object sprite, centered, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "05_cozy_campfire",
+    "file": "05_cozy_campfire.jpg",
+    "bytes": 59396,
+    "prompt": "snes pixel art cozy campfire, burning logs with orange flames and stones around, flat colors, black background, game object sprite, centered, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "06_wooden_chest",
+    "file": "06_wooden_chest.jpg",
+    "bytes": 68942,
+    "prompt": "snes pixel art wooden treasure chest, closed chest with metal trim, flat colors, black background, game loot sprite, centered, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "07_iron_sword",
+    "file": "07_iron_sword.jpg",
+    "bytes": 67120,
+    "prompt": "snes pixel art iron sword, short sword with wooden hilt upright, flat colors, black background, game weapon sprite, centered, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "08_fishing_rod",
+    "file": "08_fishing_rod.jpg",
+    "bytes": 45341,
+    "prompt": "snes pixel art fishing rod, wooden rod with line and hook, flat colors, black background, game tool sprite, centered, isolated object, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "09_forest_mushroom",
+    "file": "09_forest_mushroom.jpg",
+    "bytes": 63455,
+    "prompt": "snes pixel art red forest mushroom cluster, spotted caps on moss, flat colors, black background, game foraging sprite, centered, isolated object, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "10_wheat_bundle",
+    "file": "10_wheat_bundle.jpg",
+    "bytes": 79605,
+    "prompt": "snes pixel art wheat bundle, golden wheat stalks tied together, flat colors, black background, game crop sprite, centered, isolated object, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "11_water_well",
+    "file": "11_water_well.jpg",
+    "bytes": 76305,
+    "prompt": "snes pixel art stone water well, small well with wooden roof and bucket, flat colors, black background, game building sprite, centered, isolated object, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  },
+  {
+    "name": "12_crafting_table",
+    "file": "12_crafting_table.jpg",
+    "bytes": 53249,
+    "prompt": "snes pixel art wooden crafting table, workbench with tools on top, flat colors, black background, game station sprite, centered, isolated object, 16-bit cozy MMORPG",
+    "model": "sd-turbo-openvino (sdxl-turbo fallback)"
+  }
+]
