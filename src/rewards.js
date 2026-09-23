@@ -1,7 +1,7 @@
 /**
- * rewards.js — dual commerce rewards for STRATUM (in-game silver + token units).
+ * rewards.js — dual commerce rewards for STRATUM (in-game gold + token units).
  *
- * Mining, crafting, and combat grant soft silver (inventory) and hard token units
+ * Mining, crafting, and combat grant soft gold (inventory) and hard token units
  * (server ledger → future on-chain claim). Rates live here so economy.js stays
  * about materials and this file stays about commerce payouts.
  *

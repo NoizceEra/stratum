@@ -1106,7 +1106,7 @@
             float(mm.rx, mm.ry - 0.4, 'SLAIN', mm.pal.hex, 2);
             burst(mm.rx, mm.ry, mm.pal, 16, 2.6);
             if (m.gains) {
-              if (m.gains.gold) float(mm.rx, mm.ry - 0.7, '+' + m.gains.gold + ' silver', '#e8c76a', 0);
+              if (m.gains.gold) float(mm.rx, mm.ry - 0.7, '+' + m.gains.gold + ' gold', '#e8c76a', 0);
               if (m.gains.token) float(mm.rx, mm.ry - 1.0, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), '#8fe4ff', 0);
             }
             S.mons.delete(m.id);
@@ -1182,7 +1182,7 @@
         var craftedN = m.count | 0 || 1;
         S.crafts += craftedN;
         toast((craftedN > 1 ? craftedN + 'x ' : 'CRAFTED: ') + String(m.item || '').toUpperCase(), true);
-        if (m.gains && m.gains.gold) float(S.x, S.y - 0.6, '+' + m.gains.gold + ' silver', '#e8c76a', 0);
+        if (m.gains && m.gains.gold) float(S.x, S.y - 0.6, '+' + m.gains.gold + ' gold', '#e8c76a', 0);
         if (m.gains && m.gains.token) float(S.x, S.y - 0.9, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), '#8fe4ff', 0);
         sfx('craft');
         if (S.craftOpen) buildCraft();
@@ -1269,7 +1269,7 @@
         if (cvStatus) cvStatus.textContent = 'CONVERTED';
         var csym = (S.commerce && S.commerce.symbol) || 'STRM';
         toast((m.dir === 'to-gold'
-          ? ('CONVERTED TO ' + (m.goldOut | 0) + ' SILVER')
+          ? ('CONVERTED TO ' + (m.goldOut | 0) + ' GOLD')
           : ('CONVERTED TO ' + (m.payout | 0) + ' ' + csym)) +
           (m.fee ? ' (FEE ' + m.fee + ' ' + csym + ')' : ''), true);
         sfx('ui');
@@ -1894,7 +1894,7 @@
       var claimPct = (S.payout.claimBps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
       var convPct = (S.payout.convertBps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
       note.textContent = 'Play first. Claim fee ' + claimPct + '% · convert fee ' + convPct +
-        '% · ' + S.payout.goldPerStrm + ' silver = 1 STRM';
+        '% · ' + S.payout.goldPerStrm + ' gold = 1 STRM';
     }
   }
   var challengeWait = null;
@@ -2071,9 +2071,9 @@
   // ---------- craft ----------------------------------------------------------
   // The server ships the whole catalogue inside the welcome message (costs, recipes,
   // tool tiers), so this panel renders from S.catalog and never needs economy.js.
-  // Display name for a resource key. The data model + saves + wire protocol still
-  // call the soft currency `gold`; players only ever see `silver`.
-  function dispKey(k) { return k === 'gold' ? 'silver' : k; }
+  // Display name for a resource key. The soft currency is `gold`, on the wire and on
+  // screen — no display-name translation needed.
+  function dispKey(k) { return k; }
   function costText(cost) {
     if (!cost || typeof cost !== 'object') return 'nothing';
     var parts = [];
@@ -2087,7 +2087,7 @@
     return true;
   }
   function itemName(id) {
-    if (id === 'gold') return 'silver';
+    if (id === 'gold') return 'gold';
     if (S.catalog && S.catalog.items && S.catalog.items[id]) return S.catalog.items[id].name;
     return String(id).replace(/_/g, ' ');
   }
@@ -2431,7 +2431,7 @@
         var deed = S.parcelCache && S.parcelCache[deedId];
         wrap.innerHTML = '<div class="mcard"><div class="nm">LIST ' + (deed ? deed.name : 'DEED').toUpperCase() + '</div>' +
           '<div class="tier">PRICE ITEM</div>' +
-          '<input type="text" id="parcel-price-item" placeholder="silver, wood, ore, herb, crystal…" style="width:100%;padding:8px;margin:4px 0;background:#1a1812;color:#e8e6df;border:1px solid #3a362c;border-radius:4px">' +
+          '<input type="text" id="parcel-price-item" placeholder="gold, wood, ore, herb, crystal…" style="width:100%;padding:8px;margin:4px 0;background:#1a1812;color:#e8e6df;border:1px solid #3a362c;border-radius:4px">' +
           '<div class="tier">PRICE QUANTITY</div>' +
           '<input type="number" id="parcel-price-qty" placeholder="1" min="1" max="1000000" style="width:100%;padding:8px;margin:4px 0;background:#1a1812;color:#e8e6df;border:1px solid #3a362c;border-radius:4px">' +
           '<button class="btn" id="parcel-confirm-list">CONFIRM LIST</button> ' +
@@ -3314,7 +3314,7 @@
     INV_HTML.length = 0;
     INV_KEYS.forEach(invChip, inv);
     // crafted gear rides in the same inventory under its item id — chip anything else.
-    // silver is shown on its own HUD row (commerce), so skip it here.
+    // gold is shown on its own HUD row (commerce), so skip it here.
     for (var ck in inv) {
       if (ck === 'gold') continue;
       if (INV_KEYS.indexOf(ck) < 0 && inv[ck] > 0) INV_HTML.push('<span class="chip">' + ck + ' ' + inv[ck] + '</span>');

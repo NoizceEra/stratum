@@ -1,6 +1,6 @@
 /**
  * holder-bonus.js — "simple as holding the token": a wallet's on-chain STRM balance
- * grants a permanent multiplier on the silver/STRM a player earns from playing.
+ * grants a permanent multiplier on the gold/STRM a player earns from playing.
  *
  * WHY THIS FILE EXISTS
  *   Every other commerce module here answers "what happens when you spend/earn STRM
@@ -8,7 +8,7 @@
  *   module answers a different question the project owner asked for: "why would anyone
  *   HOLD STRM instead of immediately spending it?" The answer is a yield-style tier
  *   table — the more STRM your linked wallet holds, the bigger a multiplier is applied
- *   to every silver/token reward src/rewards.js hands you. It is deliberately the
+ *   to every gold/token reward src/rewards.js hands you. It is deliberately the
  *   simplest possible hook: no staking, no lockup, no claim step — just holding more
  *   moves you up a tier, permanently, for as long as the balance is above threshold.
  *
@@ -31,7 +31,7 @@
  *   - Fully pure and deterministic: no Date.now(), no Math.random(), no globals written.
  *     Every helper returns fresh values (or a shared frozen tier reference) and never
  *     mutates its arguments.
- *   - Integer math for reward amounts — silver/STRM are always whole ledger units
+ *   - Integer math for reward amounts — gold/STRM are always whole ledger units
  *     elsewhere in this codebase (src/rewards.js). The multiplier itself is a float
  *     (e.g. 1.25); applying it to an amount floors to an integer, matching
  *     token-sink.js's splitBurn "floor, never round up" convention — except here the

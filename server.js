@@ -209,9 +209,9 @@ function payoutPublic() {
 // or 100%" bps convention as every other tunable here.
 const SALVAGE_REFUND_BPS = Number(process.env.STRATUM_SALVAGE_REFUND_BPS) >= 0
   ? Number(process.env.STRATUM_SALVAGE_REFUND_BPS) | 0 : Crafting.SALVAGE_REFUND_BPS;
-// Display name for a resource key in player-facing strings. The data model +
-// saves + wire protocol still call the soft currency `gold`; players only see `silver`.
-function dispKey(k) { return k === 'gold' ? 'silver' : k; }
+// Display name for a resource key in player-facing strings. The soft currency is
+// `gold`, on the wire and on screen — no translation needed.
+function dispKey(k) { return k; }
 // The fixed emote allowlist. No freeform text ever — see ROADMAP.md's no-chat non-goal.
 const EMOTES = ['wave', 'thanks', 'nice-place', 'gg'];
 
@@ -1028,7 +1028,7 @@ function boostByMultiplier(amount, mult) {
 }
 
 /**
- * Dual commerce payout: soft silver into inv + hard token units into token_ledger.
+ * Dual commerce payout: soft gold into inv + hard token units into token_ledger.
  * Returns the reward applied (or zeros). Never throws.
  *
  * Every call also feeds src/anti-cheat.js's rolling per-player suspicion score (this is
@@ -1628,7 +1628,7 @@ function onMessage(c, msg) {
     // Salvage (src/crafting.js): break down `count` held crafted items back into a partial
     // materials refund (SALVAGE_REFUND_BPS, default 50%). Deliberately no commerce reward
     // here — this reverses a purchase, it doesn't earn a new one — and deliberately no
-    // anti-cheat evaluation either: salvaging never grants silver or STRM, so it isn't a
+    // anti-cheat evaluation either: salvaging never grants gold or STRM, so it isn't a
     // reward-earning action anti-cheat needs to watch (see applyCommerceReward()'s header).
     case 'salvage': {
       if (!c.ready || c.dead) return;

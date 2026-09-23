@@ -117,7 +117,7 @@
   }
 
   /** Display name for a resource key. Saves + wire protocol still say `gold`. */
-  function dispKey(k) { return k === 'gold' ? 'silver' : k; }
+  function dispKey(k) { return k; }
 
   /** A short human line for an offer: '3 wood for 1 ore', or '3 wood (gift)'. */
   function describe(offer) {

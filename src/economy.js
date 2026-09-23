@@ -34,7 +34,7 @@
   // ======================================================================
 
   /**
-   * Harvested resources (first four) plus soft currency `silver` from commerce rewards.
+   * Harvested resources (first four) plus soft currency `gold` from commerce rewards.
    * Silver is earned via Rewards, not nodes — it still rides in `inv` so shops/trade
    * can price in it once listings allow.
    */

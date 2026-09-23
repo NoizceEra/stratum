@@ -227,13 +227,13 @@
 <div id="hud-br" class="panel">
   <div class="k">carried</div>
   <div style="margin-top:3px" id="h-inv">—</div>
-  <!-- On touch this whole block (silver/wallet/combat/achievements) starts collapsed —
+  <!-- On touch this whole block (gold/wallet/combat/achievements) starts collapsed —
        it's a lot of always-on chrome for a phone screen, and none of it needs to be
        glanceable mid-harvest the way HP/will/carried do. Desktop keeps it open, always. -->
   <button type="button" id="hud-br-toggle">MORE ▾</button>
   <div id="hud-br-detail">
     <div style="margin-top:7px">
-      <span class="k">silver</span> <span class="v gold" id="h-gold">0</span>
+      <span class="k">gold</span> <span class="v gold" id="h-gold">0</span>
       <span class="k" style="margin-left:8px" id="h-token-sym">STRM</span>
       <span class="v" id="h-token-pending">0</span>
       <span class="k" style="margin-left:4px;font-size:9px">pending</span>
@@ -249,8 +249,8 @@
       <span class="k" id="h-claim-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <div style="margin-top:6px">
-      <button type="button" id="convert-gold-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">SILVER → STRM</button>
-      <button type="button" id="convert-strm-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer;margin-left:4px">STRM → SILVER</button>
+      <button type="button" id="convert-gold-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer">GOLD → STRM</button>
+      <button type="button" id="convert-strm-btn" style="font:inherit;letter-spacing:.08em;color:var(--gold);background:transparent;border:1px solid var(--rule);padding:4px 8px;cursor:pointer;margin-left:4px">STRM → GOLD</button>
       <span class="k" id="h-convert-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <!-- Earth Requisition: the actual STRM sink. Most of what you ship is burned
@@ -341,8 +341,8 @@
         Stratum isn't a quarry you empty, it's a world you settle.<br>
       <b>You can only release a claim</b> — you can never take one from another colonist.<br>
       <b>Refine what you mine.</b> A kiln turns ore into silver — the reason Earth sent you.<br>
-      <b>Play first.</b> Mining and crafting earn silver and STRM with no wallet.<br>
-      <b>Wallet when you cash out.</b> Connect a Solana wallet to claim STRM or convert silver.
+      <b>Play first.</b> Mining and crafting earn gold and STRM with no wallet.<br>
+      <b>Wallet when you cash out.</b> Connect a Solana wallet to claim STRM or convert gold.
         A fee is taken only on claim and convert.
     </div>
     <input id="name-in" maxlength="18" placeholder="COLONIST NAME" autocomplete="off">

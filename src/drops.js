@@ -171,7 +171,7 @@
   }
 
   /** Display name for a resource key. Saves + wire protocol still say `gold`. */
-  function dispKey(key) { return key === 'gold' ? 'silver' : key; }
+  function dispKey(key) { return key; }
 
   /** A short human line for a drop: '2 wood + 1 ore', or 'an empty cache'. */
   function describe(drop) {

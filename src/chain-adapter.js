@@ -2,7 +2,7 @@
  * chain-adapter.js — the ONE place a real on-chain STRM payout happens.
  *
  * WHY THIS FILE EXISTS
- *   src/rewards.js pays players soft `silver` + hard `token` units into `token_ledger.pending`.
+ *   src/rewards.js pays players soft `gold` + hard `token` units into `token_ledger.pending`.
  *   Turning pending into a real chain transfer needs a funded treasury wallet and a signer.
  *   The treasury *address* is public (`token-config.js` / STRATUM_TREASURY_ADDRESS).
  *   The treasury *secret key* lives only in a local, gitignored `.env` on the operator's

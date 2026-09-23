@@ -1,18 +1,18 @@
 /**
  * payout.js — fee math for the two wallet-gated exits: claim and convert.
  *
- * Play never calls this. Harvesting, crafting, and kills still credit silver and
+ * Play never calls this. Harvesting, crafting, and kills still credit gold and
  * pending STRM with no wallet and no fee (src/rewards.js). A player only hits
  * this module once they connect a wallet and ask to:
  *   - claim: turn pending STRM into an on-chain payout (server sends `payout`,
  *     the treasury keeps `fee` — that cut never leaves the treasury wallet)
- *   - convert: swap silver <-> pending STRM. The fee is STRM credited to the
+ *   - convert: swap gold <-> pending STRM. The fee is STRM credited to the
  *     in-game treasury vault. Convert does not touch the chain.
  *
  * CONTRACT
  *   - Dependency-free UMD. No require(), no DOM, no I/O.
  *   - Pure + deterministic. Never mutates arguments. Never throws.
- *   - Integer STRM and silver only. Fee is floor(gross * bps / 10000).
+ *   - Integer STRM and gold only. Fee is floor(gross * bps / 10000).
  *   - `fee + payout === gross` whenever a quote is ok.
  */
 (function (root, factory) {
@@ -27,7 +27,7 @@
   /** 2.5% — same cut as parcel deeds and shop sales. */
   var CLAIM_FEE_BPS = 250;
   var CONVERT_FEE_BPS = 250;
-  /** Whole silver spent to mint one gross STRM before the convert fee. */
+  /** Whole gold spent to mint one gross STRM before the convert fee. */
   var GOLD_PER_STRM = 10;
   /**
    * Smallest gross STRM a convert will touch. 2.5% of 40 is 1, so the fee is
@@ -69,12 +69,12 @@
 
   /**
    * Quote a convert.
-   *   dir 'to-token' — `amount` is silver to spend (omit to spend all silver)
+   *   dir 'to-token' — `amount` is gold to spend (omit to spend all gold)
    *   dir 'to-gold'  — `amount` is pending STRM to spend (omit to spend all)
    * `balances` is { gold, pending } (wire field names). `opts` is { feeBps, goldPerStrm, minStrm }.
    * On success, to-token spends `spentGold` and mints `payout` pending STRM
    * (fee STRM goes to the treasury, not the player). to-gold spends `gross`
-   * pending STRM and grants `goldOut` silver.
+   * pending STRM and grants `goldOut` gold.
    */
   function quoteConvert(dir, amount, balances, opts) {
     var o = opts || {};
@@ -93,7 +93,7 @@
       if (spend > gold) return fail('cannot afford');
       var gross = Math.floor(spend / rate);
       var spentGold = gross * rate;
-      if (gross < 1) return fail('not enough silver');
+      if (gross < 1) return fail('not enough gold');
       if (gross < minStrm) return fail('below minimum convert (' + minStrm + ')');
       var s = splitFee(gross, o.feeBps, CONVERT_FEE_BPS);
       if (s.payout < 1) return fail('fee consumes convert');

@@ -215,7 +215,7 @@ the tile grid, or gameplay — it's backdrop, the same way the existing water sh
 > moved everything to Solana SPL — `contracts/legacy-evm-StratumToken.sol` is the
 > old, never-deployed contract, kept for history only.)
 
-Play does not ask for a wallet. Harvesting, crafting, and kills award **in-game silver**
+Play does not ask for a wallet. Harvesting, crafting, and kills award **in-game gold**
 plus pending **STRM** (`src/rewards.js`) straight into the server ledger. Connecting a
 Solana wallet is only for cashing out, and one wallet is one colonist
 (`wallet_players`). Two exits charge a treasury fee (`src/payout.js`, default 2.5%):
@@ -223,7 +223,7 @@ Solana wallet is only for cashing out, and one wallet is one colonist
 - **Claim** — pending STRM becomes an SPL transfer to that wallet. The chain transfer
   is the net; the fee never leaves the treasury token account. If the mint is still the
   placeholder, the claim is recorded and pending is left untouched (no fee taken).
-- **Convert** — silver becomes pending STRM, or pending STRM becomes silver (`10` silver per
+- **Convert** — gold becomes pending STRM, or pending STRM becomes gold (`10` gold per
   STRM before the fee). The fee is credited to the in-game treasury vault. Convert does
   not broadcast a transaction.
 
@@ -348,7 +348,7 @@ tool tier). `src/crafting.js` adds depth on top, in the craft panel HUD:
   crafted you currently hold; clicking one breaks it down for a partial materials refund
   (`STRATUM_SALVAGE_REFUND_BPS`, default 50%, floored per material — never a full-value
   refund, which would make crafting free to "try" indefinitely). Reverses a crafting
-  mistake; grants no silver or STRM (it's undoing a purchase, not earning a new one).
+  mistake; grants no gold or STRM (it's undoing a purchase, not earning a new one).
 
 ## Reward yield bonuses
 
@@ -411,7 +411,7 @@ kill, collect) through the single choke point every one of them already passes t
 
 These combine into one rolling, decaying suspicion score per player (session-only, never
 persisted — it's a short-timescale behavioral signal, not a permanent mark). Crossing the
-threshold **throttles the economic reward of that one action** — silver and STRM both come
+threshold **throttles the economic reward of that one action** — gold and STRM both come
 back zero — while the action itself (materials consumed, item crafted, node depleted, XP
 awarded) proceeds completely normally. Never a block, never a ban, never a lockout, never
 anything requiring a human to review or undo. A false positive costs a legitimate player a
@@ -429,8 +429,8 @@ Playable and tested. Honest gaps:
   refuses to run. Every claim today queues; none settle. Creating the real SPL mint
   (`contracts/README.md` + `scripts/create-strm-mint.mjs`) and setting `STRATUM_TOKEN_MINT`
   lifts this.
-- **No way to buy in-game currency with real money or crypto yet.** Silver and STRM are
-  earned by playing only — there's no fiat on-ramp, no "buy silver with STRM" or "buy STRM
+- **No way to buy in-game currency with real money or crypto yet.** Gold and STRM are
+  earned by playing only — there's no fiat on-ramp, no "buy gold with STRM" or "buy STRM
   with a card" flow, and no payment processor wired in anywhere in this codebase. This is
   a separate, not-yet-designed feature, not a bug in the claim pipeline above.
 - **Not deployed.** It runs locally. Hosting needs a long-lived process (Railway/Fly/VPS —
@@ -438,7 +438,7 @@ Playable and tested. Honest gaps:
   static client — not a static host alone.
 - **Anti-cheat now covers economic abuse specifically** (see the Anti-cheat section
   above) — rate/rhythm/IP-density detection on every reward-earning action, throttling
-  silver/STRM without ever blocking play. Movement rate-limiting and server-side validation
+  gold/STRM without ever blocking play. Movement rate-limiting and server-side validation
   on everything else remain as before; this doesn't add anything like device fingerprinting,
   CAPTCHA, or persistent per-account suspicion history — a determined, patient bot working
   well under the rate/rhythm thresholds is still not caught by this.
