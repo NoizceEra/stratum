@@ -2024,14 +2024,19 @@
   var tgtEl = document.getElementById('h-target'), tgtName = document.getElementById('h-target-name'), tgtBar = document.getElementById('h-target-bar');
   // inventory chips are rebuilt from a reused array — no per-update allocation
   var INV_KEYS = ['wood', 'ore', 'herb', 'crystal'], INV_HTML = [];
-  // Resource art lives in public/assets/ (copied from sprites/batch_2026-09-18/ —
-  // that folder is NOT served; only public/ is). JPGs are AI batch art on pure
-  // black, so the CSS renders them with mix-blend-mode:screen — black drops out
-  // against the dark HUD instead of showing as a black square. Keys with no art
-  // yet (crystal) return null and render as text-only, same as before.
+  // Resource art lives in public/assets/. The five raw/currency resources
+  // (wood/ore/herb/crystal/gold) get purpose-made icons in resource-icons/ —
+  // real transparent PNGs, one per resource, matching each node's actual
+  // in-game sprite colour (see NODE_COLOR above) instead of a repurposed
+  // stock photo. Everything else still falls back to the general
+  // sprites/batch_2026-09-18/ set (copied into assets/ — that folder is not
+  // served; only public/ is): those are JPGs shot on pure black, so the CSS
+  // renders them with mix-blend-mode:screen to drop the black out against
+  // the dark HUD, same trick the PNGs harmlessly no-op through.
   var ICONS = {
-    wood: 'assets/01_oak_wood.jpg', ore: 'assets/02_stone_ore.jpg',
-    herb: 'assets/03_healing_herbs.jpg', gold: 'assets/06_wooden_chest.jpg',
+    wood: 'assets/resource-icons/wood.png', ore: 'assets/resource-icons/ore.png',
+    herb: 'assets/resource-icons/herb.png', crystal: 'assets/resource-icons/crystal.png',
+    gold: 'assets/resource-icons/gold.png',
     honey: 'assets/10_wheat_bundle.jpg', tonic: 'assets/09_forest_mushroom.jpg',
     charcoal: 'assets/05_cozy_campfire.jpg',
     kiln: 'assets/05_cozy_campfire.jpg', apiary: 'assets/10_wheat_bundle.jpg',
