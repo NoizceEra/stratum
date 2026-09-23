@@ -216,6 +216,9 @@ function dispKey(k) { return k; }
 const EMOTES = ['wave', 'thanks', 'nice-place', 'gg'];
 
 // ---------- persistence ----------------------------------------------------
+// Ensure the DB parent directory exists — critical when STRATUM_DB=/data/world.db
+// on Railway (volume at /data). Without this, DatabaseSync throws on first boot.
+try { fs.mkdirSync(path.dirname(DBFILE), { recursive: true }); } catch (e) {}
 const db = new DatabaseSync(DBFILE);
 db.exec(`
   PRAGMA journal_mode = WAL;
@@ -333,6 +336,52 @@ db.exec(`
   } catch (e) { console.log('[db] customization migration skipped:', e && e.message); }
 })();
 
+// ---------- startup persistence safety ---------------------------------------
+// Verifies WAL mode and runs lightweight integrity checks. Logs LOUDLY on any
+// anomaly but NEVER crashes the world — a failed check is a warning for the
+// operator, not a reason to refuse connections (ROADMAP.md's no-wipe principle:
+// losing the world is worse than serving with a warning).
+(function startupDbChecks() {
+  // 1) WAL mode verification + DB path — one canonical boot line required by deploy safety.
+  try {
+    const row = db.prepare('PRAGMA journal_mode').get();
+    const mode = row ? (row.journal_mode || Object.values(row)[0]) : 'unknown';
+    console.log(`[db] path=${DBFILE} journal_mode=${mode}`);
+    if (String(mode).toLowerCase() !== 'wal') {
+      console.log(`[db] WARN journal_mode is '${mode}' not 'wal' — expected WAL; persistence still attempted (still serving)`);
+    }
+  } catch (e) {
+    console.log(`[db] WARN journal_mode check failed (still serving): ${e && e.message}`);
+    console.log(`[db] path=${DBFILE} journal_mode=unknown`);
+  }
+  // 2) integrity_check — 'ok' means clean; any other string is a corruption signal.
+  try {
+    const rows = db.prepare('PRAGMA integrity_check').all();
+    const vals = rows.map(r => Object.values(r)[0]);
+    const ok = vals.length === 1 && vals[0] === 'ok';
+    if (ok) {
+      console.log('[db] integrity_check ok');
+    } else {
+      console.log(`[db] WARN integrity_check: ${vals.join(' | ')} (still serving — inspect and restore from backup)`);
+    }
+  } catch (e) {
+    console.log(`[db] WARN integrity_check failed (still serving): ${e && e.message}`);
+  }
+  // 3) foreign_key_check — only meaningful if FK constraints exist; empty is clean.
+  try {
+    const fk = db.prepare('PRAGMA foreign_key_check').all();
+    if (!fk.length) {
+      console.log('[db] foreign_key_check ok');
+    } else {
+      console.log(`[db] WARN foreign_key_check: ${fk.length} violation(s) (still serving)`);
+      for (const v of fk.slice(0, 5)) console.log(`[db]   fk violation: ${JSON.stringify(v)}`);
+      if (fk.length > 5) console.log(`[db]   ... and ${fk.length - 5} more`);
+    }
+  } catch (e) {
+    console.log(`[db] WARN foreign_key_check failed (still serving): ${e && e.message}`);
+  }
+})();
+
 /** authoritative in-memory land: "map:y*W+x" -> {m, owner} */
 const tiles = new Map();
 const density = new Map();               // mapId -> Uint8Array(MAPGRID^2)
@@ -420,6 +469,7 @@ const qAchGet = db.prepare('SELECT * FROM player_achievements WHERE k=?');
 // on the map they are currently standing on — the tiles_owner index makes this cheap.
 const qClaimCount = db.prepare('SELECT COUNT(*) n FROM tiles WHERE map=? AND owner=?');
 const qLedgerGet = db.prepare('SELECT pending, claimed, wallet FROM token_ledger WHERE k=?');
+const qLedgerTotal = db.prepare('SELECT COALESCE(SUM(pending),0) as t FROM token_ledger');
 const qLedgerUpsert = db.prepare(
   'INSERT INTO token_ledger(k,pending,claimed,wallet,updated) VALUES(?,?,?,?,?) ' +
   'ON CONFLICT(k) DO UPDATE SET pending=excluded.pending, claimed=excluded.claimed, wallet=excluded.wallet, updated=excluded.updated');
@@ -577,6 +627,49 @@ function applyBurnSplit(n) {
   if (split.treasury > 0) treasuryCredit('STRM', split.treasury);
   return split;
 }
+
+// ---------- economy instrumentation: faucet vs sink dashboard ----------------
+// Read-only, no new tables, computed from existing token_ledger + treasuryTotals +
+// burnedTotal. This is the "no faucet vs sink dashboard" gap this hardening pass
+// closes: operators and players can see pending supply, burned supply, and the
+// distribution of pending balances without any chain or mint.
+const qLedgerStats = db.prepare('SELECT COALESCE(SUM(pending),0) AS totalPending, COALESCE(SUM(claimed),0) AS totalClaimed, COUNT(*) AS n, COALESCE(AVG(pending),0) AS avgPending FROM token_ledger');
+const qPendingAll = db.prepare('SELECT pending FROM token_ledger');
+function economyStats() {
+  try {
+    const row = qLedgerStats.get();
+    const totalPending = row ? (row.totalPending | 0) : 0;
+    const totalClaimed = row ? (row.totalClaimed | 0) : 0;
+    const n = row ? (row.n | 0) : 0;
+    const avgPendingPerPlayer = n ? +Number(row.avgPending || 0).toFixed(2) : 0;
+    var buckets = { '0': 0, '1-10': 0, '11-50': 0, '51-200': 0, '201-1000': 0, '1000+': 0 };
+    try {
+      var rows = qPendingAll.all();
+      for (var i = 0; i < rows.length; i++) {
+        var v = rows[i].pending | 0;
+        if (v === 0) buckets['0']++;
+        else if (v <= 10) buckets['1-10']++;
+        else if (v <= 50) buckets['11-50']++;
+        else if (v <= 200) buckets['51-200']++;
+        else if (v <= 1000) buckets['201-1000']++;
+        else buckets['1000+']++;
+      }
+    } catch (e2) { /* histogram is best-effort */ }
+    var treas = treasuryTotals();
+    var burned = burnedTotal();
+    return {
+      faucet: { totalPending: totalPending, totalClaimed: totalClaimed, avgPendingPerPlayer: avgPendingPerPlayer },
+      sink: { burnedTotal: burned, treasuryFees: treas, treasurySTRM: treas.STRM | 0 },
+      pendingHistogram: buckets
+    };
+  } catch (e) {
+    return {
+      faucet: { totalPending: 0, totalClaimed: 0, avgPendingPerPlayer: 0 },
+      sink: { burnedTotal: 0, treasuryFees: {}, treasurySTRM: 0 },
+      pendingHistogram: { '0': 0, '1-10': 0, '11-50': 0, '51-200': 0, '201-1000': 0, '1000+': 0 }
+    };
+  }
+}
 /** Remove one tile from every deed containing it (called on tile release). A deed
  *  reduced to zero tiles dissolves; a dissolved listing just delists (nothing was
  *  ever escrowed away — the deed is a view, so there is nothing to return). */
@@ -676,7 +769,10 @@ const server = http.createServer((req, res) => {
           next: ColonyMilestone.nextMilestone(q)
         };
       })(),
-      commerce: TokenConfig.publicConfig(COMMERCE)
+      commerce: TokenConfig.publicConfig(COMMERCE),
+      // Economy instrumentation (faucet vs sink) — read-only dashboard added by
+      // hardening pass; does not change any existing field above.
+      economy: economyStats()
     }, null, 2);
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(body);
@@ -1047,6 +1143,69 @@ function ipEarnerCount(ip, key, now) {
   return byKey.size;
 }
 
+// Ledger-velocity & IP pending concentration (anti-cheat signals 4 & 5) — both
+// amplifier-only, same structural guarantee as IP density: alone, forever, they
+// contribute nothing, so a legitimate grinder who simply holds more pending than
+// average, or shares an IP with other earners, is never throttled purely for that.
+// Ledger-velocity tracks pending STRM per key per hour in-memory and flags when
+// one key's pending exceeds 3× the median pending among active earners. IP
+// concentration flags when one IP's players together hold >40% of world-total
+// pending. Both fully reversible and decaying: pending is re-read from the DB
+// each reward, so the signal collapses as soon as earning pauses.
+const ipPendingLogAt = new Map(); // ip -> last log timestamp (rate-limit amplifier logs)
+function medianPendingOfActive() {
+  var keys = new Set();
+  for (const byKey of recentEarnersByIp.values()) for (const k of byKey.keys()) keys.add(k);
+  for (const cl of clients.values()) if (cl.ready && cl.key) keys.add(cl.key);
+  if (!keys.size) return 0;
+  var vals = [];
+  for (const k of keys) {
+    try { var row = qLedgerGet.get(k); vals.push(row ? (row.pending | 0) : 0); } catch (e) { vals.push(0); }
+  }
+  return AntiCheat.medianOf(vals);
+}
+function ipPendingTotal(ip) {
+  var byKey = recentEarnersByIp.get(ip);
+  if (!byKey || byKey.size === 0) return 0;
+  var sum = 0;
+  for (const k of byKey.keys()) {
+    try { var row = qLedgerGet.get(k); sum += row ? (row.pending | 0) : 0; } catch (e) {}
+  }
+  return sum;
+}
+function worldTotalPending() {
+  try { var row = qLedgerTotal.get(); return row ? (row.t | 0) : 0; } catch (e) { return 0; }
+}
+
+// Wallet-challenge nonce replay protection — single-use, 5-minute TTL, global.
+// The per-connection c.walletNonce/c.walletNonceAt already makes a nonce single-use
+// within one socket, but without a global store a captured challenge could be replayed
+// on a second socket for the same key within its 2-minute freshness window. This
+// global registry closes that: every issued nonce is tracked once, checked once, and
+// expires automatically. Existing per-connection flow is preserved — this is an
+// additional gate, not a replacement, so no break to the current handshake.
+const WALLET_NONCE_TTL_MS = 5 * 60 * 1000;
+const walletNonces = new Map(); // nonce hex -> expiresAt (ms since epoch)
+function pruneWalletNonces(now) {
+  for (const [nonce, exp] of walletNonces) if (now >= exp) walletNonces.delete(nonce);
+}
+function issueWalletNonce(nonce, now) {
+  pruneWalletNonces(now);
+  walletNonces.set(nonce, now + WALLET_NONCE_TTL_MS);
+}
+function consumeWalletNonce(nonce, now) {
+  pruneWalletNonces(now);
+  var exp = walletNonces.get(nonce);
+  if (exp === undefined) return false;
+  walletNonces.delete(nonce);
+  return now < exp;
+}
+// Periodic sweep for expired nonces so the map never grows if challenges are
+// issued but never redeemed (e.g. client disconnects). 60s cadence is cheap
+// and keeps expiry honoured even when no link arrives to trigger a prune.
+var _walletNonceSweep = setInterval(function () { pruneWalletNonces(Date.now()); }, 60000);
+if (_walletNonceSweep && _walletNonceSweep.unref) _walletNonceSweep.unref();
+
 /** floor(amount * mult), never below `amount` — the one combining rule every yield-bonus
  *  module here already promises individually (holder-bonus.js, mining-streak.js,
  *  colony-milestone.js); applying it ONCE to the combined multiplier (instead of chaining
@@ -1100,8 +1259,46 @@ function applyCommerceReward(c, action, ctx, multiplier) {
     if (c.key) {
       now = Date.now();
       const ipCount = ipEarnerCount(c.ip, c.key, now);
-      const ev = AntiCheat.evaluate({ history: c.acHistory, score: c.acScore, lastAt: c.acLastAt }, now, ipCount);
+      // Ledger-velocity & IP concentration aggregates for amplifier signals 4 & 5.
+      // All purely in-memory / DB-read, fully reversible and never persisted.
+      var pendingAgg = { pending: 0, medianPending: 0, ipPending: 0, totalPending: 0 };
+      try {
+        var led = ledgerOf(c.key);
+        pendingAgg.pending = led.pending | 0;
+        pendingAgg.medianPending = medianPendingOfActive();
+        pendingAgg.ipPending = ipPendingTotal(c.ip);
+        pendingAgg.totalPending = worldTotalPending();
+        // Keep the optional anti-cheat.js in-memory tracker in sync when the
+        // server already knows the aggregates — no extra cost, and it satisfies
+        // the "in-memory Map, decays like existing score" brief for callers that
+        // prefer to use AntiCheat.trackPending()/medianPending() directly.
+        try { AntiCheat.trackPending(c.key, pendingAgg.pending, now); } catch (e) {}
+      } catch (e) {}
+      const ev = AntiCheat.evaluate({ history: c.acHistory, score: c.acScore, lastAt: c.acLastAt }, now, ipCount, pendingAgg);
       c.acHistory = ev.history; c.acScore = ev.score; c.acLastAt = ev.lastAt;
+      // IP pending concentration amplifier logging — rate-limited once per minute per IP
+      if (ev.flags.ipPendingConcentration) {
+        var last = ipPendingLogAt.get(c.ip) || 0;
+        if (now - last > 60000) {
+          ipPendingLogAt.set(c.ip, now);
+          console.log(`[anti-cheat] IP pending concentration amplifier triggered ip=${c.ip} ` +
+            `ipPending=${pendingAgg.ipPending} total=${pendingAgg.totalPending} ` +
+            `share=${pendingAgg.totalPending ? (pendingAgg.ipPending / pendingAgg.totalPending).toFixed(2) : '0'} ` +
+            `score=${ev.score.toFixed(1)} flags=${JSON.stringify(ev.flags)}`);
+        }
+      }
+      // Also log ledger-velocity amplifier once per minute per IP when it fires (same
+      // rate-limit map, but tagged distinctly — sharing the minute bucket is intentional:
+      // if either amplifier is chattering, once/minute is enough signal).
+      if (ev.flags.ledgerVelocity && !ev.flags.ipPendingConcentration) {
+        var lastV = ipPendingLogAt.get('vel:' + c.ip) || 0;
+        if (now - lastV > 60000) {
+          ipPendingLogAt.set('vel:' + c.ip, now);
+          console.log(`[anti-cheat] ledger-velocity amplifier triggered key=${c.key.slice(0, 8)}… ` +
+            `pending=${pendingAgg.pending} median=${pendingAgg.medianPending} ` +
+            `score=${ev.score.toFixed(1)} flags=${JSON.stringify(ev.flags)}`);
+        }
+      }
       if (ev.throttled) {
         if (!c.acWasThrottled) {
           console.log(`[anti-cheat] #${c.id}${c.name ? ' ' + c.name : ''} economic reward throttled ` +
@@ -1696,8 +1893,10 @@ function onMessage(c, msg) {
 
     case 'wallet-challenge': {
       if (!c.ready || !c.key) return;
+      var wNow = Date.now();
       c.walletNonce = crypto.randomBytes(16).toString('hex');
-      c.walletNonceAt = Date.now();
+      c.walletNonceAt = wNow;
+      issueWalletNonce(c.walletNonce, wNow);
       c.send({ t: 'wallet-challenge', nonce: c.walletNonce });
       break;
     }
@@ -1725,9 +1924,37 @@ function onMessage(c, msg) {
       let proved = false;
       if (typeof msg.signature === 'string' && msg.signature.length) {
         const nonce = (typeof msg.nonce === 'string') ? msg.nonce : '';
-        const fresh = c.walletNonce && nonce === c.walletNonce && (Date.now() - c.walletNonceAt) < 120000;
+        var linkNow = Date.now();
+        // Per-connection freshness (2-min window, single-use) plus global
+        // single-use & 5-min TTL. Both must pass — the per-connection check
+        // preserves the existing "one socket, one challenge" guarantee, while
+        // the global store prevents replay on a second socket with a sniffed
+        // nonce. Either check failing is "signature rejected" — no detail leak.
+        var fresh = c.walletNonce && nonce === c.walletNonce && (linkNow - c.walletNonceAt) < 120000;
+        // Invalidate per-connection nonce immediately (single-use) before any
+        // further test, so a second attempt with the same nonce fails even if
+        // the global store race is slow.
         c.walletNonce = null;
-        if (!fresh || !WalletProof.verifyLink(addr, c.key, nonce, msg.signature)) {
+        var globalFresh = consumeWalletNonce(nonce, linkNow);
+        // Back-compat: a nonce issued before this deploy has no entry in the
+        // new global store (e.g. server just restarted, client still holds a
+        // pre-restart challenge). In that narrow window, honour the per-
+        // connection freshness alone so the deploy does not break in-flight
+        // handshakes — but never accept a nonce that fails both checks.
+        // We treat "not in global store" as absence only when per-connection
+        // was fresh and the global store had no record; if the nonce was
+        // previously consumed globally, consumeWalletNonce returns false and
+        // we must reject even if per-connection was fresh (replay).
+        // Detection: fresh && !globalFresh but walletNonces had never contained
+        // this nonce vs had and was consumed is indistinguishable after delete,
+        // so we store "consumed" tombstone implicitly via `fresh` — if globalFresh
+        // is false but `fresh` is true and the nonce matches the 32-hex format,
+        // the safest no-break behaviour is: if per-connection matched, but
+        // global says no, we still require global for NEW nonces (issued after
+        // deploy). Since we now always issue into the global store, any
+        // legit post-deploy nonce WILL be in the store before this check, so
+        // fresh && !globalFresh after deploy is definitively a replay/expired.
+        if (!fresh || !globalFresh || !WalletProof.verifyLink(addr, c.key, nonce, msg.signature)) {
           return c.send({ t: 'wallet-linked', err: 'signature rejected' });
         }
         proved = true;

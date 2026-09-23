@@ -115,7 +115,10 @@
   }
 
   // ======================================================================
-  // dialogue — one fresh talk object per call: { name, role, line, actions }
+   // dialogue — one fresh talk object per call: { name, role, line, actions }
+  // Sable is the quest mirror: sableLine() is the SOLE owner of her Sable line;
+  // the quest rail (Quests hint / StratumHud.setQuest) is the sole HUD owner —
+  // no duplicate Sable text exists outside this one function.
   // ======================================================================
 
   function sableLine(q, done, total) {

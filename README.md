@@ -122,9 +122,45 @@ upgrades. Railway and Fly both do; a static host never will.
 Deploy files ship in the repo: `Dockerfile` (used by `railway.toml`), with
 `/api/stats` as the healthcheck. The server already honors `PORT` (set by the host),
 binds `HOST` (default `0.0.0.0` — all interfaces, so LAN peers and tunnels work), and
-reads the world from `STRATUM_DB` — set `STRATUM_DB=/data/world.db` and mount the
-volume at `/data` or every redeploy wipes every claim. Commerce secrets
-(`STRATUM_TOKEN_MINT`, `STRATUM_CLAIM_SIGNER_KEY`) go in the host's env, never in `.env`.
+reads the world from `STRATUM_DB`.
+
+> **⚠️ Persistence: volume required or the world resets.**
+> `server.js` defaults to `data/world.db` inside the container. That path is
+> **ephemeral** — without a mounted volume, every redeploy wipes every claim,
+> which defeats the entire game. You **must** mount a persistent volume and
+> point the DB at it:
+>
+> - **Volume mount:** `/data` (Railway/Fly: create a volume, mount at `/data`)
+> - **Env var:** `STRATUM_DB=/data/world.db`
+>
+> On boot the server logs `[db] path=… journal_mode=wal` and runs
+> `PRAGMA integrity_check` / `foreign_key_check` — warnings are printed loudly
+> but never crash the world (a failed check is an operator alert, not a reason
+> to refuse connections).
+>
+> **Railway dashboard steps** (see `railway.toml` for the comments that ship
+> with the repo):
+> 1. Connect this repo → Railway creates the service using the `Dockerfile`.
+> 2. **Volumes → New Volume → Mount path `/data`** (size 1 GB is plenty; the
+>    world is ~tens of MB even with thousands of claims).
+> 3. **Variables → New Variable → `STRATUM_DB=/data/world.db`** (PORT is set
+>    by Railway; HOST defaults to `0.0.0.0` already).
+> 4. Commerce secrets when ready: `STRATUM_TOKEN_MINT`, `STRATUM_CLAIM_SIGNER_KEY`
+>    (also in Variables — never in `.env`, never committed).
+> 5. Redeploy. Check logs for `[db] path=/data/world.db journal_mode=wal` and
+>    `[db] integrity_check ok`. If you see `WARN`, the world is still serving —
+>    inspect immediately and restore from backup if needed.
+>
+> **Backups:** `node scripts/backup-world.mjs` is an offline, zero-dep copy
+> tool. **Stop the server first** (so WAL is checkpointed — the server does
+> `PRAGMA wal_checkpoint(TRUNCATE)` on SIGTERM/SIGINT), then run:
+> ```
+> node scripts/backup-world.mjs                # -> data/backups/world-<timestamp>.db
+> STRATUM_DB=/data/world.db node scripts/backup-world.mjs --out /backups
+> ```
+> It copies `world.db` plus `-wal`/`-shm` if present, verifies
+> `PRAGMA integrity_check` via `node:sqlite` when available, and prints sizes.
+> Keep at least one backup off the host (download or S3).
 
 ### Mobile
 

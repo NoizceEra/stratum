@@ -2146,6 +2146,9 @@
     if (questTitleEl) questTitleEl.textContent = 'FIRST EXTRACTION';
     if (questHintEl) questHintEl.textContent = 'Walk to a tree or ore seam and LMB';
   }
+  // HUD quest rail — single owner. refreshQuest() is the ONLY caller of
+  // setQuest(); settlers (Sable etc.) expose questAction/line via Settlers.talk()
+  // but never write the HUD themselves — one call path, no duplicate Sable line.
   window.StratumHud = {
     markSeenClaimStats: function () { document.body.classList.add('seen-claim-stats'); },
     completeOnboarding: function () {
@@ -2194,6 +2197,18 @@
     };
   }
   var lastQuestId = '';
+  // settler talk affordance: once-per-session per settler, non-spammy. Stored in a
+  // local Set so refresh across reload is intentional — hint again next session.
+  var hintedSettlers = new Set();
+  function maybeHintSettler() {
+    if (!S.ready || S.map !== 0 || !window.Settlers || S.npcOpen) return;
+    if (document.body.classList.contains('quests-done')) return;
+    var near = settlerNear(S.x, S.y);
+    if (!near || hintedSettlers.has(near.id)) return;
+    hintedSettlers.add(near.id);
+    // subtle, single toast — quest panel remains single owner via StratumHud.setQuest
+    toast('Talk to ' + near.name + ' nearby — tap them', true);
+  }
   function refreshQuest(announce) {
     if (!window.Quests || !window.StratumHud) return;
     if (document.body.classList.contains('quests-done')) return;
@@ -3669,6 +3684,10 @@
     document.getElementById('h-remain').textContent = (S.total - S.claimed).toLocaleString();
     var quotaEl = document.getElementById('h-quota');
     if (quotaEl) quotaEl.textContent = (S.colonyQuota | 0).toLocaleString();
+    var pctCompact = document.getElementById('h-pct-compact');
+    if (pctCompact) pctCompact.textContent = ((S.claimed / S.total) * 100).toFixed(4) + '%';
+    var quotaCompact = document.getElementById('h-quota-compact');
+    if (quotaCompact) quotaCompact.textContent = (S.colonyQuota | 0).toLocaleString();
     // personal claims only — world S.claimed is the map total and would unveil this on day one
     if (S.personalClaims > 0) document.body.classList.add('seen-claim-stats');
     document.getElementById('h-kills').textContent = S.kills;
@@ -3692,6 +3711,7 @@
     }
     updateAchHud();
     refreshQuest(false);
+    maybeHintSettler();
     if (tlPanel) tlPanel.classList.toggle('hurt', S.hurt > 0.25);
     if (tlPanel) tlPanel.classList.toggle('critical', S.hp > 0 && S.hp / S.maxHp < 0.25);
     // target frame

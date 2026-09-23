@@ -222,6 +222,7 @@
     <span class="k" style="margin-left:8px">online</span> <span class="v" id="h-online">0</span>
   </div>
   <div><span class="k">at</span> <span class="v" id="h-pos">0, 0</span></div>
+  <div id="h-compact" class="k" style="display:none;margin-top:6px;font-size:10px"><span class="k">claimed</span> <span class="v" id="h-pct-compact">0%</span> · <span class="k">shipped</span> <span class="v gold" id="h-quota-compact">0</span></div>
   <div class="bar" id="hpbar"><div></div></div>
   <div class="barlab"><span>life</span><span id="h-hp">100 / 100</span></div>
   <div class="bar" id="willbar"><div></div></div>
@@ -472,6 +473,8 @@
   #pbtns button:active{background:rgba(224,205,160,.22)}
   body.touch #hud-br{max-width:46vw}
   body.touch #hotbar .chip{padding:9px 7px;font-size:10px}
+  body.touch #hotbar .slot{width:44px;height:44px;min-width:44px;min-height:44px}
+  body.touch #hotbar .slot .n{font-size:9px}
   body.touch #gate .box{width:92vw;padding:22px 18px}
   body.touch #gate .rules{font-size:12.5px}
   /* quest rail: stay clear of the stick (bottom-left) and side panels */
@@ -490,6 +493,15 @@
     #hud-tl h1{font-size:12px;letter-spacing:.2em}
     #hud-tr .big{font-size:19px}
     .slot{width:25px;height:25px}
+  }
+  /* <480px: 4 corner panels + hotbar + stick crowded — collapse hud-tr (claims/quota)
+     into hud-tl's compact line so top row is one panel, not two fighting the quest rail. */
+  @media (max-width:480px){
+    #hud-tr{display:none}
+    #h-compact{display:block !important}
+    #hud-tl{max-width:62vw}
+    #hud-br{max-width:42vw}
+    #hud-quest{top:calc(46px + env(safe-area-inset-top));max-width:68vw}
   }
   /* short screens (landscape phone): trim vertical bulk, and move the buttons to a
      horizontal row along the bottom where there is room, instead of a right-edge

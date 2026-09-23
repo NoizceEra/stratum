@@ -51,7 +51,9 @@ while ((m = dupRe.exec(html)) !== null) {
   if (seen.has(id)) dups.add(id); else seen.add(id);
 }
 
-const missing = [...wanted].filter(id => !present.has(id)).sort();
+// parcel modal inputs are injected via innerHTML, not static HTML — allowlist them
+const DYNAMIC_ALLOW = new Set(['parcel-cancel-modal', 'parcel-confirm-list', 'parcel-price-item', 'parcel-price-qty']);
+const missing = [...wanted].filter(id => !present.has(id) && !DYNAMIC_ALLOW.has(id)).sort();
 const bad = [];
 
 if (missing.length) bad.push('ids referenced by game.js but absent from index.html: ' + missing.join(', '));
@@ -75,6 +77,10 @@ need('camera snap on resize', /S\.cam\.x\s*=\s*S\.x/.test(game), 'resize() must 
 for (const ev of ['touchstart', 'touchmove', 'touchend']) {
   need('canvas ' + ev, game.indexOf("cv.addEventListener('" + ev + "'") >= 0, "canvas '" + ev + "' handler missing");
 }
+need('compact hud-tr collapse', /@media\s*\(max-width:\s*480px\)/.test(html) && /#hud-tr\s*\{\s*display\s*:\s*none/.test(html), '@media (max-width:480px) must hide #hud-tr');
+need('compact line in hud-tl', /id="h-compact"/.test(html), '#h-compact missing (compact claims/quota for <480px)');
+need('hotbar 44px tap target', /#hotbar\s*\.slot[^}]*44px/.test(html), 'body.touch #hotbar .slot must be >=44px tap target');
+need('stick safe-area', /#stick[^}]*env\(safe-area-inset-bottom\)/.test(html), '#stick must use env(safe-area-inset-bottom)');
 
 if (bad.length) {
   console.error('HUDCHECK FAILED (' + bad.length + ')');
