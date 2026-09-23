@@ -65,9 +65,17 @@
     transition:opacity .18s;pointer-events:none;font-size:11px;text-align:center;max-width:80vw}
   #toast.on{opacity:1}
   #toast.good{background:rgba(30,80,40,.92);border-color:rgba(120,220,140,.5)}
-  #gate{position:fixed;inset:0;background:radial-gradient(circle at 50% 42%,#14161d,#070810 72%);
-    display:flex;align-items:center;justify-content:center;z-index:70}
-  #gate .box{width:min(600px,92vw);text-align:center}
+  /* html/body are overflow:hidden globally (the in-game HUD wants a fixed, non-scrolling
+     viewport) — but the gate screen's own content (rules text + avatar grid + button) can
+     be taller than a short/landscape screen. Without its own scroll, that overflow is just
+     unreachable: no way to scroll to the submit button, name field stuck off-canvas, etc.
+     `overflow-y:auto` here, plus `align-items:safe center` (falls back to plain `center`
+     on older engines that don't parse `safe`), lets the box scroll into view instead of
+     silently clipping off both ends of a flex-centered element. */
+  #gate{position:fixed;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    background:radial-gradient(circle at 50% 42%,#14161d,#070810 72%);
+    display:flex;align-items:center;align-items:safe center;justify-content:center;z-index:70}
+  #gate .box{width:min(600px,92vw);text-align:center;margin:24px 0}
   #gate h1{font-size:30px;letter-spacing:.5em;margin-left:.5em}
   #gate p{color:var(--dim);margin-top:14px;line-height:1.9;font-size:11.5px}
   #gate .rules{margin:18px auto 0;text-align:left;display:inline-block;color:var(--dim);font-size:11px;line-height:1.85}
@@ -514,6 +522,18 @@
     #pbtns{right:auto;left:50%;top:auto;bottom:calc(8px + env(safe-area-inset-bottom));
       transform:translateX(-50%);flex-direction:row;gap:7px}
     #pbtns button{padding:9px 11px;min-width:56px;font-size:10px}
+    /* landscape phone: the touch top:34% rule above was tuned for a tall portrait
+       screen, where it clears the corner panels because there's vertical room to
+       spare. In landscape there almost never is — hud-tl alone (title + stats +
+       a 10-slot, 44px-wide touch hotbar) commonly runs wider than half the screen,
+       so there is no horizontal gap left for a third top-center element regardless
+       of where it sits vertically. Rather than reposition it into a collision that
+       just moves around, hide it here — same call the codebase already makes for
+       hud-tr at <480px width when there's genuinely no room (see above). It's a
+       first-session hint only (pointer-events:none, gone forever once quests are
+       done), not a control, so losing it in the tightest layout costs nothing a
+       player can't get from the guide. */
+    #hud-quest{display:none}
   }
 </style>
 
