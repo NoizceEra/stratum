@@ -35,7 +35,7 @@
 
   /**
    * Harvested resources (first four) plus soft currency `gold` from commerce rewards.
-   * Silver is earned via Rewards, not nodes — it still rides in `inv` so shops/trade
+   * Gold is earned via Rewards, not nodes — it still rides in `inv` so shops/trade
    * can price in it once listings allow.
    */
   var RESOURCES = ['wood', 'ore', 'herb', 'crystal', 'gold'];

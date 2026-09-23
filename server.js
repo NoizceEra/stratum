@@ -1787,7 +1787,7 @@ function onMessage(c, msg) {
       break;
     }
 
-    // Silver <-> pending STRM. Wallet required. Fee is STRM added to the treasury
+    // Gold <-> pending STRM. Wallet required. Fee is STRM added to the treasury
     // vault. This does not broadcast a chain transaction — claim is the only
     // path that moves STRM onto a wallet.
     case 'convert': {
