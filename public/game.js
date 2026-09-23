@@ -360,6 +360,17 @@
   function sel(g, x, y, rx, ry) { g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, TAU); g.fill(); }
 
   var NODESPR = {}, SHIM = [], FOAM = [], WET = [], GLOW_LAMP = null, GLOW_CRYS = null, GLOW_WARN = null;
+  // per-kind ready glow + pip color, keyed by NODE_KINDS id (1=wood,2=ore,3=herb,4=crystal) —
+  // reuses the same hues already painted into each sprite so glow and sprite always agree.
+  var NODE_GLOW = {}, NODE_COLOR = { 1: '#57a041', 2: '#eccf7e', 3: '#8fd05e', 4: '#8fe4ff' };
+  // yield amount + respawn duration per kind id, read once from the shared data table
+  // (terrain.js) so the renderer never hardcodes balance numbers that live elsewhere.
+  var NODE_AMOUNT = {}, NODE_RESPAWN = {};
+  for (var nk in T.NODE_KINDS) {
+    var nkd = T.NODE_KINDS[nk];
+    NODE_AMOUNT[nkd.id] = nkd.amount;
+    NODE_RESPAWN[nkd.id] = nkd.respawnMs;
+  }
   var VIG_DARK = null, VIG_RED = null, VIG_ALIEN = null;
 
   // ---------- space-colony ambience --------------------------------------
@@ -963,6 +974,15 @@
       case 'drop-gone': S.drops.delete(nkN(m.x, m.y)); break;
 
       case 'structure': applyStructure(m); break;
+      case 'structure-gone': S.structures.delete(nkN(m.x, m.y)); break;
+      case 'structure-released': {
+        if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
+        S.structures.delete(nkN(m.x, m.y));
+        toast('REMOVED: ' + String(m.kind || '').toUpperCase(), true);
+        sfx('release');
+        if (window.StratumHud) window.StratumHud.noteAction();
+        break;
+      }
       case 'built': {
         if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
         if (m.inv) S.inv = m.inv;
@@ -1457,8 +1477,16 @@
     if (!s || typeof s.x !== 'number' || typeof s.y !== 'number' || !s.kind) return;
     S.structures.set(nkN(s.x, s.y), {
       id: s.id, kind: s.kind, x: s.x, y: s.y, owner: s.owner,
-      accrued: s.accrued || 0, capacity: s.capacity || 0, resource: s.resource
+      accrued: s.accrued || 0, capacity: s.capacity || 0, resource: s.resource,
+      blocksMovement: !!s.blocksMovement
     });
+  }
+  /** True if SOMETHING physically solid sits on tile (x,y) — the client-side mirror of
+   *  server.js's authoritative wall check in case 'move'. Prediction only: the server
+   *  still has the final say, this just keeps movement from feeling laggy/wrong. */
+  function blockedAt(x, y) {
+    var st = S.structures.get(nkN(x, y));
+    return !!(st && st.blocksMovement);
   }
   function pruneEdits() {
     var keep = new Map(), lamps = new Set();
@@ -1527,6 +1555,9 @@
       if (sdx * sdx + sdy * sdy > S.reach * S.reach) return toast('OUT OF REACH — ' + S.reach + ' TILES MAX');
       if (st.owner !== S.key) return toast(st.kind.toUpperCase() + ' — NOT YOURS');
       faceTowards(sdx, sdy);
+      // A wall makes nothing to collect — clicking your own one tears it down instead,
+      // the same "click it to undo it" gesture RELEASE already uses for a claimed tile.
+      if (st.blocksMovement) { send({ t: 'release-structure', x: x, y: y }); return; }
       // Shift+click pays STRM to instantly finish the wait instead of collecting what
       // has accrued so far — see src/token-sink.js's rushCost() for the pricing.
       if (keys['shift']) send({ t: 'structure-rush', x: x, y: y });
@@ -2230,11 +2261,15 @@
       var d = defs[i];
       var locked = d.tier > (S.tool | 0);
       var afford = !locked && canPay(d.cost);
-      var perMin = Math.round(d.ratePerMs * 60000 * 10) / 10;
+      // A blocker (wall) makes nothing — describe it as an obstacle instead of a
+      // producer, rather than assuming every catalog entry has a `produces` string.
+      var descLine = d.blocksMovement
+        ? 'BLOCKS MOVEMENT — A PHYSICAL OBSTACLE, PLACE + CLICK TO REMOVE'
+        : 'MAKES ' + d.produces.toUpperCase() + ' — ~' + (Math.round(d.ratePerMs * 60000 * 10) / 10) + '/min, CAPS AT ' + d.capacity;
       html += '<div class="mcard' + (locked ? ' locked' : '') + '" data-kind="' + d.id + '">' +
         '<div class="nm">' + d.name.toUpperCase() +
         (locked ? ' <span class="tier">— NEEDS TIER ' + d.tier + ' TOOLS</span>' : '') + '</div>' +
-        '<div class="tier">MAKES ' + d.produces.toUpperCase() + ' — ~' + perMin + '/min, CAPS AT ' + d.capacity + '</div>' +
+        '<div class="tier">' + descLine + '</div>' +
         '<div class="cost ' + (afford ? 'can' : 'cant') + '">' + costText(d.cost) + '</div></div>';
     }
     list.innerHTML = html;
@@ -2555,7 +2590,7 @@
         if (L > 0.04) {
           var nx = Math.max(1, Math.min(W - 2, S.x + vx * sp));
           var ny = Math.max(1, Math.min(H - 2, S.y + vy * sp));
-          if (tileAt(Math.round(nx), Math.round(ny)) !== 0) { S.x = nx; S.y = ny; }
+          if (tileAt(Math.round(nx), Math.round(ny)) !== 0 && !blockedAt(Math.round(nx), Math.round(ny))) { S.x = nx; S.y = ny; }
           faceTowards(vx, vy);
           S.moving = 1;
           S.walk += dt * 10.5 * (0.55 + L);
@@ -2618,6 +2653,14 @@
   function takeDrop(dr) {
     if (dr.x < Z_X0 || dr.x > Z_X1 || dr.y < Z_Y0 || dr.y > Z_Y1) return;
     znew(dr.y + 0.5, 5, dr);
+  }
+  // Only a blocking structure (a wall) needs a world sprite of its own right now — the
+  // four idle producers have no on-map art yet (they only ever render inside the [I]
+  // panel), and this task's scope is the obstacle, not filling that gap in.
+  function takeStructure(st) {
+    if (!st.blocksMovement) return;
+    if (st.x < Z_X0 || st.x > Z_X1 || st.y < Z_Y0 || st.y > Z_Y1) return;
+    znew(st.y + 0.6, 7, st);
   }
   /** The two static space-colony landmarks (see resolveLandmarks()) — decorative only,
    *  y-sorted into the same pass as every other entity so the player can walk in front
@@ -2763,6 +2806,7 @@
     takeLandmarks();
     S.nodes.forEach(takeNode);
     S.drops.forEach(takeDrop);
+    S.structures.forEach(takeStructure);
     S.mons.forEach(takeMon);
     S.remotes.forEach(takeRemote);
     SELF.x = S.x; SELF.y = S.y;
@@ -2773,11 +2817,15 @@
       var e = zlist[z], rr = e.r, kk = e.k;
       var ex, ey;
       if (kk === 4) { ex = ox + S.x * s; ey = oy + S.y * s; }
+      // A structure is stationary (no walk/chase interpolation like mons/remotes carry),
+      // so it is anchored straight off its tile coords rather than an .rx/.ry pair.
+      else if (kk === 7) { ex = ox + rr.x * s; ey = oy + rr.y * s; }
       else { ex = ox + rr.rx * s; ey = oy + rr.ry * s; }
       if (kk === 1) drawNodeSprite(ex, ey, s, rr, now);
       else if (kk === 5) drawDropSprite(ex, ey, s, now);
       else if (kk === 2) drawMonster(ex, ey, s, rr, now);
       else if (kk === 6) drawLandmark(ex, ey, s, rr, now);
+      else if (kk === 7) drawWallSprite(ex, ey, s, rr, now);
       else if (kk === 3) {
         drawAvatar(ex, ey, s, now, rr.body || '#b7c8dc', rr.trim || '#7f93a8', rr.faceX, rr.faceY, rr.walk, rr.moving, -1, 0, rr.hat, rr.cloak, rr.scarf);
         ctx.font = '10px ui-monospace,monospace'; ctx.textAlign = 'center';
@@ -2890,6 +2938,23 @@
     ctx.globalAlpha = 1;
   }
 
+  // ---------- blocking structures (a wall) ---------------------------------
+  // Deliberately NOT idle-structure-shaped: no accrual bar, no resource glow — a wall
+  // reads as a solid obstacle at a glance, which is the whole point of the thing. Drawn
+  // as a squat stone block, own-vs-someone-else's tinted so a player can tell at a
+  // distance whether it is theirs to walk through the release flow on.
+  function drawWallSprite(x, y, s, st, now) {
+    var mine = st.owner === S.key;
+    var top = mine ? '#8f9aa8' : '#6b6459', side = mine ? '#5c6773' : '#443f38';
+    var bx = x - s * 0.42, by = y - s * 0.62, bw = s * 0.84, bh = s * 0.62;
+    ctx.fillStyle = side;
+    ctx.fillRect(Math.round(bx), Math.round(by + s * 0.14), Math.round(bw), Math.round(bh));
+    ctx.fillStyle = top;
+    ctx.fillRect(Math.round(bx), Math.round(by), Math.round(bw), Math.round(s * 0.22));
+    ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1;
+    ctx.strokeRect(Math.round(bx) + 0.5, Math.round(by) + 0.5, Math.round(bw) - 1, Math.round(bh + s * 0.14) - 1);
+  }
+
   // ---------- death drops (src/drops.js) -----------------------------------
   // Deliberately minimal: a pulsing silver dot marks a loot cache. It is not the focus.
   function drawDropSprite(x, y, s, now) {
@@ -2906,32 +2971,75 @@
   }
 
   // ---------- node sprites in the world -----------------------------------
+  // Every kind gets its own colour-coded "ready" glow (NODE_GLOW/NODE_COLOR) so a node
+  // reads as harvestable-and-of-type from a distance, not just from its baked silhouette.
+  // Depleted nodes desaturate further than before and grow a regrow-progress ring instead
+  // of a bare countdown number, so "how soon" is visible at a glance without reading text.
   function drawNodeSprite(x, y, s, nd, now) {
     var alive = nd.state === 1;
     var arr = NODESPR[nd.kind];
     if (!arr) return;
     var vi = T.hash2(nd.x, nd.y, 7) % arr.length;
     var spr2 = arr[vi];
-    var sway = alive ? Math.sin(now * 0.0012 + nd.x * 0.7 + nd.y * 0.3) * s * 0.012 : 0;
-    ctx.globalAlpha = alive ? 1 : 0.3;
-    if (nd.kind === 4 && alive) {                        // crystal glow, additive
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.drawImage(GLOW_CRYS, x - s * 1.1, y - s * 1.1, s * 2.2, s * 2.2);
-      ctx.globalCompositeOperation = 'source-over';
+    var cx = x + s * 0.5, cy = y + s * 0.5;
+    var glow = NODE_GLOW[nd.kind];
+
+    if (alive) {
+      // breathing ready-glow, colour-matched per kind, drawn under the sprite
+      var pulse = 0.5 + 0.5 * Math.sin(now * 0.0022 + nd.x * 0.9 + nd.y * 0.4);
+      var gs = s * (nd.kind === 4 ? 2.2 : 1.7);
+      if (glow) {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = (nd.kind === 4 ? 0.55 : 0.30) + pulse * 0.22;
+        ctx.drawImage(glow, cx - gs / 2, cy - gs / 2, gs, gs);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+    } else {
+      // a faint dark disc under a depleted node so the bare tile still reads as "was here"
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.ellipse(cx, y + s * 0.82, s * 0.34, s * 0.14, 0, 0, TAU); ctx.fill();
     }
+
+    var sway = alive ? Math.sin(now * 0.0012 + nd.x * 0.7 + nd.y * 0.3) * s * 0.012 : 0;
+    ctx.globalAlpha = alive ? 1 : 0.24;
     ctx.drawImage(spr2, Math.round(x + sway), Math.round(y), Math.round(s), Math.round(s));
     if (nd.kind === 4 && alive) {                        // soft twinkle on top
       ctx.globalAlpha = 0.18 + 0.16 * Math.sin(now * 0.004 + nd.x);
       ctx.drawImage(GLOW_CRYS, x - s * 0.6, y - s * 0.4, s * 1.2, s * 1.2);
     }
     ctx.globalAlpha = 1;
-    if (!alive) {   // regrowth countdown on the tile itself
-      var left = Math.max(0, Math.ceil((nd.until - Date.now()) / 1000));
-      if (left > 0 && s >= 13) {
+
+    if (!alive) {
+      // regrow-progress ring, colour-matched to the kind, plus the countdown it replaces
+      var total = NODE_RESPAWN[nd.kind] || 1, left = Math.max(0, nd.until - Date.now());
+      var frac = 1 - Math.min(1, left / total);
+      if (frac > 0) {
+        var rr = s * 0.62;
+        ctx.lineWidth = Math.max(1, s * 0.09);
+        ctx.strokeStyle = NODE_COLOR[nd.kind] || '#cbbf9a';
+        ctx.globalAlpha = 0.75;
+        ctx.beginPath(); ctx.arc(cx, cy, rr, -Math.PI / 2, -Math.PI / 2 + TAU * frac); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      var leftSec = Math.ceil(left / 1000);
+      if (leftSec > 0 && s >= 13) {
         ctx.font = Math.max(7, s * 0.42) + 'px ui-monospace,monospace';
         ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText(left + 's', x + s * 0.5 + 1, y + s * 0.9 + 1);
-        ctx.fillStyle = '#cbbf9a'; ctx.fillText(left + 's', x + s * 0.5, y + s * 0.9);
+        ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText(leftSec + 's', x + s * 0.5 + 1, y + s * 0.9 + 1);
+        ctx.fillStyle = '#cbbf9a'; ctx.fillText(leftSec + 's', x + s * 0.5, y + s * 0.9);
+      }
+    } else {
+      // yield-amount pips — how many hits' worth this node carries, zoom-gated like the
+      // countdown above so they never clutter a zoomed-out view
+      var amt = NODE_AMOUNT[nd.kind] || 1;
+      if (s >= 13 && amt > 1) {
+        ctx.fillStyle = NODE_COLOR[nd.kind] || '#cbbf9a';
+        var pw = Math.max(2, s * 0.11), gap = pw * 1.6;
+        var px0 = cx - (amt - 1) * gap * 0.5;
+        for (var pi = 0; pi < amt; pi++) {
+          ctx.fillRect(Math.round(px0 + pi * gap - pw / 2), Math.round(y + s * 0.94), Math.round(pw), Math.round(pw * 0.7));
+        }
       }
     }
   }
@@ -3352,6 +3460,10 @@
     GLOW_LAMP = mkGlow('255,214,140', 64);
     GLOW_CRYS = mkGlow('150,230,255', 64);
     GLOW_WARN = mkGlow('255,120,80', 64);
+    NODE_GLOW[1] = mkGlow('110,200,80', 48);   // wood — leafy green
+    NODE_GLOW[2] = mkGlow('236,198,104', 48);  // ore — warm amber
+    NODE_GLOW[3] = mkGlow('160,220,110', 48);  // herb — bright green
+    NODE_GLOW[4] = GLOW_CRYS;                  // crystal keeps its existing cyan glow
     buildVignette();
     bakeLandmarkSprites();
     buildMapBase(0);

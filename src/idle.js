@@ -94,12 +94,29 @@
       id: 'smoker', name: 'smoker', tier: 2,
       cost: { wood: 8, ore: 2 },
       produces: 'charcoal', ratePerMs: 1 / (40 * 1000), capacity: 24    // ~1 charcoal / 40s, caps at 24
+    },
+    // A wall produces nothing — it is a physical obstacle, not a producer. `produces: null`,
+    // `ratePerMs: 0`, `capacity: 0` keep it flowing through the exact same accrual/collect
+    // machinery as every other structure (accrued() always resolves to 0, collect() is a
+    // guarded no-op below) instead of forking a second code path just for this one field.
+    // `blocksMovement` is the one truly new concept: server.js's move handler and the
+    // client's movement prediction both consult it to treat this tile as solid.
+    wall: {
+      id: 'wall', name: 'wall', tier: 0,
+      cost: { wood: 4, ore: 4 },
+      produces: null, ratePerMs: 0, capacity: 0, blocksMovement: true
     }
   });
 
   /** The structure definition for a kind id, or null. */
   function structureOf(kind) {
     return Object.prototype.hasOwnProperty.call(STRUCTURES, kind) ? STRUCTURES[kind] : null;
+  }
+
+  /** True if a built structure of `kind` physically blocks movement (e.g. a wall). */
+  function blocksMovement(kind) {
+    var d = structureOf(kind);
+    return !!(d && d.blocksMovement);
   }
 
   /** Every structure kind unlocked at tool `tier` (its own tier and below); [] if bogus. */
@@ -172,7 +189,9 @@
    */
   function collect(struct, inv, now) {
     var d = structureOf(struct && struct.kind);
-    if (!d) return { struct: struct, inv: cloneInv(inv), gained: 0, resource: null };
+    // A non-producing structure (a wall) has nothing to collect, ever — treat it exactly
+    // like a no-op collect rather than writing a bogus `inv[null]` key into the save.
+    if (!d || !d.produces) return { struct: struct, inv: cloneInv(inv), gained: 0, resource: null };
     var gained = accrued(struct, now);
     var nextInv = cloneInv(inv);
     nextInv[d.produces] = held(nextInv, d.produces) + gained;
@@ -197,6 +216,7 @@
   return {
     STRUCTURES: STRUCTURES,
     structureOf: structureOf,
+    blocksMovement: blocksMovement,
     structuresForTier: structuresForTier,
     buildCost: buildCost,
     makeStructure: makeStructure,

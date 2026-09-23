@@ -380,6 +380,7 @@ function bumpOwner(owner, d) {
 const qTile = db.prepare('INSERT OR REPLACE INTO tiles(map,x,y,m,owner,ts) VALUES(?,?,?,?,?,?)');
 const qDel = db.prepare('DELETE FROM tiles WHERE map=? AND x=? AND y=?');
 const qStruct = db.prepare('INSERT OR REPLACE INTO structures(id,kind,map,x,y,owner,builtAt,lastCollectedAt) VALUES(?,?,?,?,?,?,?,?)');
+const qStructDel = db.prepare('DELETE FROM structures WHERE id=?');
 const qPlay = db.prepare(
   'INSERT OR REPLACE INTO players(k,name,hue,created,last,paletteId,bodyHue,trimHue,accessories) VALUES(?,?,?,?,?,?,?,?,?)');
 const qPlayGet = db.prepare('SELECT name,hue,paletteId,bodyHue,trimHue,accessories FROM players WHERE k=?');
@@ -968,7 +969,7 @@ function structuresForChunk(map, cx, cy) {
     if (s.map !== map || s.x < x0 || s.x >= x0 + CHUNK || s.y < y0 || s.y >= y0 + CHUNK) continue;
     const def = Idle.structureOf(s.kind);
     if (!def) continue;
-    out.push({ id: s.id, kind: s.kind, x: s.x, y: s.y, owner: s.owner, accrued: Idle.accrued(s, now), capacity: def.capacity, resource: def.produces });
+    out.push({ id: s.id, kind: s.kind, x: s.x, y: s.y, owner: s.owner, accrued: Idle.accrued(s, now), capacity: def.capacity, resource: def.produces, blocksMovement: !!def.blocksMovement });
   }
   return out;
 }
@@ -1004,8 +1005,15 @@ function broadcastStructure(map, x, y, struct) {
   const cx = T.chunkOf(x), cy = T.chunkOf(y), k = subKey(map, cx, cy);
   const def = Idle.structureOf(struct.kind);
   if (!def) return;
-  const payload = { t: 'structure', map, id: struct.id, kind: struct.kind, x, y, owner: struct.owner, accrued: 0, capacity: def.capacity, resource: def.produces };
+  const payload = { t: 'structure', map, id: struct.id, kind: struct.kind, x, y, owner: struct.owner, accrued: 0, capacity: def.capacity, resource: def.produces, blocksMovement: !!def.blocksMovement };
   for (const c of clients.values()) if (c.ready && c.subs.has(k)) c.send(payload);
+}
+
+/** A structure was removed (owner released it) — tell everyone nearby so it disappears
+ *  from their map too, same delivery shape as broadcastDropGone. */
+function broadcastStructureGone(map, x, y) {
+  const cx = T.chunkOf(x), cy = T.chunkOf(y), k = subKey(map, cx, cy);
+  for (const c of clients.values()) if (c.ready && c.subs.has(k)) c.send({ t: 'structure-gone', map, x, y });
 }
 
 /** A loot cache appeared (death, or a partial pickup leaving a remainder) — tell everyone nearby. */
@@ -1265,7 +1273,7 @@ function cleanText(v, max) {
 // server never dispatches a type it does not know, so a new type cannot reach any code
 // path by accident.
 const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', 'attack', 'travel', 'map', 'ping', 'craft', 'toolup', 'pickup',
-  'build-structure', 'collect-structure', 'structure-rush', 'set-look',
+  'build-structure', 'collect-structure', 'structure-rush', 'release-structure', 'set-look',
   'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote',
   'parcel-mint', 'parcel-list', 'parcel-buy', 'parcel-cancel', 'parcel-browse', 'parcel-mine',
   'wallet-link', 'wallet-challenge', 'claim', 'convert', 'requisition', 'salvage']);
@@ -1358,7 +1366,11 @@ function onMessage(c, msg) {
           tools: ECO.TOOL_TIERS.map(t => ({ tier: t.tier, id: t.id, name: t.name, cost: Object.assign({}, t.cost) })),
           structures: Object.keys(Idle.STRUCTURES).map(k => {
             const d = Idle.STRUCTURES[k];
-            return { id: d.id, name: d.name, tier: d.tier, cost: Object.assign({}, d.cost), produces: d.produces, ratePerMs: d.ratePerMs, capacity: d.capacity };
+            return {
+              id: d.id, name: d.name, tier: d.tier, cost: Object.assign({}, d.cost),
+              produces: d.produces, ratePerMs: d.ratePerMs, capacity: d.capacity,
+              blocksMovement: !!d.blocksMovement
+            };
           })
         },
         world: { w: W, h: H, chunk: CHUNK },
@@ -1426,7 +1438,13 @@ function onMessage(c, msg) {
       c.lastMove = now;
       const maxStep = dt * 14 + 2;                       // ~14 tiles/s + latency slack
       const dx = mx - c.x, dy = my - c.y;
-      if (dx * dx + dy * dy <= maxStep * maxStep) { c.x = mx; c.y = my; }
+      // Anti-cheat: a walled tile is a physical obstacle, so the authoritative server
+      // must refuse to move a player onto it — never just trust the client's own
+      // collision check, which is prediction only (see public/game.js's mirror of this).
+      const blockedByWall = structures.get(structKey(c.map, mx, my));
+      if (dx * dx + dy * dy <= maxStep * maxStep && !(blockedByWall && Idle.blocksMovement(blockedByWall.kind))) {
+        c.x = mx; c.y = my;
+      }
       setView(c, c.x, c.y);
       break;
     }
@@ -2036,6 +2054,27 @@ function onMessage(c, msg) {
         inv: c.inv, tokenPending: c.tokenPending, tokenBurned: burnedTotal()
       });
       if (rRes.gained + quote.gained > 0) checkAchievements(c);
+      break;
+    }
+
+    // Tear down a structure you own — same named-verb pattern as 'release' does for a
+    // claimed tile (no refund, just handing the ground back). This is the only removal
+    // path for a structure; a wall you no longer want goes through here, same as every
+    // idle producer already could have, had anyone needed to remove one before now.
+    case 'release-structure': {
+      if (!c.ready || c.dead) return;
+      if (!isFin(msg.x) || !isFin(msg.y)) return c.send({ t: 'structure-released', err: 'no structure there' });
+      const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
+      if (x === null || y === null) return c.send({ t: 'structure-released', err: 'bounds' });
+      const dstruct = structures.get(structKey(c.map, x, y));
+      if (!dstruct || dstruct.map !== c.map) return c.send({ t: 'structure-released', err: 'no structure there' });
+      if (dstruct.owner !== c.key) return c.send({ t: 'structure-released', err: 'not yours' });
+      const ddx = dstruct.x - c.x, ddy = dstruct.y - c.y;
+      if (ddx * ddx + ddy * ddy > REACH * REACH) return c.send({ t: 'structure-released', err: 'reach', x: dstruct.x, y: dstruct.y });
+      structures.delete(structKey(c.map, x, y));
+      qStructDel.run(dstruct.id);
+      broadcastStructureGone(c.map, dstruct.x, dstruct.y);
+      c.send({ t: 'structure-released', x: dstruct.x, y: dstruct.y, kind: dstruct.kind });
       break;
     }
 
