@@ -2854,9 +2854,11 @@
       var e = zlist[z], rr = e.r, kk = e.k;
       var ex, ey;
       if (kk === 4) { ex = ox + S.x * s; ey = oy + S.y * s; }
-      // A structure is stationary (no walk/chase interpolation like mons/remotes carry),
-      // so it is anchored straight off its tile coords rather than an .rx/.ry pair.
-      else if (kk === 7) { ex = ox + rr.x * s; ey = oy + rr.y * s; }
+      // Nodes, drops and walls are stationary (no walk/chase interpolation like
+      // mons/remotes carry, which is what .rx/.ry are for), so they anchor straight
+      // off tile coords. (Nodes/drops used to ride the .rx/.ry branch with fields
+      // they never have — NaN screen coords, silently never drawn.)
+      else if (kk === 7 || kk === 1 || kk === 5) { ex = ox + rr.x * s; ey = oy + rr.y * s; }
       else { ex = ox + rr.rx * s; ey = oy + rr.ry * s; }
       if (kk === 1) drawNodeSprite(ex, ey, s, rr, now);
       else if (kk === 5) drawDropSprite(ex, ey, s, now);
