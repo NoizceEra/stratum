@@ -11,7 +11,7 @@
 const CA = require('./src/chain-adapter.js');
 const TC = require('./src/token-config.js');
 const { Keypair, PublicKey } = require('@solana/web3.js');
-const { getAssociatedTokenAddressSync } = require('@solana/spl-token');
+const { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } = require('@solana/spl-token');
 
 let failures = 0;
 function check(name, cond) {
@@ -54,13 +54,14 @@ function tokenAcct(amount) {
 function fakeConnection(opts) {
   const o = opts || {};
   const mint = new PublicKey(o.mint || MINT);
-  const tAta = getAssociatedTokenAddressSync(mint, treasuryKp.publicKey).toBase58();
-  const pAta = getAssociatedTokenAddressSync(mint, playerKp.publicKey).toBase58();
+  const progId = o.mintProgramId || TOKEN_PROGRAM_ID;
+  const tAta = getAssociatedTokenAddressSync(mint, treasuryKp.publicKey, false, progId).toBase58();
+  const pAta = getAssociatedTokenAddressSync(mint, playerKp.publicKey, false, progId).toBase58();
   return {
     __fake: true,
     getAccountInfo: async function (pk) {
       const s = pk.toBase58();
-      if (s === mint.toBase58()) return o.mintExists === false ? null : { data: Buffer.alloc(82) };
+      if (s === mint.toBase58()) return o.mintExists === false ? null : { data: Buffer.alloc(82), owner: progId };
       if (s === tAta) {
         if (o.noTreasuryAta) return null;
         return tokenAcct(o.treasuryRaw !== undefined ? o.treasuryRaw : 1000n);
@@ -218,6 +219,17 @@ check('isConfigured-false-without-signer-even-when-marked-real', CA.isConfigured
   check('settleClaim-reports-bad_mint-when-mint-missing',
     noMint.ok === false && noMint.reason === 'bad_mint');
 
+  // STRATUM's real STRM mint is Token-2022 (with a transfer-fee extension), not the
+  // legacy Token program — settleClaim() must detect that from the mint account's own
+  // `owner` field and derive/build against TOKEN_2022_PROGRAM_ID, not assume legacy.
+  // A fixture using the legacy program id (every other case above) would derive
+  // different ATAs than one using Token-2022 for the same mint+wallet, so this only
+  // passes if the program-id detection is actually wired through end to end.
+  const ok2022 = await CA.settleClaim({ key: 'p1', amountUnits: 10, wallet: WALLET }, realEnv,
+    fakeDeps({ mintProgramId: TOKEN_2022_PROGRAM_ID }));
+  check('settleClaim-succeeds-against-a-token-2022-mint',
+    ok2022.ok === true && ok2022.txHash === 'sigTEST123');
+
   const balErr = await CA.settleClaim({ key: 'p1', amountUnits: 10, wallet: WALLET }, realEnv, {
     makeConnection: function () {
       const c = fakeConnection();
@@ -273,10 +285,18 @@ check('isConfigured-false-without-signer-even-when-marked-real', CA.isConfigured
   const decCheckRead = await CA.readBalance(WALLET, realEnv, fakeDeps({ parsed: parsedBal('777') }));
   check('readBalance-applies-decimals-correctly-at-0-decimals', decCheckRead.balance === 777);
 
-  // At 9 decimals (the SPL default), 1_500_000_000 base units read as 1 whole STRM.
+  // At 9 decimals (SPL's own ceiling, still a legal value to explicitly set even
+  // though it doesn't match THIS mint), 1_500_000_000 base units read as 1 whole STRM.
   const nineEnv = Object.assign({}, realEnv, { STRATUM_TOKEN_DECIMALS: '9' });
   const nineRead = await CA.readBalance(WALLET, nineEnv, fakeDeps({ parsed: parsedBal('1500000000') }));
   check('readBalance-floors-base-units-at-9-decimals', nineRead.ok === true && nineRead.balance === 1);
+
+  // An unset/invalid STRATUM_TOKEN_DECIMALS must fall back to 6 — the real STRM mint's
+  // own decimals — not a generic SPL ceiling. Getting this wrong silently encodes every
+  // real transfer amount 1000x too large against this specific mint.
+  const noDecEnv = Object.assign({}, realEnv); delete noDecEnv.STRATUM_TOKEN_DECIMALS;
+  const noDecRead = await CA.readBalance(WALLET, noDecEnv, fakeDeps({ parsed: parsedBal('5000000') }));
+  check('readBalance-falls-back-to-6-decimals-when-unset', noDecRead.ok === true && noDecRead.balance === 5);
 
   // -------------------------------------------------------- settleClaim() — queue serializes real sends
   await (async function () {

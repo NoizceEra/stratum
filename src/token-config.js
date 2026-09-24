@@ -1,18 +1,21 @@
 /**
  * token-config.js — Solana commerce token for STRATUM.
  *
- * STRM lives on Solana mainnet-beta as an SPL token (9 decimals).
+ * STRM (on-chain name "Planet Stratum", on-chain symbol "STRATUM") lives on Solana
+ * mainnet-beta as a Token-2022 mint with a transfer-fee extension (1% per the mint's
+ * own on-chain config, enforced by the token program on every transfer — not something
+ * this codebase adds or can remove), 6 decimals. Minted 2026; mint authority is null
+ * (fixed supply, nobody can mint more), freeze authority is null (no account can be
+ * frozen). See src/chain-adapter.js for the Token-2022-aware settlement code this
+ * mint's program requires (the legacy Token program's instructions do not work against
+ * it — see that file's header).
  *
- * ⚠️ MINT IS STILL A PLACEHOLDER: `tokenMint` below is not a deployed mint —
- * it is a sentinel string, deliberately NOT a valid base58 address, so every
- * readiness gate in this codebase (chain-adapter.js's isConfigured(), the
- * holder-bonus wiring in server.js) treats settlement as not-live until a real
- * SPL mint exists. See contracts/README.md for creating the mint with
- * scripts/create-strm-mint.mjs, and README.md's Commerce section.
- *
- * The treasury *address* is public and safe to ship; the treasury *secret key*
- * lives only in a local, gitignored `.env` (STRATUM_CLAIM_SIGNER_KEY, base58
- * or JSON-array form) on the operator's machine — never in this file.
+ * The mint *address* and the treasury *address* are both public and safe to ship as
+ * real defaults below (same as any public wallet/contract address). The treasury
+ * *secret key* lives only in a local, gitignored `.env` (STRATUM_CLAIM_SIGNER_KEY,
+ * base58 or JSON-array form) on the operator's machine — never in this file, and
+ * setting the mint alone does NOT unlock real settlement; chain-adapter.js's
+ * isConfigured() still requires that signer key before a single unit ever moves.
  *
  * Override at runtime (server only):
  *   STRATUM_TOKEN_MINT (aliases: STRATUM_TOKEN_ADDRESS, STRATUM_CLAIM_TOKEN_ADDR) /
@@ -63,16 +66,16 @@
     explorerTokenUrl: 'https://explorer.solana.com/address/',
     explorerAddressUrl: 'https://explorer.solana.com/address/',
     nativeCurrency: deepFreeze({ name: 'SOL', symbol: 'SOL', decimals: 9 }),
-    /** SPL mint for STRM — sentinel until the real mint is created (see contracts/). */
-    tokenMint: 'STRM_MINT_NOT_YET_DEPLOYED',
+    /** SPL mint for STRM — Token-2022, 6 decimals, verified on mainnet-beta 2026-09-24. */
+    tokenMint: 'EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU',
     /** Alias kept so existing client/server code reading `tokenAddress` keeps working. */
-    tokenAddress: 'STRM_MINT_NOT_YET_DEPLOYED',
+    tokenAddress: 'EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU',
     /** On-chain payout wallet (public). Fresh Solana keypair generated 2026-09-22. */
     treasuryAddress: 'EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo',
     symbol: 'STRM',
     name: 'STRATUM',
-    decimals: 9,
-    placeholder: true
+    decimals: 6,
+    placeholder: false
   });
 
   function copy(cfg) {

@@ -145,8 +145,10 @@ reads the world from `STRATUM_DB`.
 >    world is ~tens of MB even with thousands of claims).
 > 3. **Variables → New Variable → `STRATUM_DB=/data/world.db`** (PORT is set
 >    by Railway; HOST defaults to `0.0.0.0` already).
-> 4. Commerce secrets when ready: `STRATUM_TOKEN_MINT`, `STRATUM_CLAIM_SIGNER_KEY`
->    (also in Variables — never in `.env`, never committed).
+> 4. `STRATUM_TOKEN_MINT` already ships as the real mint in `src/token-config.js`'s
+>    defaults, so it's optional to also set as a Variable. The one secret still
+>    needed for real settlement: `STRATUM_CLAIM_SIGNER_KEY` (in Variables — never
+>    in `.env`, never committed).
 > 5. Redeploy. Check logs for `[db] path=/data/world.db journal_mode=wal` and
 >    `[db] integrity_check ok`. If you see `WARN`, the world is still serving —
 >    inspect immediately and restore from backup if needed.
@@ -239,12 +241,13 @@ the tile grid, or gameplay — it's backdrop, the same way the existing water sh
 
 ## Commerce (Solana)
 
-> ⚠️ **The STRM mint does not exist yet.** `STRATUM_TOKEN_MINT` is the sentinel
-> `STRM_MINT_NOT_YET_DEPLOYED` — deliberately not a valid address, so every
-> readiness gate treats settlement as not-live. Create the mint first
-> (`contracts/README.md` + `scripts/create-strm-mint.mjs`), set
-> `STRATUM_TOKEN_MINT` to the real address, fund the treasury, and settlement
-> engages. Until then, `chain-adapter.js` refuses to settle — see "The claim
+> ✅ **The STRM mint is live.** `STRATUM_TOKEN_MINT` is the real mint,
+> `EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU` (Token-2022, 6 decimals, 1%
+> transfer fee — the mint's own on-chain config, not something this app adds;
+> verified on mainnet-beta 2026-09-24). Read-only features (holder-bonus balance
+> checks) are live now. Real settlement (claim/convert paying out on-chain) still
+> needs `STRATUM_CLAIM_SIGNER_KEY` set — until then `chain-adapter.js` records
+> every claim but refuses to settle it, and nothing is ever lost — see "The claim
 > pipeline" below.
 >
 > (History: STRATUM was originally wired to an EVM chain. The 2026-09-22 switch
@@ -275,7 +278,7 @@ See `.env.example` for overrides.
 
 | | Address |
 |--|--|
-| Placeholder mint (⚠️ sentinel `STRM_MINT_NOT_YET_DEPLOYED` — NOT STRM, replace via `contracts/`) | `STRM_MINT_NOT_YET_DEPLOYED` |
+| STRM mint (live, Token-2022, 6 decimals, 1% transfer fee) | `EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU` |
 | Treasury wallet (public) | `EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo` |
 
 The treasury **secret key** is not in this repo. It lives in a local `.env`
@@ -283,12 +286,12 @@ The treasury **secret key** is not in this repo. It lives in a local `.env`
 operator's machine — never commit `.env`.
 
 ```
-STRATUM_TOKEN_MINT=<the REAL SPL mint — see contracts/>
+STRATUM_TOKEN_MINT=EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU
 STRATUM_TREASURY_ADDRESS=EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo
 STRATUM_CLUSTER=mainnet-beta
 STRATUM_SOLANA_RPC=https://api.mainnet-beta.solana.com
 STRATUM_TOKEN_SYMBOL=STRM
-STRATUM_TOKEN_DECIMALS=9
+STRATUM_TOKEN_DECIMALS=6
 # STRATUM_CLAIM_SIGNER_KEY=…   # local .env only — never committed, never logged
 ```
 
@@ -299,25 +302,28 @@ settlement, but read the next section before assuming that means a payout happen
 `/api/stats` exposes both the soft fee vault (`treasury`) and the on-chain wallet
 (`treasuryWallet` / `commerce`) for operators — the HUD does not show the treasury address.
 
-### The claim pipeline — real signing code, gated behind a real mint
+### The claim pipeline — real signing code, gated behind a signer key
 
 Every claim is genuinely recorded end-to-end: `token_ledger.pending` → a `claim_requests`
 row (id, wallet, amount, status, full audit trail) → `src/chain-adapter.js`. That last step
-now contains **real** SPL transfer code (treasury ATA → player ATA, creating the player's
-ATA in the same transaction when needed, via `@solana/web3.js` + `@solana/spl-token` —
-see below), not a stub — but it still answers `not_configured` today,
-because the STRM mint doesn't exist yet (see the warning above). The pending
-balance is **never decremented** on a `not_configured` answer, so nothing is ever silently
-lost. The HUD reports this plainly ("QUEUED — ON-CHAIN SETTLEMENT NOT YET LIVE"), not as a
-payout, until the gate actually lifts.
+contains **real**, Token-2022-aware SPL transfer code (treasury ATA → player ATA, creating
+the player's ATA in the same transaction when needed, via `@solana/web3.js` +
+`@solana/spl-token` — see below) — the mint is live now, so the only remaining gate is
+`STRATUM_CLAIM_SIGNER_KEY`. Without it, every claim still answers `not_configured`, and the
+pending balance is **never decremented** on that answer, so nothing is ever silently lost.
+The HUD reports this plainly ("QUEUED — ON-CHAIN SETTLEMENT NOT YET LIVE"), not as a
+payout, until a signer is set.
 
 `chain-adapter.js`'s `isConfigured()` requires ALL of: a well-formed RPC URL, mint
 address, treasury address, and secret key — **and** the mint must be explicitly flagged
 as NOT the placeholder (`STRATUM_TOKEN_IS_PLACEHOLDER`, derived automatically from
-`token-config.js`'s `placeholder` flag — never hand-set this). That flag flips the moment
-`STRATUM_TOKEN_MINT` is set to a real mint. A pre-flight treasury-balance check
-refuses a claim the treasury can't actually afford instead of burning SOL on a guaranteed
-failure. See `chain-adapter.js`'s header for the full safety-gate writeup.
+`token-config.js`'s `placeholder` flag — never hand-set this). That flag is already false
+now that `STRATUM_TOKEN_MINT` points at the real mint; a signer key is the only thing
+still missing. A pre-flight treasury-balance check refuses a claim the treasury can't
+actually afford instead of burning SOL on a guaranteed failure. See `chain-adapter.js`'s
+header for the full safety-gate writeup, and its Token-2022 note for why the transfer
+code must specifically detect and target that program (this mint's own owner), not the
+legacy Token program most SPL-transfer examples assume.
 
 **Two more protections for the treasury's SOL**, both purely server-side (no chain
 interaction needed to enforce either):
@@ -459,11 +465,10 @@ under a real rapid-fire burst) in `test-anti-cheat.js` and `test-anti-cheat-inte
 
 Playable and tested. Honest gaps:
 
-- **On-chain settlement is not live** — the transfer code is real (see "The claim pipeline"
-  above), but the STRM mint doesn't exist yet (the sentinel `STRM_MINT_NOT_YET_DEPLOYED`
-  stands in — see the Commerce warning above), so `chain-adapter.js`
-  refuses to run. Every claim today queues; none settle. Creating the real SPL mint
-  (`contracts/README.md` + `scripts/create-strm-mint.mjs`) and setting `STRATUM_TOKEN_MINT`
+- **On-chain settlement is not live yet** — the mint is real (see the Commerce section
+  above) and the transfer code is real and Token-2022-aware, but `chain-adapter.js`
+  still refuses to run without `STRATUM_CLAIM_SIGNER_KEY`. Every claim today queues;
+  none settle. Setting that one secret on the host (never in `.env`, never committed)
   lifts this.
 - **No way to buy in-game currency with real money or crypto yet.** Gold and STRM are
   earned by playing only — there's no fiat on-ramp, no "buy gold with STRM" or "buy STRM

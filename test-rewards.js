@@ -12,11 +12,11 @@ function check(name, cond) {
 // ---- token-config ----
 check('tc-defaults-cluster', TC.DEFAULTS.cluster === 'mainnet-beta');
 check('tc-defaults-chain-name', TC.DEFAULTS.chainName === 'Solana');
-check('tc-defaults-mint-sentinel', TC.DEFAULTS.tokenMint === 'STRM_MINT_NOT_YET_DEPLOYED');
+check('tc-defaults-mint-is-the-real-strm-mint', TC.DEFAULTS.tokenMint === 'EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU');
 check('tc-defaults-treasury', TC.DEFAULTS.treasuryAddress === 'EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo');
-check('tc-defaults-placeholder', TC.DEFAULTS.placeholder === true);
+check('tc-defaults-placeholder', TC.DEFAULTS.placeholder === false);
 check('tc-defaults-symbol', TC.DEFAULTS.symbol === 'STRM');
-check('tc-defaults-decimals', TC.DEFAULTS.decimals === 9);
+check('tc-defaults-decimals', TC.DEFAULTS.decimals === 6);
 check('tc-frozen', Object.isFrozen(TC.DEFAULTS));
 check('tc-isAddr-ok', TC.isAddr('EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo'));
 check('tc-isAddr-evm-no-longer-ok', TC.isAddr('0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7') === false);
@@ -41,7 +41,7 @@ check('tc-env-symbol', enved.symbol === 'GOLDX');
 check('tc-env-decimals', enved.decimals === 6);
 check('tc-env-bad-mint-ignored', TC.withEnv({ STRATUM_TOKEN_MINT: 'nope' }).tokenMint === TC.DEFAULTS.tokenMint);
 check('tc-env-evm-mint-ignored', TC.withEnv({ STRATUM_TOKEN_MINT: '0x1111111111111111111111111111111111111111' }).tokenMint === TC.DEFAULTS.tokenMint);
-check('tc-env-decimals-clamped-to-spl-max', TC.withEnv({ STRATUM_TOKEN_DECIMALS: '18' }).decimals === 9);
+check('tc-env-out-of-range-decimals-falls-back-to-default', TC.withEnv({ STRATUM_TOKEN_DECIMALS: '18' }).decimals === TC.DEFAULTS.decimals);
 check('tc-explorer-link', TC.explorerTokenLink().indexOf(TC.DEFAULTS.tokenMint) >= 0);
 
 var CA = require('./src/chain-adapter.js');

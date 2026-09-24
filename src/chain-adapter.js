@@ -61,9 +61,12 @@
 'use strict';
 const { Connection, Keypair, PublicKey, Transaction } = require('@solana/web3.js');
 const {
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
-  createTransferInstruction
+  createTransferCheckedInstruction
 } = require('@solana/spl-token');
 
 const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -137,7 +140,8 @@ function isPubkey(s) {
  *   STRATUM_TREASURY_ADDRESS
  *   STRATUM_CLAIM_SIGNER_KEY / STRATUM_TREASURY_KEY  (presence only)
  *   STRATUM_TOKEN_IS_PLACEHOLDER  ('0' = real mint; anything else = still the placeholder)
- *   STRATUM_TOKEN_DECIMALS  (SPL: 0..9, falls back to 9 if missing/out of range)
+ *   STRATUM_TOKEN_DECIMALS  (SPL: 0..9, falls back to 6 — the real STRM mint's own
+ *                            decimals — if missing/out of range)
  */
 function describe(env) {
   var e = (env && typeof env === 'object') ? env : {};
@@ -165,7 +169,11 @@ function isConfigured(env) {
 function tokenDecimals(env) {
   var e = (env && typeof env === 'object') ? env : {};
   var dec = Number(e.STRATUM_TOKEN_DECIMALS);
-  return (Number.isFinite(dec) && dec >= 0 && dec <= 9) ? (dec | 0) : 9;
+  // 6, not the SPL ceiling of 9 — the real STRM mint uses 6 decimals (verified
+  // on-chain 2026-09-24), so an unset/invalid env var must fall back to the actual
+  // mint's decimals, not a generic maximum. Getting this wrong would encode every
+  // real transfer amount 1000x too large against this specific mint.
+  return (Number.isFinite(dec) && dec >= 0 && dec <= 9) ? (dec | 0) : 6;
 }
 
 function defaultDeps() {
@@ -252,21 +260,40 @@ async function sendToChain(req, env, amount, deps) {
     return { ok: false, reason: 'bad_request', detail: 'could not encode claim amount for ' + dec + ' decimals' };
   }
 
+  // Pre-flight: the mint must exist. Read its OWNING program here, first — a mint can
+  // live under either the legacy Token program or Token-2022 (STRATUM's own STRM mint
+  // is Token-2022, with a transfer-fee extension), and every account/instruction below
+  // derives differently depending on which one owns it. Hardcoding legacy TOKEN_PROGRAM_ID
+  // would silently derive the WRONG associated-token-account addresses and build
+  // instructions the mint's own program rejects — this is detected from the chain itself
+  // so the same code keeps working correctly if the mint is ever rotated.
+  var programId, mintInfo;
+  try {
+    mintInfo = await connection.getAccountInfo(mint);
+    if (!mintInfo) {
+      return { ok: false, reason: 'bad_mint', detail: 'STRM mint not found on this cluster' };
+    }
+    programId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+  } catch (eMint) {
+    return { ok: false, reason: 'rpc_error', detail: 'could not read mint account: ' + (eMint && eMint.message) };
+  }
+
   var treasuryAta, playerAta;
   try {
-    treasuryAta = getAssociatedTokenAddressSync(mint, treasury.publicKey);
-    playerAta = getAssociatedTokenAddressSync(mint, player);
+    treasuryAta = getAssociatedTokenAddressSync(mint, treasury.publicKey, false, programId);
+    playerAta = getAssociatedTokenAddressSync(mint, player, false, programId);
   } catch (eAta) {
     return { ok: false, reason: 'bad_request', detail: 'could not derive token accounts' };
   }
 
-  // Pre-flight: the mint must exist, and the treasury ATA must hold enough STRM.
-  // Refusing here avoids paying SOL for a guaranteed-to-fail transaction.
+  // The treasury ATA must hold enough STRM. Refusing here avoids paying SOL for a
+  // guaranteed-to-fail transaction. Note tBal reads the RAW account balance — under
+  // Token-2022's transfer-fee extension the RECIPIENT receives slightly less than
+  // amountRaw (a withheld fee the token program deducts automatically on every
+  // transfer, currently 1% per this mint's on-chain config) even though the treasury
+  // is debited the full amountRaw. That fee is the token's own protocol behavior, not
+  // something this function tries to gross up or compensate for.
   try {
-    var mintInfo = await connection.getAccountInfo(mint);
-    if (!mintInfo) {
-      return { ok: false, reason: 'bad_mint', detail: 'STRM mint not found on this cluster' };
-    }
     var tInfo = await connection.getAccountInfo(treasuryAta);
     var tBal = tInfo ? readTokenAmount(tInfo.data) : 0n;
     if (tBal === null || tBal < amountRaw) {
@@ -281,10 +308,16 @@ async function sendToChain(req, env, amount, deps) {
     var pInfo = await connection.getAccountInfo(playerAta);
     if (!pInfo) {
       tx.add(createAssociatedTokenAccountInstruction(
-        treasury.publicKey, playerAta, player, mint
+        treasury.publicKey, playerAta, player, mint, programId, ASSOCIATED_TOKEN_PROGRAM_ID
       ));
     }
-    tx.add(createTransferInstruction(treasuryAta, playerAta, treasury.publicKey, amountRaw));
+    // TransferChecked (not the bare Transfer instruction) — required by some Token-2022
+    // extensions and always the safer choice: it asserts the mint + decimals match,
+    // catching a misconfigured STRATUM_TOKEN_DECIMALS at the instruction level instead
+    // of silently moving the wrong amount.
+    tx.add(createTransferCheckedInstruction(
+      treasuryAta, mint, playerAta, treasury.publicKey, amountRaw, dec, [], programId
+    ));
     var sig = await fns.sendAndConfirm(tx, connection, [treasury]);
     return { ok: true, txHash: sig };
   } catch (eSend) {

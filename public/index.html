@@ -323,7 +323,10 @@
       <button type="button" id="requisition-btn" class="hud-btn" title="Requires a connected wallet and pending STRM">SHIP TO EARTH</button>
       <span class="k" id="h-requisition-status" style="margin-left:6px;font-size:10px"></span>
     </div>
-    <div class="k" id="h-token-badge" style="margin-top:4px;font-size:9px;display:none">PLACEHOLDER CA</div>
+    <!-- populated by game.js's applyCommerceConfig() as soon as commerce config
+         arrives — real CA + explorer link once live, "PLACEHOLDER CA" until then.
+         Left empty here so there's never a stale/wrong address briefly visible. -->
+    <div class="k" id="h-token-badge" style="margin-top:4px;font-size:9px;display:none"></div>
     <div class="k" style="margin-top:7px">slain <span class="v" id="h-kills">0</span> &nbsp; <span class="k">atk</span> <span class="v" id="h-atk">7</span></div>
     <div class="k" style="margin-top:5px;font-size:10px" id="h-vol">—</div>
     <div class="k" style="margin-top:5px;font-size:10px" id="h-ach">0 / 14 earned</div>

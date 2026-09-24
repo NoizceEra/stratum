@@ -2077,12 +2077,34 @@
   }
   function invChip(r) { INV_HTML.push('<span class="chip">' + iconImg(r) + r + ' ' + (this[r] || 0) + '</span>'); }
 
+  /** Shortens a base58 address to `abcd…wxyz` for compact HUD display — the full
+   *  value always still lives in the title/href for anyone who wants to verify it. */
+  function shortAddr(a) {
+    return (typeof a === 'string' && a.length > 12) ? (a.slice(0, 4) + '…' + a.slice(-4)) : (a || '');
+  }
   function applyCommerceConfig(cfg) {
     S.commerce = cfg;
     var sym = document.getElementById('h-token-sym');
     if (sym) sym.textContent = (cfg && cfg.symbol) || 'STRM';
+    // Always show the real contract address once it's real — this is the one place a
+    // player (or a bot skimming the DOM before trusting a token) can verify the CA
+    // against what's posted on the website/socials, without leaving the HUD. Still
+    // shown, differently, while a placeholder: better an honest "not live yet" than a
+    // silently missing badge that looks like an oversight.
     var badge = document.getElementById('h-token-badge');
-    if (badge) badge.style.display = (cfg && cfg.placeholder) ? 'block' : 'none';
+    if (badge && cfg) {
+      badge.style.display = 'block';
+      if (cfg.placeholder) {
+        badge.innerHTML = 'PLACEHOLDER CA';
+        badge.title = '';
+      } else {
+        var mint = cfg.tokenMint || '';
+        var link = (cfg.explorerTokenUrl || '') + mint;
+        badge.innerHTML = 'CA <a href="' + link + '" target="_blank" rel="noopener noreferrer" style="color:inherit">' +
+          shortAddr(mint) + '</a>';
+        badge.title = mint; // full address on hover/long-press, and readable by an accessibility-tree agent
+      }
+    }
   }
   /** Renders the one-line yield-bonus readout in the (collapsed-by-default-on-touch)
    *  currency panel. All four numbers already live in S, set wherever server.js pushes

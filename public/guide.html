@@ -321,15 +321,22 @@
       Solana wallet from the HUD when you want to cash out. One wallet is one colonist.</p>
     <ul>
       <li><b>Claim</b> sends your pending STRM to that wallet on Solana. A fee stays
-        with the treasury; you receive the rest. Until the STRM mint is live, a claim
-        is recorded and your pending balance is left untouched.</li>
-      <li><b>Convert</b> swaps gold for pending STRM, or pending STRM for gold. Same
-        idea: a fee goes to the treasury, and the button does nothing until a wallet
-        is linked.</li>
+        with the treasury; you receive the rest. Until the treasury is funded and
+        settlement is fully turned on, a claim is recorded and your pending balance is
+        left untouched — nothing is ever lost.</li>
+      <li><b>Convert</b> swaps gold for pending STRM, or pending STRM for gold — this
+        one already runs entirely in the game ledger, no wallet or on-chain step
+        required for the swap itself.</li>
     </ul>
-    <div class="warn"><b>Honest status:</b> on-chain settlement pays out only once a
-      real STRM mint and a funded treasury are configured. Until then every claim is
-      queued, not lost. Convert still runs in the game ledger.</div>
+    <p class="dim">STRM is a real SPL token on Solana (Token-2022, with a 1% transfer
+      fee that's the token's own on-chain config, not something STRATUM adds). Official
+      contract:
+      <a href="https://explorer.solana.com/address/EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU" target="_blank" rel="noopener noreferrer">EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU</a>
+      — always verify this against the HUD's own CA display before trusting any other
+      source.</p>
+    <div class="warn"><b>Honest status:</b> the mint is real and live. On-chain payouts
+      still need a funded treasury and settlement fully turned on — until then every
+      claim is queued, not lost. Convert already runs today.</div>
   </section>
 
   <section id="controls">
