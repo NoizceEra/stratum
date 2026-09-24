@@ -1675,6 +1675,7 @@ function onMessage(c, msg) {
         builderMultiplier: c.builderMultiplier,
         builderTier: BuilderBonus.tierFor(c.builderCount).name,
         miningStreak: c.streakState.streak | 0,
+        miningStreakMultiplier: MiningStreak.multiplierForStreak(c.streakState.streak | 0),
         colonyMilestone: ColonyMilestone.milestoneFor(burnedTotal()).name,
         colonyMultiplier: ColonyMilestone.multiplierFor(burnedTotal())
       });
@@ -1829,7 +1830,8 @@ function onMessage(c, msg) {
         if (pay.token) gains.token = pay.token;
         c.send({
           t: 'harvested', x, y, kind: r.kind, state: 0, ripeSec, gains, inv: c.inv,
-          tokenPending: c.tokenPending | 0, streak: c.streakState.streak | 0
+          tokenPending: c.tokenPending | 0, streak: c.streakState.streak | 0,
+          streakMultiplier: MiningStreak.multiplierForStreak(c.streakState.streak | 0)
         });
         creditNearby(c, x, y, HARVEST_XP * GROUP_XP_SHARE);   // light grouping (ROADMAP_COZY §5)
       } else {

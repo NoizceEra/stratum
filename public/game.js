@@ -1018,6 +1018,15 @@
         if (m.tokenWallet) S.walletAddress = m.tokenWallet;
         if (m.payout) S.payout = m.payout;
         if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
+        // Yield bonuses (mining-streak/holder/colony/builder) — see server.js's
+        // applyCommerceReward for how these four compose into one multiplier. Nothing
+        // client-side ever computes these; every number here is exactly what the server
+        // already decided, just displayed.
+        if (typeof m.builderMultiplier === 'number') { S.builderMultiplier = m.builderMultiplier; S.builderCount = m.builderCount | 0; S.builderTier = m.builderTier; }
+        if (typeof m.holderMultiplier === 'number') { S.holderMultiplier = m.holderMultiplier; S.holderTier = m.holderTier; }
+        if (typeof m.colonyMultiplier === 'number') { S.colonyMultiplier = m.colonyMultiplier; S.colonyMilestone = m.colonyMilestone; }
+        if (typeof m.miningStreakMultiplier === 'number') S.streakMultiplier = m.miningStreakMultiplier;
+        updateYieldHud();
         if (m.look) {
           S.paletteId = m.look.paletteId; S.bodyHue = m.look.bodyHue; S.trimHue = m.look.trimHue;
           S.hat = m.look.hat; S.cloak = m.look.cloak; S.scarf = m.look.scarf;
@@ -1098,6 +1107,17 @@
 
       case 'structure': applyStructure(m); break;
       case 'structure-gone': S.structures.delete(nkN(m.x, m.y)); break;
+      // Pushed by server.js's refreshBuilderBonus()/refreshHolderBonus() whenever a
+      // player's structure count or wallet balance changes their tier — no toast, this
+      // is a quiet HUD update, not an event the player needs to be interrupted for.
+      case 'builder-tier':
+        S.builderCount = m.count | 0; S.builderMultiplier = m.multiplier; S.builderTier = m.tier;
+        updateYieldHud();
+        break;
+      case 'holder-tier':
+        S.holderMultiplier = m.multiplier; S.holderTier = m.tier;
+        updateYieldHud();
+        break;
       case 'structure-released': {
         if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
         S.structures.delete(nkN(m.x, m.y));
@@ -1147,6 +1167,7 @@
         if (nd && m.state === 0) { nd.state = 0; nd.until = Date.now() + (m.ripeSec || 0) * 1000; }
         if (m.inv) S.inv = m.inv;
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.streakMultiplier === 'number') { S.streakMultiplier = m.streakMultiplier; updateYieldHud(); }
         if (m.gains) {
           S.harvests += 1;
           unlockBuild();
@@ -2063,6 +2084,32 @@
     var badge = document.getElementById('h-token-badge');
     if (badge) badge.style.display = (cfg && cfg.placeholder) ? 'block' : 'none';
   }
+  /** Renders the one-line yield-bonus readout in the (collapsed-by-default-on-touch)
+   *  currency panel. All four numbers already live in S, set wherever server.js pushes
+   *  them (welcome, builder-tier, holder-tier, and every 'harvested' for the streak) —
+   *  this function only ever displays state, never computes a bonus itself. The visible
+   *  text stays terse (one multiplier) to cost nothing on a phone screen; the full
+   *  per-source breakdown goes in both title (desktop hover) and aria-label (screen
+   *  reader / accessibility-tree agent), since a title alone isn't reliably exposed. */
+  function updateYieldHud() {
+    var el = document.getElementById('h-yield');
+    if (!el) return;
+    var streak = (typeof S.streakMultiplier === 'number' && S.streakMultiplier >= 1) ? S.streakMultiplier : 1;
+    var holder = (typeof S.holderMultiplier === 'number' && S.holderMultiplier >= 1) ? S.holderMultiplier : 1;
+    var colony = (typeof S.colonyMultiplier === 'number' && S.colonyMultiplier >= 1) ? S.colonyMultiplier : 1;
+    var builder = (typeof S.builderMultiplier === 'number' && S.builderMultiplier >= 1) ? S.builderMultiplier : 1;
+    var combined = streak * holder * colony * builder;
+    el.textContent = 'yield ' + combined.toFixed(2) + 'x';
+    var parts = [
+      'mining streak ' + streak.toFixed(2) + 'x' + (S.harvests ? '' : ' (mine to build a streak)'),
+      'builder ' + builder.toFixed(2) + 'x (' + (S.builderTier || 'Settler') + ', ' + (S.builderCount | 0) + ' structure' + ((S.builderCount | 0) === 1 ? '' : 's') + ')',
+      'colony ' + colony.toFixed(2) + 'x (' + (S.colonyMilestone || 'Outpost') + ')',
+      'holding ' + holder.toFixed(2) + 'x (' + (S.holderTier || 'Colonist') + ')'
+    ];
+    var breakdown = parts.join(' · ');
+    el.title = breakdown;
+    el.setAttribute('aria-label', 'Yield multiplier ' + combined.toFixed(2) + 'x — ' + breakdown);
+  }
   function updateWalletHud() {
     var btn = document.getElementById('wallet-btn');
     var lab = document.getElementById('h-wallet');
@@ -2329,10 +2376,11 @@
     var el = document.getElementById('mlist'), html = '';
     for (var i = 0; i < S.maps.length; i++) {
       var m = S.maps[i];
-      html += '<div class="mcard" data-id="' + m.id + '"><div class="nm">' + m.name +
+      html += '<button type="button" class="mcard" data-id="' + m.id + '" aria-label="' + m.name +
+        (m.id === S.map ? ', you are here' : ', travel here') + '"><div class="nm">' + m.name +
         (m.id === S.map ? ' <span class="tier">← YOU ARE HERE</span>' : '') + '</div>' +
         '<div class="tier">TIER ' + m.tier + ' · 1,048,576 TILES</div>' +
-        '<div class="ds">' + m.desc + '</div></div>';
+        '<div class="ds">' + m.desc + '</div></button>';
     }
     el.innerHTML = html;
     Array.prototype.forEach.call(el.children, function (c) {
@@ -2410,12 +2458,13 @@
     }
     var html = '', i, r;
     // Toggle first so it's always reachable regardless of scroll position.
-    html += '<div class="mcard" data-toggle-salvage="1"><div class="nm">' +
+    html += '<button type="button" class="mcard" data-toggle-salvage="1" aria-label="' +
+      (S.salvageMode ? 'Exit salvage mode' : 'Enter salvage mode') + '"><div class="nm">' +
       (S.salvageMode ? 'EXIT SALVAGE MODE' : 'SALVAGE MODE') + '</div>' +
       '<div class="tier">' + (S.salvageMode
         ? 'CLICK SOMETHING YOU HOLD TO BREAK IT DOWN FOR PART OF ITS COST BACK'
         : 'SHIFT+CLICK A RECIPE BELOW TO CRAFT AS MANY AS YOU CAN AFFORD AT ONCE') +
-      '</div></div>';
+      '</div></button>';
     if (S.salvageMode) {
       var recsS = S.catalog.recipes || [];
       var any = false;
@@ -2424,9 +2473,10 @@
         var held = (S.inv && S.inv[r.output.item]) | 0;
         if (held <= 0) continue;
         any = true;
-        html += '<div class="mcard" data-salvage="' + r.id + '">' +
+        html += '<button type="button" class="mcard" data-salvage="' + r.id + '" aria-label="Salvage 1 ' + itemName(r.output.item) +
+          ', ' + held + ' held, returns part of ' + costText(r.inputs) + '">' +
           '<div class="nm">' + iconImg(r.output.item) + itemName(r.output.item).toUpperCase() + ' <span class="tier">x' + held + ' HELD</span></div>' +
-          '<div class="cost can">SALVAGE 1 — PART OF ' + costText(r.inputs) + ' BACK</div></div>';
+          '<div class="cost can">SALVAGE 1 — PART OF ' + costText(r.inputs) + ' BACK</div></button>';
       }
       if (!any) html += '<div class="mcard"><div class="ds">NOTHING CRAFTED IS CURRENTLY HELD.</div></div>';
       list.innerHTML = html;
@@ -2443,9 +2493,10 @@
     var next = (S.tool | 0) + 1;
     if (next < tiers.length) {
       var ok = canPay(tiers[next].cost);
-      html += '<div class="mcard" data-toolup="1"><div class="nm">' + iconImg('anvil') + tiers[next].name.toUpperCase() + ' TOOLS</div>' +
+      html += '<button type="button" class="mcard" data-toolup="1" aria-label="Craft ' + tiers[next].name + ' tools, costs ' + costText(tiers[next].cost) +
+        (ok ? '' : ', cannot afford yet') + '"><div class="nm">' + iconImg('anvil') + tiers[next].name.toUpperCase() + ' TOOLS</div>' +
         '<div class="tier">HARVEST MORE PER SWING</div>' +
-        '<div class="cost ' + (ok ? 'can' : 'cant') + '">' + costText(tiers[next].cost) + '</div></div>';
+        '<div class="cost ' + (ok ? 'can' : 'cant') + '">' + costText(tiers[next].cost) + '</div></button>';
     } else if (tiers.length) {
       html += '<div class="mcard locked"><div class="nm">' + tiers[tiers.length - 1].name.toUpperCase() + ' TOOLS</div>' +
         '<div class="tier">THE BEST THERE IS</div></div>';
@@ -2458,10 +2509,11 @@
       // first-session craft: hide locked higher-tier recipes so the next step is obvious
       if (onboardCraft && locked) continue;
       var afford = !locked && canPay(r.inputs);
-      html += '<div class="mcard' + (locked ? ' locked' : '') + '" data-recipe="' + r.id + '">' +
+      html += '<button type="button" class="mcard' + (locked ? ' locked' : '') + '" data-recipe="' + r.id + '" aria-label="Craft ' + itemName(r.output.item) +
+        (locked ? ', needs ' + toolName(r.tier) + ' tools' : ', costs ' + costText(r.inputs) + (afford ? '' : ', cannot afford yet')) + '">' +
         '<div class="nm">' + iconImg(r.output.item) + itemName(r.output.item).toUpperCase() +
         (locked ? ' <span class="tier">— NEEDS ' + toolName(r.tier).toUpperCase() + '</span>' : '') + '</div>' +
-        '<div class="cost ' + (afford ? 'can' : 'cant') + '">' + costText(r.inputs) + '</div></div>';
+        '<div class="cost ' + (afford ? 'can' : 'cant') + '">' + costText(r.inputs) + '</div></button>';
     }
     list.innerHTML = html;
     Array.prototype.forEach.call(list.children, function (el) {
@@ -2511,11 +2563,13 @@
       var descLine = d.blocksMovement
         ? 'BLOCKS MOVEMENT — A PHYSICAL OBSTACLE, PLACE + CLICK TO REMOVE'
         : 'MAKES ' + d.produces.toUpperCase() + ' — ~' + (Math.round(d.ratePerMs * 60000 * 10) / 10) + '/min, CAPS AT ' + d.capacity;
-      html += '<div class="mcard' + (locked ? ' locked' : '') + '" data-kind="' + d.id + '">' +
+      html += '<button type="button" class="mcard' + (locked ? ' locked' : '') + '"' + (locked ? ' disabled' : '') + ' data-kind="' + d.id +
+        '" aria-label="Build ' + d.name + ', ' + descLine.toLowerCase() +
+        (locked ? ', needs tier ' + d.tier + ' tools' : ', costs ' + costText(d.cost) + (afford ? '' : ', cannot afford yet')) + '">' +
         '<div class="nm">' + iconImg(d.id) + d.name.toUpperCase() +
         (locked ? ' <span class="tier">— NEEDS TIER ' + d.tier + ' TOOLS</span>' : '') + '</div>' +
         '<div class="tier">' + descLine + '</div>' +
-        '<div class="cost ' + (afford ? 'can' : 'cant') + '">' + costText(d.cost) + '</div></div>';
+        '<div class="cost ' + (afford ? 'can' : 'cant') + '">' + costText(d.cost) + '</div></button>';
     }
     list.innerHTML = html;
     Array.prototype.forEach.call(list.children, function (el) {
@@ -3821,15 +3875,17 @@
       var html = '';
       for (var i = 0; i < S.gatePalettes.length; i++) {
         var p = S.gatePalettes[i];
-        html += '<div class="swatch' + (p.id === remembered ? ' sel' : '') + '" data-id="' + p.id +
-          '" title="' + p.name + '" style="background:hsl(' + p.bodyHue + ',58%,62%)"></div>';
+        html += '<button type="button" class="swatch' + (p.id === remembered ? ' sel' : '') + '" data-id="' + p.id +
+          '" title="' + p.name + '" aria-label="' + p.name + ' colour" aria-pressed="' + (p.id === remembered ? 'true' : 'false') +
+          '" style="background:hsl(' + p.bodyHue + ',58%,62%)"></button>';
       }
       el.innerHTML = html;
       Array.prototype.forEach.call(el.children, function (sw) {
         sw.addEventListener('click', function () {
           S.gatePick = sw.dataset.id;
-          Array.prototype.forEach.call(el.children, function (x) { x.classList.remove('sel'); });
+          Array.prototype.forEach.call(el.children, function (x) { x.classList.remove('sel'); x.setAttribute('aria-pressed', 'false'); });
           sw.classList.add('sel');
+          sw.setAttribute('aria-pressed', 'true');
           sfx('ui');
         });
       });

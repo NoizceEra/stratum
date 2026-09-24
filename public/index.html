@@ -44,6 +44,14 @@
   .disc{color:var(--dim);letter-spacing:.2em;font-size:11px;margin-bottom:6px}
   .mcard{width:min(560px,86vw);border:1px solid var(--rule);padding:11px 14px;cursor:pointer;background:rgba(255,255,255,.02)}
   .mcard:hover{border-color:var(--gold);background:rgba(201,165,92,.07)}
+  /* Interactive mcards are real <button> elements (see game.js's click delegation on
+     .mcard[data-*], unchanged by tag name) instead of clickable divs, so a screen reader
+     or an accessibility-tree-driven agent can discover them as controls, not just read
+     their text. This neutralizes the UA's native button chrome so they still look
+     exactly like the plain-div mcards used for non-interactive placeholder rows. */
+  button.mcard{appearance:none;-webkit-appearance:none;font:inherit;color:inherit;
+    text-align:left;display:block;margin:0}
+  button.mcard:disabled{cursor:default;opacity:.55}
   .mcard .nm{color:var(--gold);letter-spacing:.18em}
   .mcard .tier{color:var(--dim);font-size:10px;letter-spacing:.14em}
   .mcard .ds{color:var(--dim);font-size:11px;margin-top:4px}
@@ -195,6 +203,11 @@
   #wardrobe h2{font-size:11px;letter-spacing:.16em;color:var(--gold);font-weight:400;margin-bottom:6px}
   #swatches{display:flex;flex-wrap:wrap;gap:7px;max-height:26vh;overflow-y:auto}
   .swatch{width:34px;height:34px;border:2px solid rgba(255,255,255,.14);cursor:pointer;position:relative}
+  /* real <button> now (was a clickable div) so a screen reader / accessibility-tree
+     agent can discover "colour swatch, selectable" instead of an unlabeled shape —
+     strip the UA's default button padding/appearance so it still renders as a plain
+     square chip, same as before. */
+  button.swatch{padding:0;appearance:none;-webkit-appearance:none}
   .swatch:hover{border-color:rgba(255,255,255,.4)}
   .swatch.sel{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset}
   #acslots{display:flex;flex-direction:column;gap:6px;max-height:30vh;overflow-y:auto}
@@ -283,6 +296,12 @@
       <span class="k" style="margin-left:4px;font-size:9px">pending</span>
     </div>
     <div class="k" style="margin-top:4px;font-size:10px" id="h-token-chain">on-chain —</div>
+    <!-- yield bonuses: mining-streak/holder/colony/builder all compose into one
+         multiplier server-side (see server.js's applyCommerceReward) but nothing showed
+         it before now. One compact line, inside the already-collapsed detail section so
+         it costs no extra space on a phone; the title attribute carries the full
+         per-source breakdown for a hover (desktop) or an accessibility-tree read (agent). -->
+    <div class="k" style="margin-top:6px;font-size:10px" id="h-yield" title="">yield 1.00x</div>
     <div class="hud-row">
       <button type="button" id="wallet-btn" class="hud-btn">CONNECT WALLET</button>
       <span class="k" id="h-wallet" style="margin-left:6px;font-size:10px"></span>
@@ -428,14 +447,14 @@
 <div id="menu-sheet">
   <div class="disc">MENU</div>
   <div id="menu-rows">
-    <div class="mcard" data-act="map"><span class="nm">WORLD MAP</span></div>
-    <div class="mcard" data-act="travel"><span class="nm">TRAVEL</span></div>
-    <div class="mcard" data-act="craft"><span class="nm">CRAFT</span></div>
-    <div class="mcard" data-act="idle"><span class="nm">STRUCTURES</span></div>
-    <div class="mcard" data-act="parcels"><span class="nm">DEEDS</span></div>
-    <div class="mcard" data-act="wardrobe"><span class="nm">WARDROBE</span></div>
-    <div class="mcard" data-act="leaderboard"><span class="nm">LEADERBOARD</span></div>
-    <div class="mcard" data-act="guide"><span class="nm">GUIDE</span></div>
+    <button type="button" class="mcard" data-act="map" aria-label="World map"><span class="nm">WORLD MAP</span></button>
+    <button type="button" class="mcard" data-act="travel" aria-label="Travel between maps"><span class="nm">TRAVEL</span></button>
+    <button type="button" class="mcard" data-act="craft" aria-label="Craft"><span class="nm">CRAFT</span></button>
+    <button type="button" class="mcard" data-act="idle" aria-label="Structures"><span class="nm">STRUCTURES</span></button>
+    <button type="button" class="mcard" data-act="parcels" aria-label="Parcel deeds"><span class="nm">DEEDS</span></button>
+    <button type="button" class="mcard" data-act="wardrobe" aria-label="Wardrobe"><span class="nm">WARDROBE</span></button>
+    <button type="button" class="mcard" data-act="leaderboard" aria-label="Leaderboard"><span class="nm">LEADERBOARD</span></button>
+    <button type="button" class="mcard" data-act="guide" aria-label="Colonist's guide"><span class="nm">GUIDE</span></button>
   </div>
   <div class="disc" style="margin-top:4px">TAP OUTSIDE TO CLOSE</div>
 </div>
