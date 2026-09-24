@@ -279,7 +279,7 @@ See `.env.example` for overrides.
 | | Address |
 |--|--|
 | STRATUM mint (live, Token-2022, 6 decimals, 1% transfer fee) | `EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU` |
-| Treasury wallet (public) | `EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo` |
+| Treasury wallet (public) | `AYMwwmPxucSXDoc3Qx7prVnH5rP3XpgBDJVENed4A9mo` |
 
 The treasury **secret key** is not in this repo. It lives in a local `.env`
 (`STRATUM_CLAIM_SIGNER_KEY=…`, gitignored, base58 or JSON-array form) on the
@@ -287,7 +287,7 @@ operator's machine — never commit `.env`.
 
 ```
 STRATUM_TOKEN_MINT=EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU
-STRATUM_TREASURY_ADDRESS=EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo
+STRATUM_TREASURY_ADDRESS=AYMwwmPxucSXDoc3Qx7prVnH5rP3XpgBDJVENed4A9mo
 STRATUM_CLUSTER=mainnet-beta
 STRATUM_SOLANA_RPC=https://api.mainnet-beta.solana.com
 STRATUM_TOKEN_SYMBOL=STRATUM

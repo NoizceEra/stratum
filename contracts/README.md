@@ -59,7 +59,7 @@ defaults). This is what it took, for reference or for wiring in a different one:
 3. **Fund the treasury** — real settlement transfers STRATUM FROM the treasury's
    associated token account TO a claiming player's associated token account
    (see `chain-adapter.js`). Send part of the supply to the treasury address
-   (`EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo`, per `token-config.js` —
+   (`AYMwwmPxucSXDoc3Qx7prVnH5rP3XpgBDJVENed4A9mo`, per `token-config.js` —
    confirm this is still current), plus a little SOL for transaction fees. An
    unfunded treasury refuses claims with `insufficient_treasury_balance`
    instead of burning SOL on doomed sends.

@@ -13,12 +13,12 @@ function check(name, cond) {
 check('tc-defaults-cluster', TC.DEFAULTS.cluster === 'mainnet-beta');
 check('tc-defaults-chain-name', TC.DEFAULTS.chainName === 'Solana');
 check('tc-defaults-mint-is-the-real-strm-mint', TC.DEFAULTS.tokenMint === 'EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU');
-check('tc-defaults-treasury', TC.DEFAULTS.treasuryAddress === 'EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo');
+check('tc-defaults-treasury', TC.DEFAULTS.treasuryAddress === 'AYMwwmPxucSXDoc3Qx7prVnH5rP3XpgBDJVENed4A9mo');
 check('tc-defaults-placeholder', TC.DEFAULTS.placeholder === false);
 check('tc-defaults-symbol', TC.DEFAULTS.symbol === 'STRATUM');
 check('tc-defaults-decimals', TC.DEFAULTS.decimals === 6);
 check('tc-frozen', Object.isFrozen(TC.DEFAULTS));
-check('tc-isAddr-ok', TC.isAddr('EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo'));
+check('tc-isAddr-ok', TC.isAddr('AYMwwmPxucSXDoc3Qx7prVnH5rP3XpgBDJVENed4A9mo'));
 check('tc-isAddr-evm-no-longer-ok', TC.isAddr('0x0d0f4c7e2373f2bd67caa2a83d466df2225e4ca7') === false);
 check('tc-isAddr-bad', TC.isAddr('not-an-address') === false);
 check('tc-public-has-mint', TC.publicConfig().tokenMint === TC.DEFAULTS.tokenMint);

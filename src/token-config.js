@@ -71,7 +71,7 @@
     /** Alias kept so existing client/server code reading `tokenAddress` keeps working. */
     tokenAddress: 'EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU',
     /** On-chain payout wallet (public). Fresh Solana keypair generated 2026-09-22. */
-    treasuryAddress: 'EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo',
+    treasuryAddress: 'AYMwwmPxucSXDoc3Qx7prVnH5rP3XpgBDJVENed4A9mo',
     /** Display ticker — matches the mint's own on-chain Token-2022 metadata symbol
      *  exactly ("STRATUM"), verified 2026-09-24. Was "STRM" as a distinct shorthand
      *  before the real mint existed; corrected to match the actual contract once it
