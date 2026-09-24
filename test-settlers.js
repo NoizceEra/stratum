@@ -44,8 +44,8 @@ check('sable-complete', S.talk('sable', { activeQuestId: null, done: 7, total: 7
 check('dray-craft', S.talk('dray', { activeQuestId: 'craft' }).line.indexOf('Fabricator') >= 0);
 check('dray-claim', S.talk('dray', { activeQuestId: 'claim' }).line.indexOf('Claim land first') >= 0);
 check('dray-pending', S.talk('dray', { tokenPending: 60 }).line.indexOf('Ilo') >= 0);
-check('ilo-heavy', S.talk('ilo', { tokenPending: 80 }).line.indexOf('80 STRM') >= 0);
-check('ilo-small', S.talk('ilo', { tokenPending: 5 }).line.indexOf('5 STRM') >= 0);
+check('ilo-heavy', S.talk('ilo', { tokenPending: 80 }).line.indexOf('80 STRATUM') >= 0);
+check('ilo-small', S.talk('ilo', { tokenPending: 5 }).line.indexOf('5 STRATUM') >= 0);
 check('ilo-empty', S.talk('ilo', {}).line.indexOf('Archivist Ilo') >= 0);
 
 // ---- questAction ----

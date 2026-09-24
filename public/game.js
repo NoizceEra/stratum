@@ -1174,7 +1174,7 @@
           if (window.StratumHud) window.StratumHud.noteAction();
           for (var y2 in m.gains) {
             var gcol = (y2 === 'gold') ? '#e8c76a' : (y2 === 'token') ? '#8fe4ff' : '#c9e08a';
-            var glab = (y2 === 'token' && S.commerce) ? (S.commerce.symbol || 'STRM') : y2;
+            var glab = (y2 === 'token' && S.commerce) ? (S.commerce.symbol || 'STRATUM') : y2;
             float(m.x, m.y, '+' + m.gains[y2] + ' ' + glab, gcol, 0);
           }
           var ndc = NODECLR[m.kind] || '#c9e08a';
@@ -1271,7 +1271,7 @@
             burst(mm.rx, mm.ry, mm.pal, 16, 2.6);
             if (m.gains) {
               if (m.gains.gold) float(mm.rx, mm.ry - 0.7, '+' + m.gains.gold + ' gold', '#e8c76a', 0);
-              if (m.gains.token) float(mm.rx, mm.ry - 1.0, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), '#8fe4ff', 0);
+              if (m.gains.token) float(mm.rx, mm.ry - 1.0, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRATUM'), '#8fe4ff', 0);
             }
             S.mons.delete(m.id);
           }
@@ -1347,7 +1347,7 @@
         S.crafts += craftedN;
         toast((craftedN > 1 ? craftedN + 'x ' : 'CRAFTED: ') + String(m.item || '').toUpperCase(), true);
         if (m.gains && m.gains.gold) float(S.x, S.y - 0.6, '+' + m.gains.gold + ' gold', '#e8c76a', 0);
-        if (m.gains && m.gains.token) float(S.x, S.y - 0.9, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), '#8fe4ff', 0);
+        if (m.gains && m.gains.token) float(S.x, S.y - 0.9, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRATUM'), '#8fe4ff', 0);
         sfx('craft');
         if (S.craftOpen) buildCraft();
         if (window.StratumHud) window.StratumHud.noteAction();
@@ -1405,7 +1405,7 @@
         if (m.ok) {
           if (typeof m.tokenClaimed === 'number') S.tokenClaimed = m.tokenClaimed;
           if (statusEl) statusEl.textContent = 'SETTLED';
-          var sym = (S.commerce && S.commerce.symbol) || 'STRM';
+          var sym = (S.commerce && S.commerce.symbol) || 'STRATUM';
           toast('CLAIMED ' + (m.payout != null ? m.payout : m.amount) + ' ' + sym +
             (m.fee ? ' (FEE ' + m.fee + ')' : ''), true);
         } else if (m.queued) {
@@ -1431,7 +1431,7 @@
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
         if (typeof m.gold === 'number' && S.inv) S.inv.gold = m.gold;
         if (cvStatus) cvStatus.textContent = 'CONVERTED';
-        var csym = (S.commerce && S.commerce.symbol) || 'STRM';
+        var csym = (S.commerce && S.commerce.symbol) || 'STRATUM';
         toast((m.dir === 'to-gold'
           ? ('CONVERTED TO ' + (m.goldOut | 0) + ' GOLD')
           : ('CONVERTED TO ' + (m.payout | 0) + ' ' + csym)) +
@@ -1453,7 +1453,7 @@
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
         if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
         if (reqStatusEl) reqStatusEl.textContent = 'SHIPPED';
-        toast('SHIPPED ' + m.amount + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM') +
+        toast('SHIPPED ' + m.amount + ' ' + ((S.commerce && S.commerce.symbol) || 'STRATUM') +
           ' — ' + m.burned + ' BURNED, ' + m.treasury + ' TO TREASURY', true);
         sfx('craft');
         updateWalletHud();
@@ -1462,7 +1462,7 @@
       case 'requisition-broadcast': {
         if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
         toast(String(m.by || 'SOMEONE').toUpperCase() + ' SHIPPED ' + m.amount +
-          ' ' + ((S.commerce && S.commerce.symbol) || 'STRM') + ' TO EARTH');
+          ' ' + ((S.commerce && S.commerce.symbol) || 'STRATUM') + ' TO EARTH');
         break;
       }
       case 'rushed': {
@@ -1471,7 +1471,7 @@
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
         if (typeof m.tokenBurned === 'number') S.colonyQuota = m.tokenBurned;
         toast('RUSHED +' + m.gained + ' ' + String(m.resource || '').toUpperCase() +
-          ' FOR ' + m.cost + ' ' + ((S.commerce && S.commerce.symbol) || 'STRM'), true);
+          ' FOR ' + m.cost + ' ' + ((S.commerce && S.commerce.symbol) || 'STRATUM'), true);
         float(m.x, m.y - 0.6, '+' + m.gained + ' ' + m.resource, '#8fe4ff', 0);
         sfx('craft');
         updateWalletHud();
@@ -2085,7 +2085,7 @@
   function applyCommerceConfig(cfg) {
     S.commerce = cfg;
     var sym = document.getElementById('h-token-sym');
-    if (sym) sym.textContent = (cfg && cfg.symbol) || 'STRM';
+    if (sym) sym.textContent = (cfg && cfg.symbol) || 'STRATUM';
     // Always show the real contract address once it's real — this is the one place a
     // player (or a bot skimming the DOM before trusting a token) can verify the CA
     // against what's posted on the website/socials, without leaving the HUD. Still
@@ -2171,7 +2171,7 @@
       var claimPct = (S.payout.claimBps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
       var convPct = (S.payout.convertBps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
       note.textContent = 'Play first. Claim fee ' + claimPct + '% · convert fee ' + convPct +
-        '% · ' + S.payout.goldPerStrm + ' gold = 1 STRM';
+        '% · ' + S.payout.goldPerStrm + ' gold = 1 ' + ((S.commerce && S.commerce.symbol) || 'STRATUM');
     }
   }
   var challengeWait = null;

@@ -35,11 +35,17 @@ function startServer(port) {
   if (port === LIVE_PORT) throw new Error('refusing to run a test server on ' + LIVE_PORT);
   const srv = spawn(process.execPath, ['server.js'], {
     cwd: CWD,
+    // STRATUM_CLAIM_SIGNER_KEY/STRATUM_TREASURY_KEY explicitly blanked: server.js's own
+    // loadDotEnv() reads the real local .env off disk on every boot (independent of this
+    // test runner's own process.env) and would otherwise smuggle in whatever real signer
+    // key a developer has configured locally — making this "queued, not settled" suite
+    // silently attempt REAL settlement against the (currently unfunded) live treasury.
     env: Object.assign({}, process.env, {
       PORT: String(port), STRATUM_DB: TESTDB, STRATUM_RESPAWN_SCALE: '1',
       STRATUM_MIN_CLAIM_AMOUNT: '4', STRATUM_CLAIM_FEE_BPS: '2500',
       STRATUM_CONVERT_FEE_BPS: '5000', STRATUM_MIN_CONVERT_AMOUNT: '4',
-      STRATUM_GOLD_PER_STRM: '10'
+      STRATUM_GOLD_PER_STRM: '10',
+      STRATUM_CLAIM_SIGNER_KEY: '', STRATUM_TREASURY_KEY: ''
     }),
     stdio: ['ignore', 'pipe', 'pipe']
   });

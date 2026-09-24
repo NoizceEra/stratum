@@ -1,8 +1,8 @@
-# STRM token mint (Solana SPL)
+# STRATUM token mint (Solana SPL)
 
 **The mint is live**, verified on mainnet-beta 2026-09-24:
 `EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU` — "Planet Stratum" / `STRATUM` on
-its own on-chain metadata, `STRM` as this game's display ticker. It is a
+its own on-chain metadata, `STRATUM` as this game's display ticker. It is a
 **Token-2022** mint (not the legacy Token program — see `src/chain-adapter.js`'s
 header for why that distinction matters to any code that builds a transfer),
 6 decimals, fixed supply (mint authority is `null` — nobody, not even the
@@ -17,7 +17,7 @@ transfer fee) was the plan for a mint created via THIS repo's own
 `scripts/create-strm-mint.mjs`. The mint actually in use has a transfer fee, so
 it was evidently created some other way (a token launcher, not this script) —
 if a genuinely fresh, script-created mint is ever needed instead, the section
-below still describes how, but it does not describe how the current STRM mint
+below still describes how, but it does not describe how the current STRATUM mint
 came to exist.
 
 `src/token-config.js` now carries this real address as its default (`isAddr()`
@@ -30,7 +30,7 @@ below, which is still accurate for that half).
 
 The rest of this section is kept for reference — for standing up a fresh mint
 via this repo's own script, e.g. for a fork or a testnet rehearsal. It is not
-what produced the STRM mint above.
+what produced the STRATUM mint above.
 
 1. Fund a wallet with a little SOL (mint rent + a few transaction fees — well
    under 0.1 SOL).
@@ -46,7 +46,7 @@ what produced the STRM mint above.
 
 ## Wiring a (different) mint into the game
 
-Already done for the current STRM mint (baked into `token-config.js`'s
+Already done for the current STRATUM mint (baked into `token-config.js`'s
 defaults). This is what it took, for reference or for wiring in a different one:
 
 1. Set `STRATUM_TOKEN_MINT=<mint>` (and `STRATUM_TOKEN_DECIMALS=<its real
@@ -56,7 +56,7 @@ defaults). This is what it took, for reference or for wiring in a different one:
 2. Verify `chain-adapter.js` picks it up: boot the server and check the startup
    log line `[commerce] settlement live=...` — it only reads `true` once the
    mint is real AND the treasury/secret/RPC are all configured.
-3. **Fund the treasury** — real settlement transfers STRM FROM the treasury's
+3. **Fund the treasury** — real settlement transfers STRATUM FROM the treasury's
    associated token account TO a claiming player's associated token account
    (see `chain-adapter.js`). Send part of the supply to the treasury address
    (`EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo`, per `token-config.js` —
@@ -74,7 +74,7 @@ stronger promise to players than one an operator can freeze or inflate later.
 If real requirements emerge that need one of those, that's a new, deliberate
 mint — not a change bolted on after supply already exists.
 
-**This is not a description of the current live STRM mint**, which does carry a
+**This is not a description of the current live STRATUM mint**, which does carry a
 1% transfer fee (see the top of this file) — that mint predates this script
 being used, or was created by some other tool entirely.
 

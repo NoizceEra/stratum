@@ -6,7 +6,7 @@
  *   Hotkeys open every panel, but a new colonist dropped onto an empty planet has no
  *   reason to press any of them. Three settlers camped by the spawn fire give the
  *   first session a face: a guide who mirrors your current quest, a quartermaster
- *   who opens craft/structures for you, and an archivist who explains STRM and the
+ *   who opens craft/structures for you, and an archivist who explains STRATUM and the
  *   wallet. Talking is tap/click — the same gesture as harvesting — so touch players
  *   get the menus without ever finding a hotkey.
  *
@@ -66,7 +66,7 @@
       id: 'ilo', name: 'ILO', role: 'Archivist',
       map: 0, dx: -2, dy: 1,
       body: '#8a9ec8', trim: '#c9a55c',
-      blurb: 'Tracks every gram shipped to Earth and every STRM owed for it.'
+      blurb: 'Tracks every gram shipped to Earth and every STRATUM owed for it.'
     }
   ]);
 
@@ -142,21 +142,21 @@
       return 'Fabricator\u2019s hot. Wood and ore in, gear out — copper tools first, always. Shift-click a recipe to build all you can afford at once.';
     }
     if (q === 'claim') return 'Claim land first, then come back — structures need YOUR ground under them. Kiln turns ore into gold while you sleep. That is the whole economy.';
-    if (pending > 0) return 'You have STRM pending, I can smell it. That is Ilo\u2019s department, not mine — but spend the gold before you convert it, gear beats numbers.';
+    if (pending > 0) return 'You have STRATUM pending, I can smell it. That is Ilo\u2019s department, not mine — but spend the gold before you convert it, gear beats numbers.';
     return 'Quartermaster Dray. I turn trees into tools and ore into armour. Salvage mode breaks gear back down for half its cost when you mis-click.';
   }
 
   function iloLine(q, pending, done, total) {
     if (pending >= 50) {
-      return 'Your ledger is heavy — ' + pending + ' STRM pending. SHIP TO EARTH sends it toward the colony quota, CLAIM STRM sends it to your own wallet. Both take a small fee; the quota feeds everyone\u2019s yield.';
+      return 'Your ledger is heavy — ' + pending + ' STRATUM pending. SHIP TO EARTH sends it toward the colony quota, CLAIM STRATUM sends it to your own wallet. Both take a small fee; the quota feeds everyone\u2019s yield.';
     }
     if (pending > 0) {
-      return pending + ' STRM pending so far. Keep working — claims clear a floor first, so small balances wait. Shipping to Earth counts from the first gram.';
+      return pending + ' STRATUM pending so far. Keep working — claims clear a floor first, so small balances wait. Shipping to Earth counts from the first gram.';
     }
     if (q === null && done >= total && total > 0) {
-      return 'First week complete, and the ledger knows your name. Hold STRM in your wallet for a yield tier, ship it for the colony quota — holding helps you, shipping helps everyone.';
+      return 'First week complete, and the ledger knows your name. Hold STRATUM in your wallet for a yield tier, ship it for the colony quota — holding helps you, shipping helps everyone.';
     }
-    return 'Archivist Ilo. Every gram you ship to Earth is burned into the colony quota, and the quota raises everyone\u2019s yield. Connect a wallet when you want to claim STRM for yourself — play needs no wallet at all.';
+    return 'Archivist Ilo. Every gram you ship to Earth is burned into the colony quota, and the quota raises everyone\u2019s yield. Connect a wallet when you want to claim STRATUM for yourself — play needs no wallet at all.';
   }
 
   /**

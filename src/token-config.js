@@ -72,7 +72,12 @@
     tokenAddress: 'EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU',
     /** On-chain payout wallet (public). Fresh Solana keypair generated 2026-09-22. */
     treasuryAddress: 'EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo',
-    symbol: 'STRM',
+    /** Display ticker — matches the mint's own on-chain Token-2022 metadata symbol
+     *  exactly ("STRATUM"), verified 2026-09-24. Was "STRM" as a distinct shorthand
+     *  before the real mint existed; corrected to match the actual contract once it
+     *  did, per the project owner's explicit call (a shorthand that doesn't match the
+     *  real ticker risks confusing anyone verifying the token against the contract). */
+    symbol: 'STRATUM',
     name: 'STRATUM',
     decimals: 6,
     placeholder: false

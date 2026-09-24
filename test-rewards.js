@@ -15,7 +15,7 @@ check('tc-defaults-chain-name', TC.DEFAULTS.chainName === 'Solana');
 check('tc-defaults-mint-is-the-real-strm-mint', TC.DEFAULTS.tokenMint === 'EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU');
 check('tc-defaults-treasury', TC.DEFAULTS.treasuryAddress === 'EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo');
 check('tc-defaults-placeholder', TC.DEFAULTS.placeholder === false);
-check('tc-defaults-symbol', TC.DEFAULTS.symbol === 'STRM');
+check('tc-defaults-symbol', TC.DEFAULTS.symbol === 'STRATUM');
 check('tc-defaults-decimals', TC.DEFAULTS.decimals === 6);
 check('tc-frozen', Object.isFrozen(TC.DEFAULTS));
 check('tc-isAddr-ok', TC.isAddr('EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo'));

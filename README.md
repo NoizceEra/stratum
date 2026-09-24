@@ -241,7 +241,7 @@ the tile grid, or gameplay — it's backdrop, the same way the existing water sh
 
 ## Commerce (Solana)
 
-> ✅ **The STRM mint is live.** `STRATUM_TOKEN_MINT` is the real mint,
+> ✅ **The STRATUM mint is live.** `STRATUM_TOKEN_MINT` is the real mint,
 > `EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU` (Token-2022, 6 decimals, 1%
 > transfer fee — the mint's own on-chain config, not something this app adds;
 > verified on mainnet-beta 2026-09-24). Read-only features (holder-bonus balance
@@ -255,15 +255,15 @@ the tile grid, or gameplay — it's backdrop, the same way the existing water sh
 > old, never-deployed contract, kept for history only.)
 
 Play does not ask for a wallet. Harvesting, crafting, and kills award **in-game gold**
-plus pending **STRM** (`src/rewards.js`) straight into the server ledger. Connecting a
+plus pending **STRATUM** (`src/rewards.js`) straight into the server ledger. Connecting a
 Solana wallet is only for cashing out, and one wallet is one colonist
 (`wallet_players`). Two exits charge a treasury fee (`src/payout.js`, default 2.5%):
 
-- **Claim** — pending STRM becomes an SPL transfer to that wallet. The chain transfer
+- **Claim** — pending STRATUM becomes an SPL transfer to that wallet. The chain transfer
   is the net; the fee never leaves the treasury token account. If the mint is still the
   placeholder, the claim is recorded and pending is left untouched (no fee taken).
-- **Convert** — gold becomes pending STRM, or pending STRM becomes gold (`10` gold per
-  STRM before the fee). The fee is credited to the in-game treasury vault. Convert does
+- **Convert** — gold becomes pending STRATUM, or pending STRATUM becomes gold (`10` gold per
+  STRATUM before the fee). The fee is credited to the in-game treasury vault. Convert does
   not broadcast a transaction.
 
 Two separate marketplaces charge a real treasury fee on top of that —
@@ -278,7 +278,7 @@ See `.env.example` for overrides.
 
 | | Address |
 |--|--|
-| STRM mint (live, Token-2022, 6 decimals, 1% transfer fee) | `EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU` |
+| STRATUM mint (live, Token-2022, 6 decimals, 1% transfer fee) | `EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU` |
 | Treasury wallet (public) | `EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo` |
 
 The treasury **secret key** is not in this repo. It lives in a local `.env`
@@ -290,14 +290,14 @@ STRATUM_TOKEN_MINT=EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU
 STRATUM_TREASURY_ADDRESS=EU7HUWHHjqAirfy9SkXmDUYPVop8kQUyiKrCLboWMoNo
 STRATUM_CLUSTER=mainnet-beta
 STRATUM_SOLANA_RPC=https://api.mainnet-beta.solana.com
-STRATUM_TOKEN_SYMBOL=STRM
+STRATUM_TOKEN_SYMBOL=STRATUM
 STRATUM_TOKEN_DECIMALS=6
 # STRATUM_CLAIM_SIGNER_KEY=…   # local .env only — never committed, never logged
 ```
 
-Connect a wallet in the HUD (Phantom / Solflare) to read on-chain STRM
-(read-only — `public/wallet.js` never signs or sends a transaction). Pending STRM accrues
-in a server ledger (`token_ledger`); a **CLAIM STRM** button in the HUD sends it toward
+Connect a wallet in the HUD (Phantom / Solflare) to read on-chain STRATUM
+(read-only — `public/wallet.js` never signs or sends a transaction). Pending STRATUM accrues
+in a server ledger (`token_ledger`); a **CLAIM STRATUM** button in the HUD sends it toward
 settlement, but read the next section before assuming that means a payout happens.
 `/api/stats` exposes both the soft fee vault (`treasury`) and the on-chain wallet
 (`treasuryWallet` / `commerce`) for operators — the HUD does not show the treasury address.
@@ -327,8 +327,8 @@ legacy Token program most SPL-transfer examples assume.
 
 **Two more protections for the treasury's SOL**, both purely server-side (no chain
 interaction needed to enforce either):
-- A minimum claim floor (`STRATUM_MIN_CLAIM_AMOUNT`, default 50 STRM) — real settlement
-  pays the same SOL fee for a 1-STRM claim as a 1000-STRM one, so with no floor a player (or a
+- A minimum claim floor (`STRATUM_MIN_CLAIM_AMOUNT`, default 50 STRATUM) — real settlement
+  pays the same SOL fee for a 1-STRATUM claim as a 1000-STRATUM one, so with no floor a player (or a
   bot) could bleed the SOL float one dust-sized claim at a time. Refused claims never touch
   `claim_requests` or `chain-adapter.js` at all — same "nothing spent on a refusal" contract
   as every other economy gate in `server.js`.
@@ -350,14 +350,14 @@ injected fakes (`settleClaim(req, env, deps)`) — no test in this repo ever sig
 broadcasts a real transaction, and none should; a live-chain dry run against the real
 mint is the operator's own call to make.
 
-**Creating the real STRM mint is a separate step, not done by an agent session** —
+**Creating the real STRATUM mint is a separate step, not done by an agent session** —
 see `contracts/README.md` (fixed supply via `--lock`, no freeze authority — so a
 compromised treasury key can drain at most the treasury's existing balance, never
 inflate supply) for the full create-and-wire-in walkthrough.
 
-### Token sinks — where pending STRM actually goes
+### Token sinks — where pending STRATUM actually goes
 
-Every previous piece of commerce only ever *added* to a player's pending STRM balance.
+Every previous piece of commerce only ever *added* to a player's pending STRATUM balance.
 `src/token-sink.js` is the drain: two ways to spend it, both funneling through the same
 `splitBurn()` — most of what's spent is **burned** (removed from the economy forever, never
 added to anyone's `claimed` total) and a smaller slice goes to the treasury, default 80/20,
@@ -365,12 +365,12 @@ tunable via `STRATUM_TOKEN_BURN_BPS`. `/api/stats.colonyQuota` and the HUD's "si
 counter track the running burn total.
 
 - **Earth Requisition** — a **SHIP TO EARTH** HUD button spends some or all of a player's
-  pending STRM directly (`{t:'requisition', amount?}` — omit `amount` to ship everything).
-  A single shipment of 50+ STRM broadcasts to every other player on the map. Refusals
+  pending STRATUM directly (`{t:'requisition', amount?}` — omit `amount` to ship everything).
+  A single shipment of 50+ STRATUM broadcasts to every other player on the map. Refusals
   (`nothing pending`, `cannot afford`) never touch the ledger.
 - **Structure Rush** — Shift+click your own idle structure to instantly fill whatever's
-  left of its capacity for STRM, instead of collecting only what has accrued so far
-  (plain click still does that). Priced at `STRATUM_RUSH_COST_PER_UNIT` STRM per resource
+  left of its capacity for STRATUM, instead of collecting only what has accrued so far
+  (plain click still does that). Priced at `STRATUM_RUSH_COST_PER_UNIT` STRATUM per resource
   unit skipped (default 2); an already-full structure costs nothing to rush.
 
 ## Crafting
@@ -390,7 +390,7 @@ tool tier). `src/crafting.js` adds depth on top, in the craft panel HUD:
   crafted you currently hold; clicking one breaks it down for a partial materials refund
   (`STRATUM_SALVAGE_REFUND_BPS`, default 50%, floored per material — never a full-value
   refund, which would make crafting free to "try" indefinitely). Reverses a crafting
-  mistake; grants no gold or STRM (it's undoing a purchase, not earning a new one).
+  mistake; grants no gold or STRATUM (it's undoing a purchase, not earning a new one).
 
 ## Reward yield bonuses
 
@@ -400,12 +400,12 @@ three independent multipliers compose at `applyCommerceReward()`'s single choke 
 `server.js`, floored once at the end so rounding is lost at most once, never chained:
 
 - **`src/holder-bonus.js`** — "simple as holding the token": a linked wallet's real
-  on-chain STRM balance (verified server-side via `chain-adapter.js`'s new `readBalance()`
+  on-chain STRATUM balance (verified server-side via `chain-adapter.js`'s new `readBalance()`
   — a client-reported balance would be trivially spoofable, so the server never trusts one)
   puts a player into one of five tiers, Colonist (1.0x, the base) up to Silverlord (2.0x at
-  100,000+ STRM). Refreshed on wallet-link and on reconnect; **always 1.0x today**, gated
+  100,000+ STRATUM). Refreshed on wallet-link and on reconnect; **always 1.0x today**, gated
   behind the same non-placeholder-mint check as real settlement (see the Commerce
-  section above) — this is real, tested code sitting dormant until the real STRM mint
+  section above) — this is real, tested code sitting dormant until the real STRATUM mint
   exists, exactly like `chain-adapter.js`'s settlement itself.
 - **`src/mining-streak.js`** — mining at a steady, human pace (roughly one harvest every
   1-15 seconds, with natural jitter) builds a personal streak worth up to +50%. Explicitly
@@ -414,12 +414,12 @@ three independent multipliers compose at `applyCommerceReward()`'s single choke 
   header for the full reasoning). Session-only, resets on reconnect. Only harvest actions
   build or break it; crafting/killing/collecting between mines never touches it.
 - **`src/colony-milestone.js`** — a community-wide bonus, the same for every player at any
-  given moment, driven by the server's running `colonyQuota` (total STRM ever burned via
+  given moment, driven by the server's running `colonyQuota` (total STRATUM ever burned via
   the sinks above). As the whole colony spends together, everyone's yield permanently rises
-  — Outpost (1.0x) up to Dominion (1.20x at 1,000,000+ burned). A flywheel: burning STRM
+  — Outpost (1.0x) up to Dominion (1.20x at 1,000,000+ burned). A flywheel: burning STRATUM
   destroys it, but it's also what makes future earning better for everyone, giving a reason
   to spend beyond the immediate sink. Public on `/api/stats.colonyMilestone` (including
-  `next`, for a future "X STRM until the next milestone" HUD readout).
+  `next`, for a future "X STRATUM until the next milestone" HUD readout).
 
 All three were built as independent pure modules by parallel agents against this
 codebase's existing module contract (dependency-free UMD, no `Date.now()`/`Math.random()`,
@@ -430,7 +430,7 @@ end-to-end in one pass — see `test-holder-bonus.js`, `test-mining-streak.js`,
 ## Anti-cheat
 
 STRATUM has no admins and no moderation queue — see "The idea" above — which was a fine,
-deliberate choice while STRM was just a number going up. Now that
+deliberate choice while STRATUM was just a number going up. Now that
 `chain-adapter.js` can really sign and broadcast a settlement transfer (still gated off
 today — see the Commerce section above), harvest-botting or multi-accounting becomes a
 direct financial exploit, not a leaderboard nuisance. `src/anti-cheat.js` is the answer,
@@ -453,7 +453,7 @@ kill, collect) through the single choke point every one of them already passes t
 
 These combine into one rolling, decaying suspicion score per player (session-only, never
 persisted — it's a short-timescale behavioral signal, not a permanent mark). Crossing the
-threshold **throttles the economic reward of that one action** — gold and STRM both come
+threshold **throttles the economic reward of that one action** — gold and STRATUM both come
 back zero — while the action itself (materials consumed, item crafted, node depleted, XP
 awarded) proceeds completely normally. Never a block, never a ban, never a lockout, never
 anything requiring a human to review or undo. A false positive costs a legitimate player a
@@ -470,8 +470,8 @@ Playable and tested. Honest gaps:
   still refuses to run without `STRATUM_CLAIM_SIGNER_KEY`. Every claim today queues;
   none settle. Setting that one secret on the host (never in `.env`, never committed)
   lifts this.
-- **No way to buy in-game currency with real money or crypto yet.** Gold and STRM are
-  earned by playing only — there's no fiat on-ramp, no "buy gold with STRM" or "buy STRM
+- **No way to buy in-game currency with real money or crypto yet.** Gold and STRATUM are
+  earned by playing only — there's no fiat on-ramp, no "buy gold with STRATUM" or "buy STRATUM
   with a card" flow, and no payment processor wired in anywhere in this codebase. This is
   a separate, not-yet-designed feature, not a bug in the claim pipeline above.
 - **Not deployed.** It runs locally. Hosting needs a long-lived process (Railway/Fly/VPS —
@@ -479,7 +479,7 @@ Playable and tested. Honest gaps:
   static client — not a static host alone.
 - **Anti-cheat now covers economic abuse specifically** (see the Anti-cheat section
   above) — rate/rhythm/IP-density detection on every reward-earning action, throttling
-  gold/STRM without ever blocking play. Movement rate-limiting and server-side validation
+  gold/STRATUM without ever blocking play. Movement rate-limiting and server-side validation
   on everything else remain as before; this doesn't add anything like device fingerprinting,
   CAPTCHA, or persistent per-account suspicion history — a determined, patient bot working
   well under the rate/rhythm thresholds is still not caught by this.

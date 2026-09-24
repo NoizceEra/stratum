@@ -161,7 +161,16 @@ class Client {
   // STRM) clears it, because THIS suite's claim section proves the not_configured/queued
   // wiring and the "balance is never touched" contract, not the floor itself — that gets
   // its own dedicated coverage in test-claim-floor-integration.js against the real default.
-  const srv = startServer(port, TESTDB, { STRATUM_SHOP_FEE_BPS: '5000', STRATUM_MIN_CLAIM_AMOUNT: '1' });
+  // STRATUM_CLAIM_SIGNER_KEY/STRATUM_TREASURY_KEY explicitly blanked: server.js's own
+  // loadDotEnv() reads the real local .env off disk on every boot (independent of this
+  // test runner's own process.env) and would otherwise smuggle in whatever real signer
+  // key a developer has configured locally — making this "not configured" suite silently
+  // attempt REAL settlement against the (currently unfunded) live treasury instead of
+  // testing the queued/not_configured path it's named for.
+  const srv = startServer(port, TESTDB, {
+    STRATUM_SHOP_FEE_BPS: '5000', STRATUM_MIN_CLAIM_AMOUNT: '1',
+    STRATUM_CLAIM_SIGNER_KEY: '', STRATUM_TREASURY_KEY: ''
+  });
   await waitReady(port);
   let srvDead = false;
   const mustLive = () => { if (srv.exited !== null) { srvDead = true; ok(false, 'test server died mid-suite', srv.exited); } return !srvDead; };
@@ -171,7 +180,7 @@ class Client {
   a.send({ t: 'hello', key: 'commerce-key-AAAA-0001', name: 'ORE_BARON' });
   const wa = await a.waitFor(m => m.t === 'welcome');
   ok(wa.commerce && typeof wa.commerce.tokenAddress === 'string', 'welcome carries the commerce/token config', wa.commerce);
-  ok(wa.commerce && wa.commerce.placeholder === true, 'the shipped token config is still explicitly a placeholder', wa.commerce);
+  ok(wa.commerce && wa.commerce.placeholder === false, 'the shipped token config is the real, live mint (not a placeholder)', wa.commerce);
   ok(wa.commerce && typeof wa.commerce.treasuryAddress === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wa.commerce.treasuryAddress),
     'welcome carries the public treasury wallet address', wa.commerce && wa.commerce.treasuryAddress);
   ok(wa.commerce && !('privateKey' in wa.commerce) && !('signerKey' in wa.commerce),

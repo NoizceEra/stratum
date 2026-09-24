@@ -291,7 +291,7 @@
   <div id="hud-br-detail">
     <div style="margin-top:7px">
       <span class="k">gold</span> <span class="v gold" id="h-gold">0</span>
-      <span class="k" style="margin-left:8px" id="h-token-sym">STRM</span>
+      <span class="k" style="margin-left:8px" id="h-token-sym">STRATUM</span>
       <span class="v" id="h-token-pending">0</span>
       <span class="k" style="margin-left:4px;font-size:9px">pending</span>
     </div>
@@ -308,19 +308,19 @@
     </div>
     <div class="k" id="h-payout-note" style="margin-top:6px;font-size:10px;max-width:280px">Play first. Connect a wallet to claim or convert — a fee applies then.</div>
     <div class="hud-row">
-      <button type="button" id="claim-btn" class="hud-btn" title="Requires a connected wallet">CLAIM STRM</button>
+      <button type="button" id="claim-btn" class="hud-btn" title="Requires a connected wallet">CLAIM STRATUM</button>
       <span class="k" id="h-claim-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <div class="hud-row">
-      <button type="button" id="convert-gold-btn" class="hud-btn" title="Requires a connected wallet">GOLD → STRM</button>
-      <button type="button" id="convert-strm-btn" class="hud-btn" style="margin-left:4px" title="Requires a connected wallet">STRM → GOLD</button>
+      <button type="button" id="convert-gold-btn" class="hud-btn" title="Requires a connected wallet">GOLD → STRATUM</button>
+      <button type="button" id="convert-strm-btn" class="hud-btn" style="margin-left:4px" title="Requires a connected wallet">STRATUM → GOLD</button>
       <span class="k" id="h-convert-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <!-- Earth Requisition: the actual STRM sink. Most of what you ship is burned
          forever; a slice funds the treasury. This is the first real reason STRM is
          worth anything beyond a number that goes up — see src/token-sink.js. -->
     <div class="hud-row">
-      <button type="button" id="requisition-btn" class="hud-btn" title="Requires a connected wallet and pending STRM">SHIP TO EARTH</button>
+      <button type="button" id="requisition-btn" class="hud-btn" title="Requires a connected wallet and pending STRATUM">SHIP TO EARTH</button>
       <span class="k" id="h-requisition-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <!-- populated by game.js's applyCommerceConfig() as soon as commerce config
@@ -419,8 +419,8 @@
         Stratum isn't a quarry you empty, it's a world you settle.<br>
       <b>You can only release a claim</b> — you can never take one from another colonist.<br>
       <b>Refine what you mine.</b> A kiln turns ore into more gold — the reason Earth sent you.<br>
-      <b>Play first.</b> Mining and crafting earn gold and STRM with no wallet.<br>
-      <b>Wallet when you cash out.</b> Connect a Solana wallet to claim STRM or convert gold.
+      <b>Play first.</b> Mining and crafting earn gold and STRATUM with no wallet.<br>
+      <b>Wallet when you cash out.</b> Connect a Solana wallet to claim STRATUM or convert gold.
         A fee is taken only on claim and convert.
     </div>
     <input id="name-in" maxlength="18" placeholder="COLONIST NAME" autocomplete="off">

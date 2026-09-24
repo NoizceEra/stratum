@@ -1,8 +1,8 @@
 /**
- * wallet.js — Solana wallet helper for STRATUM commerce (SPL token STRM).
+ * wallet.js — Solana wallet helper for STRATUM commerce (SPL token STRATUM).
  * Zero npm deps. Talks to the injected wallet (Phantom / Solflare / any
  * window.solana-compatible provider) for connect, and to the configured RPC
- * via plain fetch for the STRM token balance.
+ * via plain fetch for the STRATUM token balance.
  */
 'use strict';
 (function (root) {
