@@ -138,7 +138,8 @@ function isPubkey(s) {
  *   STRATUM_SOLANA_RPC / STRATUM_RPC_URL / STRATUM_CLAIM_RPC_URL
  *   STRATUM_TOKEN_MINT / STRATUM_TOKEN_ADDRESS / STRATUM_CLAIM_TOKEN_ADDR
  *   STRATUM_TREASURY_ADDRESS
- *   STRATUM_CLAIM_SIGNER_KEY / STRATUM_TREASURY_KEY  (presence only)
+ *   STRATUM_CLAIM_SIGNER_KEY / STRATUM_TREASURY_KEY  (presence only — see signerAddress
+ *                            below for the one derived value from it this ever exposes)
  *   STRATUM_TOKEN_IS_PLACEHOLDER  ('0' = real mint; anything else = still the placeholder)
  *   STRATUM_TOKEN_DECIMALS  (SPL: 0..9, falls back to 6 — the real STRM mint's own
  *                            decimals — if missing/out of range)
@@ -149,11 +150,20 @@ function describe(env) {
   var mint = e.STRATUM_TOKEN_MINT || e.STRATUM_CLAIM_TOKEN_ADDR || e.STRATUM_TOKEN_ADDRESS;
   var treasury = e.STRATUM_TREASURY_ADDRESS;
   var key = e.STRATUM_CLAIM_SIGNER_KEY || e.STRATUM_TREASURY_KEY;
+  var secret = parseSecretKey(key);
+  // A public key derived from the secret is, by definition, safe to surface — it's the
+  // same address anyone can already read off any transaction this wallet ever signs.
+  // This is the ONLY thing this module ever derives from the secret outside settleClaim()
+  // itself, and only for an operator's own boot-log sanity check (never sent to a client
+  // — see the module header's SAFETY GATES note and server.js's claimEnv()/describe() call).
+  var signerAddress = null;
+  if (secret) { try { signerAddress = Keypair.fromSecretKey(secret).publicKey.toBase58(); } catch (e2) { signerAddress = null; } }
   return {
     rpcConfigured: typeof rpc === 'string' && /^https?:\/\//i.test(rpc),
     mintConfigured: isPubkey(mint),
     treasuryConfigured: isPubkey(treasury),
-    signerPresent: parseSecretKey(key) !== null,
+    signerPresent: secret !== null,
+    signerAddress: signerAddress,
     // Conservative on purpose: only an explicit '0' counts as "this is the real mint".
     tokenIsPlaceholder: e.STRATUM_TOKEN_IS_PLACEHOLDER !== '0',
     settlementImplemented: true

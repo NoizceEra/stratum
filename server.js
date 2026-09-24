@@ -2982,4 +2982,5 @@ server.listen(PORT, HOST, () => {
     ` rpc=${ready.rpcConfigured} mint=${ready.mintConfigured}` +
     ` treasury=${ready.treasuryConfigured} signer=${ready.signerPresent}` +
     ` implemented=${ready.settlementImplemented}`);
+  if (ready.signerAddress) console.log(`[commerce] signer wallet ${ready.signerAddress}`);
 });
