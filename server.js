@@ -33,6 +33,7 @@ const TokenSink = require('./src/token-sink.js');
 const AntiCheat = require('./src/anti-cheat.js');
 const Crafting = require('./src/crafting.js');
 const HolderBonus = require('./src/holder-bonus.js');
+const BuilderBonus = require('./src/builder-bonus.js');
 const MiningStreak = require('./src/mining-streak.js');
 const ColonyMilestone = require('./src/colony-milestone.js');
 const Payout = require('./src/payout.js');
@@ -430,6 +431,9 @@ const qTile = db.prepare('INSERT OR REPLACE INTO tiles(map,x,y,m,owner,ts) VALUE
 const qDel = db.prepare('DELETE FROM tiles WHERE map=? AND x=? AND y=?');
 const qStruct = db.prepare('INSERT OR REPLACE INTO structures(id,kind,map,x,y,owner,builtAt,lastCollectedAt) VALUES(?,?,?,?,?,?,?,?)');
 const qStructDel = db.prepare('DELETE FROM structures WHERE id=?');
+// One player's own structure count for src/builder-bonus.js — cheap indexed lookup
+// (structures_owner), only ever run on build/release/hello, never per reward action.
+const qStructCount = db.prepare('SELECT COUNT(*) as n FROM structures WHERE owner=?');
 const qPlay = db.prepare(
   'INSERT OR REPLACE INTO players(k,name,hue,created,last,paletteId,bodyHue,trimHue,accessories) VALUES(?,?,?,?,?,?,?,?,?)');
 const qPlayGet = db.prepare('SELECT name,hue,paletteId,bodyHue,trimHue,accessories FROM players WHERE k=?');
@@ -955,6 +959,11 @@ server.on('upgrade', (req, socket) => {
     // exists and a balance read actually succeeds.
     streakState: { streak: 0, lastAt: null },
     holderBalance: 0, holderMultiplier: HolderBonus.BASE_MULTIPLIER,
+    // Builder-bonus (src/builder-bonus.js): live count of structures this player
+    // currently owns, refreshed on hello + whenever build/release changes it (see
+    // refreshBuilderBonus() below) — never recomputed on every reward action, unlike
+    // the mistake already made and fixed once for anti-cheat's pending aggregates.
+    builderCount: 0, builderMultiplier: BuilderBonus.BASE_MULTIPLIER,
     ready: false, lastMove: Date.now(), dead: false,
     gone: false, bad: 0, lastRx: Date.now(), tokenAt: Date.now(), tokens: MSG_BURST, dropped: 0,
     send(obj) {
@@ -1253,8 +1262,8 @@ function boostByMultiplier(amount, mult) {
  * only the ECONOMIC reward is ever suppressed, never the action itself, never a ban, never
  * anything requiring a human to review or undo (ROADMAP.md's no-admins rule, honored).
  *
- * This is ALSO the one place the three 2026-09-21 yield bonuses compose, on top of the
- * base reward (and any batch `multiplier`, applied first — see that param's own comment):
+ * This is ALSO the one place the four yield bonuses compose, on top of the base reward
+ * (and any batch `multiplier`, applied first — see that param's own comment):
  *   - src/colony-milestone.js — global, from the server-wide burnedTotal() (everyone gets
  *     the same colony-wide multiplier at any given moment, regardless of action type).
  *   - src/mining-streak.js — personal, harvest-only (mining is this game's primary loop;
@@ -1263,8 +1272,14 @@ function boostByMultiplier(amount, mult) {
  *   - src/holder-bonus.js — personal, from c.holderMultiplier (refreshed by
  *     refreshHolderBonus() below; always 1.0x until a real, non-placeholder token exists
  *     — see that module's header for why it never guesses at a balance).
- * All three multiply together into one combined factor, applied once via
- * boostByMultiplier() so rounding is lost at most once, not three times.
+ *   - src/builder-bonus.js — personal, from c.builderMultiplier (refreshed by
+ *     refreshBuilderBonus() below, on hello/build/release — see that module's header for
+ *     why "currently owned" and why its ceiling deliberately matches holder-bonus's).
+ * Mining and building are the two things this game is primarily about (mining-streak and
+ * builder-bonus), holding is the one thing that can be bought (holder-bonus) instead of
+ * played for, and the colony milestone is what everyone gets for spending together — all
+ * four multiply into one combined factor, applied once via boostByMultiplier() so
+ * rounding is lost at most once, not four times.
  */
 function applyCommerceReward(c, action, ctx, multiplier) {
   try {
@@ -1352,7 +1367,9 @@ function applyCommerceReward(c, action, ctx, multiplier) {
     const colonyMult = ColonyMilestone.multiplierFor(burnedTotal());
     const holderMult = (typeof c.holderMultiplier === 'number' && c.holderMultiplier >= 1)
       ? c.holderMultiplier : HolderBonus.BASE_MULTIPLIER;
-    const combinedMult = colonyMult * streakMult * holderMult;
+    const builderMult = (typeof c.builderMultiplier === 'number' && c.builderMultiplier >= 1)
+      ? c.builderMultiplier : BuilderBonus.BASE_MULTIPLIER;
+    const combinedMult = colonyMult * streakMult * holderMult * builderMult;
 
     const gold = boostByMultiplier(baseGold, combinedMult);
     const token = boostByMultiplier(baseToken, combinedMult);
@@ -1384,6 +1401,29 @@ function refreshHolderBonus(c) {
     c.send({ t: 'holder-tier', balance: res.balance, multiplier: c.holderMultiplier, tier: tier.name });
   }).catch(() => {}); // readBalance() itself never rejects, but this is the one async
   // fire-and-forget call in the whole codebase not awaited by a caller — defend anyway.
+}
+
+/**
+ * Synchronous refresh of a connection's builder tier (src/builder-bonus.js) — unlike
+ * refreshHolderBonus() above, this is a local indexed SQLite read, not a network call,
+ * so there is nothing to await asynchronously. Called on hello (a returning player's
+ * standing colony) and after any successful build-structure/release-structure (the only
+ * two actions that can change what this player owns) — deliberately NOT from
+ * applyCommerceReward()'s hot path, which is exactly the per-action DB-read mistake this
+ * project already made once for anti-cheat's pending aggregates and fixed by caching.
+ * A structure count is comparatively rare to change (a build/release, not a mine click),
+ * so refreshing it exactly when it changes is both correct and cheap — no cache needed.
+ */
+function refreshBuilderBonus(c) {
+  if (!c || !c.key) return;
+  try {
+    const row = qStructCount.get(c.key);
+    const count = row ? (row.n | 0) : 0;
+    c.builderCount = count;
+    c.builderMultiplier = BuilderBonus.multiplierFor(count);
+    const tier = BuilderBonus.tierFor(count);
+    c.send({ t: 'builder-tier', count, multiplier: c.builderMultiplier, tier: tier.name });
+  } catch (e) {} // never let a bonus refresh take the connection down
 }
 
 /** Best owned bonus of a gear kind: weapons add damage, armour soaks it. Zero when bare. */
@@ -1579,6 +1619,7 @@ function onMessage(c, msg) {
 
       const now = Date.now();
       qPlay.run(key, name, hue, prev ? now : now, now, c.paletteId, c.bodyHue, c.trimHue, JSON.stringify(c.accessories));
+      refreshBuilderBonus(c); // synchronous (local index read) — fresh before the welcome payload below
 
       c.send({
         t: 'welcome', id: c.id, key, name, hue, map: c.map, x: c.x, y: c.y,
@@ -1619,16 +1660,20 @@ function onMessage(c, msg) {
         tokenWallet: c.tokenWallet || null,
         payout: payoutPublic(),
         colonyQuota: burnedTotal(),
-        // Reward-yield bonuses (2026-09-21 round) — see applyCommerceReward()'s header for
-        // how these three compose. holderBalance/holderMultiplier are whatever was last
-        // successfully refreshed (0 / base 1.0x for a brand-new connection — refreshed
-        // below, fire-and-forget, if a wallet is already linked); miningStreak is always 0
-        // fresh off a reconnect (the streak is intentionally session-only, see
-        // src/mining-streak.js); colonyMilestone is the current global tier, same for
-        // every player right now.
+        // Reward-yield bonuses — see applyCommerceReward()'s header for how all four
+        // compose. holderBalance/holderMultiplier are whatever was last successfully
+        // refreshed (0 / base 1.0x for a brand-new connection — refreshed below,
+        // fire-and-forget, if a wallet is already linked); builderCount/builderMultiplier
+        // were just freshly recomputed above (a synchronous local read, no fire-and-forget
+        // needed); miningStreak is always 0 fresh off a reconnect (the streak is
+        // intentionally session-only, see src/mining-streak.js); colonyMilestone is the
+        // current global tier, same for every player right now.
         holderBalance: c.holderBalance | 0,
         holderMultiplier: c.holderMultiplier,
         holderTier: HolderBonus.tierFor(c.holderBalance).name,
+        builderCount: c.builderCount | 0,
+        builderMultiplier: c.builderMultiplier,
+        builderTier: BuilderBonus.tierFor(c.builderCount).name,
         miningStreak: c.streakState.streak | 0,
         colonyMilestone: ColonyMilestone.milestoneFor(burnedTotal()).name,
         colonyMultiplier: ColonyMilestone.multiplierFor(burnedTotal())
@@ -2221,6 +2266,7 @@ function onMessage(c, msg) {
       stateSave(c);
       broadcastStructure(c.map, x, y, struct);
       c.send({ t: 'built', kind, x, y, id: struct.id, inv: c.inv });
+      refreshBuilderBonus(c); // owned count just changed — src/builder-bonus.js
       checkAchievements(c);
       break;
     }
@@ -2331,6 +2377,7 @@ function onMessage(c, msg) {
       qStructDel.run(dstruct.id);
       broadcastStructureGone(c.map, dstruct.x, dstruct.y);
       c.send({ t: 'structure-released', x: dstruct.x, y: dstruct.y, kind: dstruct.kind });
+      refreshBuilderBonus(c); // owned count just changed — src/builder-bonus.js
       break;
     }
 
