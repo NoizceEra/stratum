@@ -67,14 +67,22 @@
       map: 0, dx: -2, dy: 1,
       body: '#8a9ec8', trim: '#c9a55c',
       blurb: 'Tracks every gram shipped to Earth and every STRATUM owed for it.'
+    },
+    {
+      id: 'vex', name: 'VEX', role: 'Sky-Watcher',
+      map: 0, dx: 1, dy: -3,
+      body: '#7a8ac8', trim: '#ffd479',
+      blurb: 'Climbed the signal tower and never came down. Reads weather, wrecks, and wonders.'
     }
   ]);
 
-  /** Scenery around the fire, same offset space: tents + crates, decor only. */
+  /** Scenery around the fire, same offset space: tents + crates + tower, decor only. */
   var CAMP_SPOTS = deepFreeze({
     fire: [0, 0],
     tents: [[-4, -3], [4, -3], [-4, 3]],
-    crates: [[3, -2], [-3, 2]]
+    crates: [[3, -2], [-3, 2]],
+    stalls: [[-5, 0], [5, 1]],
+    tower: [6, -4]
   });
 
   /** Action keys the client may map to panel toggles. Anything else is ignored. */
@@ -159,6 +167,23 @@
     return 'Archivist Ilo. Every gram you ship to Earth is burned into the colony quota, and the quota raises everyone\u2019s yield. Connect a wallet when you want to claim STRATUM for yourself — play needs no wallet at all.';
   }
 
+  function vexLine(q, found, total) {
+    var n = 0;
+    try {
+      if (Array.isArray(found)) n = found.length;
+    } catch (e) {}
+    if (n >= 6 && total >= 6) {
+      return 'All six wonders logged. The tower sees everything, but you walked it. Cartographer of Stratum — that title is earned, not given.';
+    }
+    if (n > 0) {
+      return 'Back with dust on your boots. ' + n + ' of ' + total + ' wonders found. The freighter and the elder tree are closest to camp — start there if the far ones scare you.';
+    }
+    switch (q) {
+      case 'travel': return 'Leaving the acre? Good. Two wonders per sector, six total. The Maw and the Vent in the Hollow, the Altar and the Beacon on the Shelf. Bring boots.';
+      default: return 'Vex, sky-watcher. Six wonders on this world, two per sector, and I have seen all of them from this tower — which is to say I have seen none of them up close. Walk to a gold diamond and tap it. Come back with stories.';
+    }
+  }
+
   /**
    * Talk to a settler. `ctx` is { activeQuestId, done, total, tokenPending } —
    * all optional; garbage reads as a fresh colonist with nothing pending.
@@ -170,6 +195,10 @@
       if (!s) return null;
       var q = questId(ctx);
       var done = num(ctx, 'done'), total = num(ctx, 'total'), pending = num(ctx, 'tokenPending');
+      var found = [];
+      try {
+        if (ctx && Array.isArray(ctx.foundSites)) found = ctx.foundSites.slice();
+      } catch (e) {}
       var line, actions;
       if (s.id === 'sable') {
         line = sableLine(q, done, total);
@@ -185,6 +214,14 @@
           { label: 'OPEN FABRICATOR', do: 'craft' },
           { label: 'OPEN STRUCTURES', do: 'idle' },
           { label: 'TITHE — 50000 STRATUM', do: 'tithe' },
+          { label: 'FAREWELL', do: 'close' }
+        ];
+      } else if (s.id === 'vex') {
+        line = vexLine(q, found, 6);
+        actions = [
+          { label: 'OPEN WORLD MAP', do: 'map' },
+          { label: 'TITHE — 50000 STRATUM', do: 'tithe' },
+          { label: 'READ THE GUIDE', do: 'guide' },
           { label: 'FAREWELL', do: 'close' }
         ];
       } else {
@@ -213,7 +250,7 @@
   }
 
   return {
-    SETTLERS: SETTLERS,           // all 3 settler records (frozen).
+    SETTLERS: SETTLERS,           // all 4 settler records (frozen).
     CAMP_SPOTS: CAMP_SPOTS,       // fire/tents/crates offsets (frozen).
     ACTIONS: ACTIONS,             // legal action keys (frozen).
     settlerById: settlerById,     // record for an id, or null.

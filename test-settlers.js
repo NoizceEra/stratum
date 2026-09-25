@@ -9,8 +9,8 @@ function check(name, cond) {
 }
 
 // ---- roster ----
-check('three-settlers', S.SETTLERS.length === 3);
-check('ids', S.SETTLERS.map(s => s.id).join(',') === 'sable,dray,ilo');
+check('four-settlers', S.SETTLERS.length === 4);
+check('ids', S.SETTLERS.map(s => s.id).join(',') === 'sable,dray,ilo,vex');
 check('all-map-0', S.SETTLERS.every(s => s.map === 0));
 check('frozen', Object.isFrozen(S.SETTLERS) && Object.isFrozen(S.SETTLERS[0]));
 check('camp-spots', Array.isArray(S.CAMP_SPOTS.tents) && S.CAMP_SPOTS.tents.length === 3);

@@ -41,6 +41,7 @@ const WalletProof = require('./src/wallet-proof.js');
 const Gldx = require('./src/gldx-yield.js');
 const Tithes = require('./src/tithes.js');
 const Vault = require('./src/vault.js');
+const Landmarks = require('./public/landmarks.js');
 const Pets = require('./src/pets.js');
 
 /** Optional local `.env` (never committed). Existing process.env wins — so hosting
@@ -601,6 +602,49 @@ function vanityOwned(key) {
     return qVanityAll.all(key).map(r => r.item);
   } catch (e) { return []; }
 }
+// Player monuments: named obelisks on your own claimed land. 1,000 STRATUM
+// through the burn-split, cap 3 per player, permanent like land (no removal).
+// They ride chunk messages beside structures so every visitor sees them.
+db.exec(`CREATE TABLE IF NOT EXISTS monuments(
+  id TEXT PRIMARY KEY, owner TEXT NOT NULL, map INTEGER NOT NULL,
+  x INTEGER NOT NULL, y INTEGER NOT NULL, name TEXT NOT NULL, createdAt INTEGER NOT NULL);`);
+const qMonIns = db.prepare('INSERT INTO monuments(id,owner,map,x,y,name,createdAt) VALUES(?,?,?,?,?,?,?)');
+const qMonCount = db.prepare('SELECT COUNT(*) AS n FROM monuments WHERE owner=?');
+const qMonMine = db.prepare('SELECT id,map,x,y,name FROM monuments WHERE owner=?');
+const MONUMENT_COST = 1000;
+const MONUMENT_CAP = 3;
+function monumentsForChunk(map, cx, cy) {
+  const x0 = cx * CHUNK, y0 = cy * CHUNK;
+  const out = [];
+  for (const m of monuments.values()) {
+    if (m.map !== map || m.x < x0 || m.x >= x0 + CHUNK || m.y < y0 || m.y >= y0 + CHUNK) continue;
+    out.push({ id: m.id, owner: m.owner, x: m.x, y: m.y, name: m.name });
+  }
+  return out;
+}
+// Discoverable wonder sites: one-time STRATUM + XP per player per site.
+// Positions resolve dry from spawn by the same first-candidate rule the client
+// uses (src/landmarks.js), so both sides agree with zero protocol.
+db.exec(`CREATE TABLE IF NOT EXISTS landmark_found(
+  k TEXT NOT NULL, site TEXT NOT NULL, foundAt INTEGER NOT NULL,
+  PRIMARY KEY(k,site));`);
+const qFoundIns = db.prepare('INSERT OR IGNORE INTO landmark_found(k,site,foundAt) VALUES(?,?,?)');
+const qFoundAll = db.prepare('SELECT site FROM landmark_found WHERE k=?');
+function foundSites(key) {
+  try {
+    return qFoundAll.all(key).map(r => r.site);
+  } catch (e) { return []; }
+}
+function resolveSite(map, site) {
+  try {
+    const sp = T.spawnPoint(map);
+    for (const [dx, dy] of site.cands) {
+      const m = T.baseTypeFor(map, sp.x + dx, sp.y + dy);
+      if (m !== T.ID.VOID && m !== T.ID.WATER) return { x: sp.x + dx, y: sp.y + dy };
+    }
+    return { x: sp.x + site.cands[0][0], y: sp.y + site.cands[0][1] };
+  } catch (e) { return null; }
+}
 // Settler tithes: standing orders (k, settler). Entry is 100% treasury, upkeep is
 // a weekly burn-split from pending, lapse (not seizure) on unaffordable weeks.
 db.exec(`CREATE TABLE IF NOT EXISTS tithes(
@@ -664,6 +708,15 @@ function structKey(map, x, y) { return map + ':' + (y * W + x); }
     });
   }
   console.log(`[world] ${rows.length} idle structures restored`);
+})();
+// Monuments live beside structures: same in-memory Map, restored at boot.
+const monuments = new Map();
+(function loadMonuments() {
+  try {
+    const rows = db.prepare('SELECT id,owner,map,x,y,name FROM monuments').all();
+    for (const r of rows) monuments.set(r.id, r);
+    if (rows.length) console.log(`[world] ${rows.length} monument(s) restored`);
+  } catch (e) { console.log('[db] monuments restore skipped:', e && e.message); }
 })();
 
 // ---------- shops + trade persistence ---------------------------------------
@@ -1474,7 +1527,8 @@ function sendChunk(c, cx, cy) {
     d: Buffer.from(bytes).toString(B64), owners,
     nodes: world.nodesForChunk(map, cx, cy),
     drops: world.dropsForChunk(map, cx, cy),
-    structures: structuresForChunk(map, cx, cy)
+    structures: structuresForChunk(map, cx, cy),
+    monuments: monumentsForChunk(map, cx, cy)
   });
 }
 
@@ -2049,7 +2103,7 @@ const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', '
   'parcel-mint', 'parcel-list', 'parcel-buy', 'parcel-cancel', 'parcel-browse', 'parcel-mine',
   'wallet-link', 'wallet-challenge', 'claim', 'claim-gldx', 'convert', 'buy-vanity',
   'refill-will', 'tithe-start', 'tithe-cancel', 'vault-deposit', 'vault-withdraw',
-  'requisition', 'salvage', 'tame', 'pet-treat', 'pet-park', 'pet-out', 'buy-pet']);
+  'requisition', 'salvage', 'tame', 'pet-treat', 'pet-park', 'pet-out', 'buy-pet', 'discover', 'monument-build']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -2171,6 +2225,7 @@ function onMessage(c, msg) {
         tokenPending: c.tokenPending | 0,
         tokenWallet: c.tokenWallet || null,
         tithes: titheSettlers(key),
+        found: foundSites(key),
         vault: vaultBalance(key),
         gldxMint: Gldx.GLDX_MINT,
         gldxPending: c.gldxPending | 0,
@@ -2690,6 +2745,44 @@ function onMessage(c, msg) {
       break;
     }
 
+    // Player monuments (burn-heavy sink): 1,000 STRATUM through the split,
+    // cap 3 per player, permanent like land. Must stand on your own claimed tile
+    // within reach. The name ships to every visitor via the chunk feed.
+    case 'monument-build': {
+      if (!c.ready || !c.key) return;
+      const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
+      if (x === null || y === null) return c.send({ t: 'monument-built', ok: false, err: 'bounds' });
+      const dx = x - c.x, dy = y - c.y;
+      if (dx * dx + dy * dy > REACH * REACH) return c.send({ t: 'monument-built', ok: false, err: 'out of reach' });
+      const tile = tiles.get(c.map + ':' + (y * W + x));
+      if (!tile || tile.owner !== c.key) return c.send({ t: 'monument-built', ok: false, err: 'needs your claimed land' });
+      const name = cleanText(msg.name, 24) || 'Monument';
+      try {
+        if ((qMonCount.get(c.key).n | 0) >= MONUMENT_CAP) {
+          return c.send({ t: 'monument-built', ok: false, err: 'monument cap reached (' + MONUMENT_CAP + ')' });
+        }
+      } catch (e) { return c.send({ t: 'monument-built', ok: false, err: 'try again' }); }
+      const led = ledgerOf(c.key);
+      if ((led.pending | 0) < MONUMENT_COST) {
+        return c.send({ t: 'monument-built', ok: false, err: 'need 1000 STRATUM pending', cost: MONUMENT_COST });
+      }
+      ledgerSave(c.key, (led.pending | 0) - MONUMENT_COST, led.claimed, led.wallet);
+      c.tokenPending = (led.pending | 0) - MONUMENT_COST;
+      const split = applyBurnSplit(MONUMENT_COST);
+      scheduleOnChainSink(split.burned, Gldx.earmarkOf(split.treasury));
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      const mon = { id, owner: c.key, map: c.map, x, y, name };
+      monuments.set(id, mon);
+      qMonIns.run(id, c.key, c.map, x, y, name, now);
+      stateSave(c);
+      broadcastMonument(mon);
+      c.send({ t: 'monument-built', ok: true, id, name, x, y, cost: MONUMENT_COST,
+        burned: split.burned, treasury: split.treasury,
+        tokenPending: c.tokenPending | 0, colonyQuota: burnedTotal() });
+      break;
+    }
+
     // Turn a player's pending STRATUM ledger balance into a claim attempt. This is the
     // ONE place src/chain-adapter.js gets called. Real SPL transfer code exists there
     // now, but it still answers 'not_configured' today because the mint is still the
@@ -2930,6 +3023,38 @@ function onMessage(c, msg) {
       const settler = cleanText(msg.settler, 16);
       qTitheDel.run(c.key, settler);
       c.send({ t: 'tithe-cancelled', ok: true, settler: settler, tithes: titheSettlers(c.key) });
+      break;
+    }
+
+    // Discover a wonder site: one-time STRATUM + XP per player per site. Must
+    // stand on the same map within reach of the resolved site tile. Repeat
+    // visits answer ok:false (already found) — never double-pay.
+    case 'discover': {
+      if (!c.ready || !c.key) return;
+      const siteId = cleanText(msg.site, 32);
+      const site = Landmarks.siteOf(siteId);
+      if (!site || site.map !== c.map) {
+        return c.send({ t: 'discovered', ok: false, err: 'no such wonder here', site: siteId });
+      }
+      const at = resolveSite(c.map, site);
+      if (!at) return c.send({ t: 'discovered', ok: false, err: 'no such wonder here', site: siteId });
+      const dx = at.x - c.x, dy = at.y - c.y;
+      if (dx * dx + dy * dy > REACH * REACH) {
+        return c.send({ t: 'discovered', ok: false, err: 'walk closer to discover', site: siteId });
+      }
+      const found = foundSites(c.key);
+      if (found.indexOf(siteId) !== -1) {
+        return c.send({ t: 'discovered', ok: false, err: 'already discovered', site: siteId, found: found });
+      }
+      qFoundIns.run(c.key, siteId, Date.now());
+      const led = ledgerOf(c.key);
+      ledgerSave(c.key, (led.pending | 0) + site.reward, led.claimed, led.wallet);
+      c.tokenPending = (led.pending | 0) + site.reward;
+      world.awardXp(c, site.xp);
+      stateSave(c);
+      sendVitals(c);
+      c.send({ t: 'discovered', ok: true, site: siteId, name: site.name, lore: site.lore,
+        reward: site.reward, xp: site.xp, tokenPending: c.tokenPending | 0, found: foundSites(c.key) });
       break;
     }
 
@@ -3568,6 +3693,15 @@ function onMessage(c, msg) {
 function broadcastNode(map, x, y, kind, state, ripeSec) {
   const cx = T.chunkOf(x), cy = T.chunkOf(y), k = subKey(map, cx, cy);
   for (const c of clients.values()) if (c.ready && c.subs.has(k)) c.send({ t: 'node', map, x, y, kind, state, ripeSec });
+}
+/** A monument was raised — tell chunk subscribers so visitors see it live. */
+function broadcastMonument(mon) {
+  const cx = T.chunkOf(mon.x), cy = T.chunkOf(mon.y), k = subKey(mon.map, cx, cy);
+  for (const c of clients.values()) {
+    if (c.ready && c.subs.has(k)) {
+      c.send({ t: 'monument', id: mon.id, owner: mon.owner, map: mon.map, x: mon.x, y: mon.y, name: mon.name });
+    }
+  }
 }
 
 // ---------- ticks ----------------------------------------------------------

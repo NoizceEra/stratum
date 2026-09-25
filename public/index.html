@@ -307,6 +307,21 @@
          per-source breakdown for a hover (desktop) or an accessibility-tree read (agent). -->
     <div class="k" style="margin-top:6px;font-size:10px" id="h-yield" title="">yield 1.00x</div>
     <div style="margin-top:6px">
+      <img id="h-pet-art" alt="" style="display:none;width:44px;height:44px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:6px;mix-blend-mode:screen;background:#000">
+      <span class="k">companion</span> <span class="v" id="h-pet-name">NONE</span>
+    </div>
+    <div class="hud-row">
+      <button type="button" id="pet-tame-btn" class="hud-btn" title="stand next to the map's wild form with bait">TAME</button>
+      <button type="button" id="pet-treat-btn" class="hud-btn" style="margin-left:4px">TREAT</button>
+      <button type="button" id="pet-park-btn" class="hud-btn" style="margin-left:4px">PARK</button>
+      <span class="k" id="h-pet-status" style="margin-left:6px;font-size:10px"></span>
+    </div>
+    <div class="hud-row" title="premium companions — 50,000 STRATUM each, burned through the sink split">
+      <button type="button" id="pet-buy-mossbulb" class="hud-btn" data-pet="mossbulb">BULB 50k</button>
+      <button type="button" id="pet-buy-cinderpup" class="hud-btn" style="margin-left:4px" data-pet="cinderpup">PUP 50k</button>
+      <button type="button" id="pet-buy-reefclaw" class="hud-btn" style="margin-left:4px" data-pet="reefclaw">CLAW 50k</button>
+    </div>
+    <div style="margin-top:6px">
       <span class="k">GLDX claim</span> <span class="v gold" id="h-gldx">0</span>
       <span class="k" style="margin-left:6px;font-size:9px">ready</span> <span class="v" id="h-gldx-ready">0</span>
     </div>
@@ -320,6 +335,10 @@
       <button type="button" id="vault-in-btn" class="hud-btn" title="Stake all pending STRATUM (1% entry fee to treasury)">STAKE ALL</button>
       <button type="button" id="vault-out-btn" class="hud-btn" style="margin-left:4px" title="Withdraw all staked STRATUM (2.5% exit fee to treasury)">UNSTAKE ALL</button>
       <span class="k" id="h-vault-status" style="margin-left:6px;font-size:10px"></span>
+    </div>
+    <div class="hud-row">
+      <button type="button" id="monument-btn" class="hud-btn" title="Raise a named monument on your claimed land (1,000 STRATUM, burned)">MONUMENT · 1000</button>
+      <span class="k" id="h-monument-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <div class="hud-row">
       <button type="button" id="claim-btn" class="hud-btn" title="Requires a connected wallet">CLAIM STRATUM</button>
@@ -579,6 +598,7 @@
 <script src="audio.js"></script>
 <script src="quests.js"></script>
 <script src="settlers.js"></script>
+<script src="landmarks.js"></script>
 <script src="wallet.js"></script>
 <script src="game.js"></script>
 </body>

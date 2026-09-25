@@ -386,6 +386,9 @@
   // baked once, never collidable, never server state. CAMP is null until resolved,
   // false when there is no camp (wrong map or no Settlers module).
   var CAMP_FIRE = null, CAMP_TENT = null, CAMP = null;
+  // Camp expansion art: signal tower, trade stall, supply crate. Same baked-once
+  // decor contract as fire/tents — drawLandmark() already handles kk=6 by type.
+  var CAMP_TOWER = null, CAMP_STALL = null, CAMP_CRATE = null;
   var LANDMARKS = null; // null = not yet resolved; [] or [ship, dome] after resolveLandmarks()
   var MOTES = null;     // lazily-built array of drifting screen-space glow particles
 
@@ -635,10 +638,82 @@
       g.beginPath(); g.moveTo(cx - 40, cy + 28); g.lineTo(cx, cy - 38); g.lineTo(cx + 40, cy + 28); g.stroke();
       g.fillStyle = 'rgba(255,190,110,.55)';
       g.beginPath(); g.moveTo(cx - 10, cy + 28); g.lineTo(cx, cy - 2); g.lineTo(cx + 10, cy + 28); g.closePath(); g.fill();
-      g.strokeStyle = '#4a3320'; g.lineWidth = 3;
-      g.beginPath(); g.moveTo(cx, cy - 38); g.lineTo(cx, cy - 48); g.stroke();
+    g.strokeStyle = '#4a3320'; g.lineWidth = 3;
+    g.beginPath(); g.moveTo(cx, cy - 38); g.lineTo(cx, cy - 48); g.stroke();
+  });
+
+    // Signal tower: tripod legs, a dish, and a slow-blink tip (animated at render
+    // time by drawLandmark's 'tower' branch, same split as the fire flicker).
+    CAMP_TOWER = spr(160, function (g) {
+      var cx = 80, base = 140;
+      g.fillStyle = 'rgba(10,10,8,.4)';
+      g.beginPath(); g.ellipse(cx, base, 52, 10, 0, 0, TAU); g.fill();
+      g.strokeStyle = '#5a564c'; g.lineWidth = 6; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(cx - 38, base); g.lineTo(cx, base - 108); g.stroke();
+      g.beginPath(); g.moveTo(cx + 38, base); g.lineTo(cx, base - 108); g.stroke();
+      g.beginPath(); g.moveTo(cx, base); g.lineTo(cx, base - 108); g.stroke();
+      g.strokeStyle = 'rgba(0,0,0,.4)'; g.lineWidth = 1;
+      for (var r2 = 0; r2 < 3; r2++) {
+        g.beginPath();
+        g.moveTo(cx - (38 - r2 * 11), base - r2 * 34);
+        g.lineTo(cx + (38 - r2 * 11), base - r2 * 34);
+        g.stroke();
+      }
+      g.fillStyle = '#3c4350';
+      g.beginPath(); g.ellipse(cx, base - 96, 26, 12, -0.5, 0, TAU); g.fill();
+      g.fillStyle = 'rgba(140,210,230,.5)';
+      g.beginPath(); g.ellipse(cx - 2, base - 98, 18, 8, -0.5, 0, TAU); g.fill();
+      g.fillStyle = '#8f9aa8';
+      g.fillRect(cx - 2, base - 128, 4, 20);
+    });
+
+    // Trade stall: awning posts, a striped canopy, and a counter with goods.
+    CAMP_STALL = spr(128, function (g) {
+      var cx = 64, base = 104;
+      g.fillStyle = 'rgba(10,10,8,.4)';
+      g.beginPath(); g.ellipse(cx, base, 52, 9, 0, 0, TAU); g.fill();
+      g.strokeStyle = '#4a3320'; g.lineWidth = 5; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(cx - 40, base); g.lineTo(cx - 40, base - 62); g.stroke();
+      g.beginPath(); g.moveTo(cx + 40, base); g.lineTo(cx + 40, base - 62); g.stroke();
+      for (var s2 = 0; s2 < 6; s2++) {
+        g.fillStyle = s2 % 2 ? '#b6543f' : '#e8e6df';
+        var sx = cx - 48 + s2 * 16;
+        g.beginPath(); g.moveTo(sx, base - 62); g.lineTo(sx + 16, base - 62);
+        g.lineTo(sx + 12, base - 84); g.lineTo(sx - 4, base - 84); g.closePath(); g.fill();
+      }
+      g.fillStyle = '#6b5f45';
+      g.fillRect(cx - 44, base - 26, 88, 26);
+      g.fillStyle = '#7d7050';
+      g.fillRect(cx - 44, base - 26, 88, 5);
+      g.fillStyle = '#3d7a31';
+      g.beginPath(); g.ellipse(cx - 20, base - 32, 9, 6, 0, 0, TAU); g.fill();
+      g.fillStyle = '#c9a05a';
+      g.beginPath(); g.ellipse(cx + 8, base - 32, 7, 7, 0, 0, TAU); g.fill();
+      g.fillStyle = '#8fe4ff';
+      g.beginPath(); g.moveTo(cx + 30, base - 40); g.lineTo(cx + 38, base - 26); g.lineTo(cx + 22, base - 26); g.closePath(); g.fill();
+    });
+
+    // Supply crate: nailed box with a stenciled sun — the camp's small savings.
+    CAMP_CRATE = spr(96, function (g) {
+      var cx = 48, base = 78;
+      g.fillStyle = 'rgba(10,10,8,.4)';
+      g.beginPath(); g.ellipse(cx, base, 34, 7, 0, 0, TAU); g.fill();
+      g.fillStyle = '#6b5f45';
+      g.fillRect(cx - 28, base - 44, 56, 44);
+      g.fillStyle = '#7d7050';
+      g.fillRect(cx - 28, base - 44, 56, 7);
+      g.strokeStyle = 'rgba(0,0,0,.45)'; g.lineWidth = 2;
+      g.strokeRect(cx - 28 + 1, base - 44 + 1, 54, 42);
+      g.beginPath(); g.moveTo(cx - 28, base - 44); g.lineTo(cx + 28, base); g.stroke();
+      g.beginPath(); g.moveTo(cx + 28, base - 44); g.lineTo(cx - 28, base); g.stroke();
+      g.fillStyle = '#c9a55c';
+      g.beginPath(); g.arc(cx, base - 22, 7, 0, TAU); g.fill();
+      g.fillStyle = '#6b5f45';
+      g.beginPath(); g.arc(cx, base - 22, 3.5, 0, TAU); g.fill();
     });
   }
+
+  /** Lazily resolves the two landmarks' fixed world tile-coordinates on map 0, choosing
 
   /** Lazily resolves the two landmarks' fixed world tile-coordinates on map 0, choosing
    *  the first dry (non-water, non-void) candidate offset from spawn in each direction.
@@ -772,7 +847,18 @@
       ctx.drawImage(GLOW_LAMP, ex - fg / 2, ey - s * 0.9 - fg / 2, fg, fg);
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
+    } else if (rr.type === 'tower') {
+      // slow-blink tip on the signal mast — one blink every ~2.5s
+      if (Math.floor(now / 1250) % 2 === 0) {
+        var tg = s * 0.5;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.7;
+        ctx.drawImage(GLOW_CRYS, ex - tg / 2, ey - sz * 0.5 - tg / 2, tg, tg);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+      }
     }
+    // 'tent', 'stall', 'crate' are fully baked — no animated layer.
   }
 
   // ---------- settlers ------------------------------------------------------
@@ -791,6 +877,76 @@
       ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText('!', x + 1, y - s * 1.35 + bob + 1);
       ctx.fillStyle = '#ffd479'; ctx.fillText('!', x, y - s * 1.35 + bob);
     }
+  }
+
+  // ---------- camp extras (tower + stalls + crates, same decor contract) ----
+  // Baked sprites, generous margins, zero protocol. Vex needs no new renderer —
+  // settler avatars already draw via drawSettler, only her camp offset is new.
+  function takeCampExtra() {
+    var c = resolveCamp();
+    if (!c) return;
+    var spots = (window.Settlers && window.Settlers.CAMP_SPOTS) || {};
+    function push(type, spr, tiles, dx, dy) {
+      var x = c.x + dx, y = c.y + dy;
+      if (x < Z_X0 - 3 || x > Z_X1 + 3 || y < Z_Y0 - 3 || y > Z_Y1 + 3) return;
+      znew(y + tiles * 0.3, 6, { type: type, spr: spr, tiles: tiles, x: x, y: y, rx: x, ry: y });
+    }
+    if (spots.tower) push('tower', CAMP_TOWER, 4.2, spots.tower[0], spots.tower[1]);
+    var stalls = spots.stalls || [];
+    for (var i = 0; i < stalls.length; i++) push('stall', CAMP_STALL, 2.0, stalls[i][0], stalls[i][1]);
+    for (var j = 0; j < (spots.crates || []).length; j++) {
+      push('crate', CAMP_CRATE, 1.1, spots.crates[j][0], spots.crates[j][1]);
+    }
+  }
+
+  // ---------- wonder sites + monuments (world render) ------------------------
+  function drawSite(x, y, s, rr, now) {
+    var cx = x + s * 0.5, cy = y + s * 0.42;
+    var r = s * (rr.found ? 0.22 : 0.3);
+    if (!rr.found) {
+      var pulse = 0.5 + 0.5 * Math.sin(now * 0.003);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.25 + pulse * 0.2;
+      ctx.drawImage(GLOW_LAMP, cx - s, cy - s, s * 2, s * 2);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = rr.found ? 'rgba(160,160,170,.75)' : '#ffd479';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy); ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.font = Math.max(7, s * 0.3) + 'px ui-monospace,monospace'; ctx.textAlign = 'center';
+    if (!rr.found) ctx.fillText('?', cx + 1, cy - s * 0.55 + 1);
+    ctx.fillStyle = rr.found ? '#8b8578' : '#e8e6df';
+    ctx.fillText(rr.site.name.toUpperCase(), cx, cy + s * 0.95);
+    if (!rr.found) { ctx.fillStyle = '#ffd479'; ctx.fillText('?', cx, cy - s * 0.55); }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawMonument(x, y, s, mo, now) {
+    var cx = x + s * 0.5, base = y + s * 0.9;
+    var w = s * 0.4, h = s * 1.1;
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.ellipse(cx, base, w * 0.7, s * 0.1, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#5a564c';
+    ctx.fillRect(Math.round(cx - w * 0.6), Math.round(base - s * 0.12), Math.round(w * 1.2), Math.round(s * 0.12));
+    ctx.fillStyle = '#8f9aa8';
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.5, base - s * 0.1); ctx.lineTo(cx - w * 0.28, base - h);
+    ctx.lineTo(cx + w * 0.28, base - h); ctx.lineTo(cx + w * 0.5, base - s * 0.1);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.25)';
+    ctx.fillRect(Math.round(cx - w * 0.28), Math.round(base - h), Math.round(w * 0.2), Math.round(h * 0.7));
+    var gl = 0.3 + 0.2 * Math.sin(now * 0.002);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = gl;
+    ctx.drawImage(GLOW_CRYS, cx - s * 0.5, base - h - s * 0.35, s, s);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.font = Math.max(7, s * 0.3) + 'px ui-monospace,monospace'; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText(mo.name.toUpperCase(), cx + 1, base + s * 0.32 + 1);
+    ctx.fillStyle = '#e8e6df'; ctx.fillText(mo.name.toUpperCase(), cx, base + s * 0.32);
   }
 
   // ---------- species / creature forms ------------------------------------
@@ -887,9 +1043,14 @@
     mons: new Map(),           // id -> {id,kind,x,y,rx,ry,hp,maxHp,hit,sw,dt,x?,pal,form}
     drops: new Map(),          // "x,y" -> {id,x,y,res,at,ttlMs}
     structures: new Map(),     // "x,y" -> {id,kind,x,y,owner,accrued,capacity,resource}
+    monuments: new Map(),      // id -> {id,owner,map,x,y,name}
+    foundSites: [],            // wonder site ids this player discovered
+    placingMonument: false,    // armed by the MONUMENT button for the next LMB
     placingStructure: null,    // kind selected in the [I] idle panel, armed for the next LMB
     idleOpen: false,
     remotes: new Map(), floats: [],
+    pet: { out: null, owned: [], active: false, name: '', form: 'wisp', pal: null, job: '', treatLeftMs: 0 },
+    petRemotes: new Map(),
     lastViewCk: '', mapOpen: false, travelOpen: false, mapDensity: null, lastEnergySync: 0,
     // presentation state
     faceX: 0, faceY: 1, moving: 0, walk: 0, joy: null,
@@ -1017,6 +1178,7 @@
         S.customization = m.customization || null;
         if (m.commerce) applyCommerceConfig(m.commerce);
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (Array.isArray(m.found)) S.foundSites = m.found.slice();
         if (typeof m.vault === 'number') S.vault = m.vault;
         if (typeof m.gldxPending === 'number') S.gldxPending = m.gldxPending;
         if (typeof m.gldxPayable === 'number') S.gldxPayable = m.gldxPayable;
@@ -1047,6 +1209,7 @@
           send({ t: 'set-look', paletteId: S.pendingPaletteId, hat: S.hat, cloak: S.cloak, scarf: S.scarf });
         }
         S.pendingPaletteId = null;
+        if (m.pet) applyPet(m.pet);
         if (S.maps && S.maps.length) setMapName();
         noteMapVisit(S.map);
         buildHotbar();
@@ -1058,7 +1221,7 @@
       case 'arrived':
         S.map = m.map; S.maps = m.maps; S.x = m.x; S.y = m.y;
         S.cam.x = m.x; S.cam.y = m.y;
-        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.drops.clear(); S.structures.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
+        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.drops.clear(); S.structures.clear(); S.monuments.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
         S.claimed = m.claimed; S.total = m.total;
         setMapName(); closeTravel(); closeCraft();
         noteMapVisit(S.map);
@@ -1077,6 +1240,7 @@
         if (m.nodes) for (var n = 0; n < m.nodes.length; n++) applyNode(m.nodes[n]);
         if (m.drops) for (var dn = 0; dn < m.drops.length; dn++) applyDrop(m.drops[dn]);
         if (m.structures) for (var sn = 0; sn < m.structures.length; sn++) applyStructure(m.structures[sn]);
+        if (m.monuments) for (var mn = 0; mn < m.monuments.length; mn++) applyMonument(m.monuments[mn]);
         if (S.edits.size > 400000) pruneEdits();
         break;
       }
@@ -1361,7 +1525,7 @@
         S.hp = m.hp; S.maxHp = m.maxHp; S.x = m.spawn.x; S.y = m.spawn.y;
         S.cam.x = S.x; S.cam.y = S.y;
         if (m.inv) S.inv = m.inv;
-        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.drops.clear(); S.structures.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
+        S.edits.clear(); S.nodes.clear(); S.mons.clear(); S.drops.clear(); S.structures.clear(); S.monuments.clear(); S.baseCache.clear(); S.lamps.clear(); S.lastViewCk = '';
         S.death = 0; S.hurt = 1;
         burst(S.x, S.y, { glowc: '#ffc9a8', light: '#ffe9d2' }, 22, 3);
         S.deathBy = String(m.by || 'the world').toUpperCase();
@@ -1374,6 +1538,7 @@
         if (typeof m.level === 'number' && m.level > (S.level || 1)) { S.level = m.level; sfx('levelup'); }
         else if (typeof m.level === 'number' && m.level > 0) S.level = m.level;
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (m.pet) applyPet(m.pet);
         if (S.craftOpen) buildCraft();
         refreshQuest(true);
         break;
@@ -1595,6 +1760,39 @@
         updateWalletHud();
         break;
       }
+      case 'discovered': {
+        if (m.ok) {
+          if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+          if (Array.isArray(m.found)) S.foundSites = m.found.slice();
+          toast('DISCOVERED: ' + String(m.name || '').toUpperCase() + ' +' + m.reward + ' STRATUM', true);
+          sfx('levelup');
+        } else {
+          toast(String(m.err || 'CANNOT DISCOVER').toUpperCase());
+          sfx('deny');
+        }
+        updateWalletHud();
+        break;
+      }
+      case 'monument': {
+        // live broadcast of someone's new monument — add to the local set so it
+        // renders without waiting for the next chunk
+        if (m && m.id) S.monuments.set(m.id, { id: m.id, owner: m.owner || null, map: S.map, x: m.x, y: m.y, name: m.name || 'Monument' });
+        break;
+      }
+      case 'monument-built': {
+        if (!m.ok) {
+          toast(String(m.err || 'CANNOT BUILD').toUpperCase());
+          sfx('deny');
+          break;
+        }
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
+        S.monuments.set(m.id, { id: m.id, owner: S.key, map: S.map, x: m.x, y: m.y, name: m.name || 'Monument' });
+        toast('MONUMENT RAISED: ' + String(m.name || '').toUpperCase(), true);
+        sfx('levelup');
+        updateWalletHud();
+        break;
+      }
       case 'vanity-bought': {
         if (!m.ok) {
           toast(String(m.err || 'CANNOT BUY').toUpperCase());
@@ -1695,6 +1893,7 @@
           var r = S.remotes.get(p[0]);
           if (!r) {
             S.remotes.set(p[0], {
+              key: p[0],
               name: p[1], x: p[2], y: p[3], rx: p[2], ry: p[3], lx: p[2], ly: p[3],
               faceX: 0, faceY: 1, walk: 0, moving: 0,
               bodyHue: p[4], trimHue: p[5], hat: p[6] || null, cloak: p[7] || null, scarf: p[8] || null,
@@ -1703,7 +1902,7 @@
               body: 'hsl(' + p[4] + ',58%,62%)', trim: 'hsl(' + p[5] + ',48%,40%)'
             });
           } else {
-            r.x = p[2]; r.y = p[3]; r.name = p[1];
+            r.key = p[0]; r.x = p[2]; r.y = p[3]; r.name = p[1];
             r.hat = p[6] || null; r.cloak = p[7] || null; r.scarf = p[8] || null;
             r.visor = p[9] || null; r.pack = p[10] || null; r.patch = p[11] || null;
             if (typeof p[4] === 'number' && (p[4] !== r.bodyHue || p[5] !== r.trimHue)) {
@@ -1775,10 +1974,88 @@
               break;
             }
             case 'pong': break;
+            case 'pet':
+              if (m.inv) S.inv = m.inv;
+              if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+              applyPet(m.pet || m);
+              if (m.ok === false) {
+                toast(String(m.err || m.error || 'companion failed').toUpperCase());
+                sfx('deny');
+              } else if (m.ok === true && S.pet.name) {
+                toast((S.pet.active ? 'COMPANION OUT: ' : 'COMPANION: ') + S.pet.name.toUpperCase(), true);
+                sfx('ui');
+              }
+              updateWalletHud();
+              break;
+            case 'pets': {
+              var plist = m.list || [];
+              var pseen = new Set();
+              for (var pti = 0; pti < plist.length; pti++) {
+                var pt = plist[pti];
+                if (!pt) continue;
+                var pk, rec;
+                if (Array.isArray(pt)) {
+                  pk = pt[0];
+                  rec = { id: pt[1], x: pt[2], y: pt[3], form: pt[4] || 'wisp', pal: pt[5] || null };
+                } else {
+                  pk = pt.key;
+                  rec = { id: pt.id, x: pt.x, y: pt.y, form: pt.form || 'wisp', pal: pt.pal || null };
+                }
+                if (pk == null || pk === S.key) continue;
+                pseen.add(pk);
+                S.petRemotes.set(pk, rec);
+              }
+              S.petRemotes.forEach(function (v, kk) { if (!pseen.has(kk)) S.petRemotes.delete(kk); });
+              break;
+            }
+            case 'pet-ping':
+              toast('RIPENING', true);
+              if (typeof m.x === 'number' && typeof m.y === 'number') float(m.x, m.y, '!', '#ffd479', 1);
+              break;
             default: break;                                     // unknown → ignore, never throw
           }
         }
 
+  function applyPet(p) {
+    if (!p || typeof p !== 'object') return;
+    if (p.id !== undefined) S.pet.out = p.id;
+    if (p.out !== undefined) S.pet.out = p.out;
+    if (Array.isArray(p.owned)) S.pet.owned = p.owned;
+    else if (p.owned && typeof p.owned === 'object') {
+      S.pet.owned = Object.keys(p.owned).filter(function (k) { return p.owned[k]; });
+    }
+    if (typeof p.active === 'boolean') S.pet.active = p.active;
+    if (p.name != null) S.pet.name = String(p.name);
+    if (p.form) S.pet.form = p.form;
+    if (p.pal !== undefined) S.pet.pal = p.pal;
+    if (p.job != null) S.pet.job = p.job;
+    if (typeof p.treatLeftMs === 'number') S.pet.treatLeftMs = p.treatLeftMs;
+    updatePetHud();
+  }
+  // premium companion portraits — mirrors src/pets.js art fields. PNGs render in
+  // the HUD companion row; followers stay procedural (form+pal) so they animate.
+  var PET_ART = {
+    mossbulb: 'assets/pets/mossbulb.png',
+    cinderpup: 'assets/pets/cinderpup.png',
+    reefclaw: 'assets/pets/reefclaw.png'
+  };
+  function updatePetHud() {
+    var nm = document.getElementById('h-pet-name');
+    if (nm) nm.textContent = S.pet.name || 'NONE';
+    var art = document.getElementById('h-pet-art');
+    if (art) {
+      var src = PET_ART[S.pet.out] || null;
+      if (src) { art.src = src; art.style.display = ''; }
+      else { art.removeAttribute('src'); art.style.display = 'none'; }
+    }
+    var st = document.getElementById('h-pet-status');
+    if (!st) return;
+    if (S.pet.treatLeftMs > 0) st.textContent = 'TREAT ' + Math.ceil(S.pet.treatLeftMs / 1000) + 's';
+    else if (S.pet.job) st.textContent = String(S.pet.job);
+    else if (S.pet.active) st.textContent = 'OUT';
+    else if (S.pet.owned && S.pet.owned.length) st.textContent = 'PARKED';
+    else st.textContent = '';
+  }
   function applyNode(a) {
     if (!a || a.length < 4) return;
     S.nodes.set(nkN(a[0], a[1]), {
@@ -1795,7 +2072,7 @@
     S.structures.set(nkN(s.x, s.y), {
       id: s.id, kind: s.kind, x: s.x, y: s.y, owner: s.owner,
       accrued: s.accrued || 0, capacity: s.capacity || 0, resource: s.resource,
-      blocksMovement: !!s.blocksMovement
+      blocksMovement: !!s.blocksMovement, seenAt: Date.now()
     });
   }
   /** True if SOMETHING physically solid sits on tile (x,y) — the client-side mirror of
@@ -1893,6 +2170,20 @@
       else send({ t: 'collect-structure', x: x, y: y });
       return;
     }
+    // Monument placement mode (armed by the MONUMENT button): the next tap names
+    // whatever the player typed and spends the 1,000. Disarm on any outcome —
+    // a second monument is a second deliberate press, never a leftover armed tap.
+    if (S.placingMonument) {
+      S.placingMonument = false;
+      var mdx = x - S.x, mdy = y - S.y;
+      if (mdx * mdx + mdy * mdy > S.reach * S.reach) return toast('OUT OF REACH — WALK CLOSER');
+      faceTowards(mdx, mdy);
+      var mname = '';
+      try { mname = (window.prompt('NAME THIS MONUMENT', '') || '').slice(0, 24); } catch (e) {}
+      if (!mname) return toast('MONUMENT CANCELLED');
+      send({ t: 'monument-build', x: x, y: y, name: mname });
+      return;
+    }
     if (S.placingStructure) {
       var pdx = x - S.x, pdy = y - S.y;
       var kind = S.placingStructure;
@@ -1902,6 +2193,14 @@
       if (!owned || owned.owner !== S.key) return toast('NEEDS YOUR OWN CLAIMED LAND');
       faceTowards(pdx, pdy);
       send({ t: 'build-structure', x: x, y: y, kind: kind });
+      return;
+    }
+    // Wonder sites: a tap on the site tile discovers it (server checks reach +
+    // first-time). Falls through to harvest/build when the tap misses the tile.
+    var hit = siteAt(x, y);
+    if (hit) {
+      faceTowards((x + 0.5) - S.x, (y + 0.5) - S.y);
+      send({ t: 'discover', site: hit.site.id });
       return;
     }
     var nd = S.nodes.get(nkN(x, y));
@@ -2217,7 +2516,7 @@
   var tlPanel = document.getElementById('hud-tl');
   var tgtEl = document.getElementById('h-target'), tgtName = document.getElementById('h-target-name'), tgtBar = document.getElementById('h-target-bar');
   // inventory chips are rebuilt from a reused array — no per-update allocation
-  var INV_KEYS = ['wood', 'ore', 'herb', 'crystal'], INV_HTML = [];
+  var INV_KEYS = ['wood', 'ore', 'herb', 'crystal'], INV_MORE = ['honey', 'charcoal', 'tonic'], INV_HTML = [];
   // Resource art lives in public/assets/. The five raw/currency resources
   // (wood/ore/herb/crystal/gold) get purpose-made icons in resource-icons/ —
   // real transparent PNGs, one per resource, matching each node's actual
@@ -2563,7 +2862,8 @@
     return {
       activeQuestId: active ? active.id : null,
       done: prog.done | 0, total: prog.total | 0,
-      tokenPending: S.tokenPending | 0
+      tokenPending: S.tokenPending | 0,
+      foundSites: (S.foundSites && S.foundSites.slice()) || []
     };
   }
   function openDialogue(npcId) {
@@ -3211,13 +3511,9 @@
     if (dr.x < Z_X0 || dr.x > Z_X1 || dr.y < Z_Y0 || dr.y > Z_Y1) return;
     znew(dr.y + 0.5, 5, dr);
   }
-  // Only a blocking structure (a wall) needs a world sprite of its own right now — the
-  // four idle producers have no on-map art yet (they only ever render inside the [I]
-  // panel), and this task's scope is the obstacle, not filling that gap in.
   function takeStructure(st) {
-    if (!st.blocksMovement) return;
     if (st.x < Z_X0 || st.x > Z_X1 || st.y < Z_Y0 || st.y > Z_Y1) return;
-    znew(st.y + 0.6, 7, st);
+    znew(st.y + (st.blocksMovement ? 0.6 : 0.45), 7, st);
   }
   /** The landing camp: fire + tents + crates as kk=6 decor (the same y-sorted pass
    *  as the ship/dome), then the three settlers as kk=8. Nothing here collides or
@@ -3243,6 +3539,52 @@
       if (p.x < Z_X0 || p.x > Z_X1 || p.y < Z_Y0 || p.y > Z_Y1) continue;
       znew(p.y + 0.5, 8, { def: def, x: p.x, y: p.y });
     }
+  }
+  // ---------- wonder sites + monuments --------------------------------------
+  // Sites resolve dry from spawn by the same first-candidate rule as the server
+  // (src/landmarks.js cands) — zero protocol, both sides agree. Monuments ride
+  // chunk messages + live 'monument' broadcasts into S.monuments.
+  function resolveSitePos(map, site) {
+    if (!window.Landmarks) return null;
+    var sp = T.spawnPoint(map);
+    for (var i = 0; i < site.cands.length; i++) {
+      var m = tileAt(sp.x + site.cands[i][0], sp.y + site.cands[i][1]);
+      if (m !== VOID && m !== WATER) return { x: sp.x + site.cands[i][0], y: sp.y + site.cands[i][1] };
+    }
+    return { x: sp.x + site.cands[0][0], y: sp.y + site.cands[0][1] };
+  }
+  function siteAt(x, y) {
+    if (!window.Landmarks) return null;
+    var sites = window.Landmarks.sitesForMap(S.map);
+    for (var i = 0; i < sites.length; i++) {
+      var p = resolveSitePos(S.map, sites[i]);
+      if (p && p.x === x && p.y === y) return { site: sites[i], x: p.x, y: p.y };
+    }
+    return null;
+  }
+  function siteFound(id) {
+    return (S.foundSites || []).indexOf(id) !== -1;
+  }
+  function takeSites() {
+    if (!window.Landmarks) return;
+    var sites = window.Landmarks.sitesForMap(S.map);
+    for (var i = 0; i < sites.length; i++) {
+      var p = resolveSitePos(S.map, sites[i]);
+      if (!p) continue;
+      if (p.x < Z_X0 || p.x > Z_X1 || p.y < Z_Y0 || p.y > Z_Y1) continue;
+      znew(p.y + 0.5, 9, { site: sites[i], x: p.x, y: p.y, found: siteFound(sites[i].id) });
+    }
+  }
+  function applyMonument(mo) {
+    if (!mo || !mo.id) return;
+    S.monuments.set(mo.id, { id: mo.id, owner: mo.owner || null, map: S.map, x: mo.x, y: mo.y, name: mo.name || 'Monument' });
+  }
+  function takeMonuments() {
+    S.monuments.forEach(function (mo) {
+      if (mo.map !== S.map) return;
+      if (mo.x < Z_X0 || mo.x > Z_X1 || mo.y < Z_Y0 || mo.y > Z_Y1) return;
+      znew(mo.y + 0.6, 10, mo);
+    });
   }
   /** The two static space-colony landmarks (see resolveLandmarks()) — decorative only,
    *  y-sorted into the same pass as every other entity so the player can walk in front
@@ -3387,9 +3729,12 @@
     zi = 0; zlist.length = 0; nodeN = 0;
     takeLandmarks();
     takeCamp();
+    takeCampExtra();
+    takeSites();
     S.nodes.forEach(takeNode);
     S.drops.forEach(takeDrop);
     S.structures.forEach(takeStructure);
+    takeMonuments();
     takeSettlers();
     S.mons.forEach(takeMon);
     S.remotes.forEach(takeRemote);
@@ -3401,29 +3746,35 @@
       var e = zlist[z], rr = e.r, kk = e.k;
       var ex, ey;
       if (kk === 4) { ex = ox + S.x * s; ey = oy + S.y * s; }
-      // Nodes, drops, walls and settlers are stationary (no walk/chase interpolation
-      // like mons/remotes carry, which is what .rx/.ry are for), so they anchor
-      // straight off tile coords. (Nodes/drops used to ride the .rx/.ry branch with
-      // fields they never have — NaN screen coords, silently never drawn.)
-      else if (kk === 7 || kk === 1 || kk === 5 || kk === 8) { ex = ox + rr.x * s; ey = oy + rr.y * s; }
+      // Nodes, drops, walls, settlers, sites and monuments are stationary (no
+      // walk/chase interpolation like mons/remotes carry, which is what .rx/.ry
+      // are for), so they anchor straight off tile coords. (Nodes/drops used to
+      // ride the .rx/.ry branch with fields they never have — NaN screen coords,
+      // silently never drawn.)
+      else if (kk === 7 || kk === 1 || kk === 5 || kk === 8 || kk === 9 || kk === 10) { ex = ox + rr.x * s; ey = oy + rr.y * s; }
       else { ex = ox + rr.rx * s; ey = oy + rr.ry * s; }
       if (kk === 1) drawNodeSprite(ex, ey, s, rr, now);
       else if (kk === 8) drawSettler(ex, ey, s, rr, now);
+      else if (kk === 9) drawSite(ex, ey, s, rr, now);
+      else if (kk === 10) drawMonument(ex, ey, s, rr, now);
       else if (kk === 5) drawDropSprite(ex, ey, s, now);
       else if (kk === 2) drawMonster(ex, ey, s, rr, now);
       else if (kk === 6) drawLandmark(ex, ey, s, rr, now);
-      else if (kk === 7) drawWallSprite(ex, ey, s, rr, now);
+      else if (kk === 7) drawStructureSprite(ex, ey, s, rr, now);
       else if (kk === 3) {
         drawAvatar(ex, ey, s, now, rr.body || '#b7c8dc', rr.trim || '#7f93a8', rr.faceX, rr.faceY, rr.walk, rr.moving, -1, 0, rr.hat, rr.cloak, rr.scarf,
           { visor: rr.visor || null, pack: rr.pack || null, patch: rr.patch || null });
         ctx.font = '10px ui-monospace,monospace'; ctx.textAlign = 'center';
         ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText(rr.name, ex + 1, ey - s * 0.95 + 1);
         ctx.fillStyle = '#e8e6df'; ctx.fillText(rr.name, ex, ey - s * 0.95);
+        var rpet = rr.key != null ? S.petRemotes.get(rr.key) : null;
+        if (rpet) drawPetFollow(ex, ey, s, now, rr, rpet);
       } else {
         drawAvatar(ex, ey, s, now, 'hsl(' + S.bodyHue + ',58%,62%)', 'hsl(' + S.trimHue + ',48%,40%)',
           S.faceX, S.faceY, S.walk, S.moving, S.swingT, S.swingA, S.hat, S.cloak, S.scarf,
           { visor: S.visor || null, pack: S.pack || null, patch: S.patch || null });
         if (S.swingT >= 0) drawSlash(ex, ey, s);
+        if (S.pet.active) drawPetFollow(ex, ey, s, now, S, S.pet);
       }
     }
 
@@ -3527,11 +3878,39 @@
     ctx.globalAlpha = 1;
   }
 
-  // ---------- blocking structures (a wall) ---------------------------------
-  // Deliberately NOT idle-structure-shaped: no accrual bar, no resource glow — a wall
-  // reads as a solid obstacle at a glance, which is the whole point of the thing. Drawn
-  // as a squat stone block, own-vs-someone-else's tinted so a player can tell at a
-  // distance whether it is theirs to walk through the release flow on.
+  // ---------- idle structures on the land ---------------------------------
+  // Walls stay a squat obstacle. Producers (apiary/kiln/still/smoker) are small
+  // canvas buildings with an accrual pip so a full hive reads at a glance.
+  function structureFill(st) {
+    var cap = st.capacity | 0;
+    if (cap <= 0) return 0;
+    var acc = st.accrued || 0;
+    var defs = (S.catalog && S.catalog.structures) || [];
+    var rate = 0;
+    for (var i = 0; i < defs.length; i++) if (defs[i].id === st.kind) { rate = defs[i].ratePerMs || 0; break; }
+    if (rate > 0 && st.seenAt) acc += rate * Math.max(0, Date.now() - st.seenAt);
+    return Math.max(0, Math.min(1, acc / cap));
+  }
+  function drawStructureFill(x, y, s, st) {
+    var cap = st.capacity | 0;
+    if (cap <= 0) return;
+    var t = structureFill(st);
+    var bw = s * 0.7, bh = Math.max(2, s * 0.08);
+    var bx = x - bw / 2, by = y + s * 0.28;
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.fillRect(Math.round(bx), Math.round(by), Math.round(bw), Math.round(bh));
+    ctx.fillStyle = t >= 1 ? '#c9a55c' : '#8fe08a';
+    ctx.fillRect(Math.round(bx) + 1, Math.round(by) + 1, Math.max(0, Math.round((bw - 2) * t)), Math.round(bh) - 2);
+  }
+  function drawStructureSprite(x, y, s, st, now) {
+    if (st.blocksMovement || st.kind === 'wall') { drawWallSprite(x, y, s, st, now); return; }
+    if (st.kind === 'apiary') drawApiarySprite(x, y, s, st, now);
+    else if (st.kind === 'kiln') drawKilnSprite(x, y, s, st, now);
+    else if (st.kind === 'still') drawStillSprite(x, y, s, st, now);
+    else if (st.kind === 'smoker') drawSmokerSprite(x, y, s, st, now);
+    else drawKilnSprite(x, y, s, st, now);
+    drawStructureFill(x, y, s, st);
+  }
   function drawWallSprite(x, y, s, st, now) {
     var mine = st.owner === S.key;
     var top = mine ? '#8f9aa8' : '#6b6459', side = mine ? '#5c6773' : '#443f38';
@@ -3542,6 +3921,54 @@
     ctx.fillRect(Math.round(bx), Math.round(by), Math.round(bw), Math.round(s * 0.22));
     ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1;
     ctx.strokeRect(Math.round(bx) + 0.5, Math.round(by) + 0.5, Math.round(bw) - 1, Math.round(bh + s * 0.14) - 1);
+  }
+  function drawApiarySprite(x, y, s, st, now) {
+    var mine = st.owner === S.key;
+    var box = mine ? '#c9a55c' : '#8a7a4a', dark = '#5a4a22';
+    rct(x - s * 0.28 - 1, y - s * 0.42 - 1, s * 0.56 + 2, s * 0.62 + 2, OUTL);
+    rct(x - s * 0.28, y - s * 0.18, s * 0.56, s * 0.22, box);
+    rct(x - s * 0.24, y - s * 0.38, s * 0.48, s * 0.2, box);
+    rct(x - s * 0.2, y - s * 0.54, s * 0.4, s * 0.16, box);
+    rct(x - s * 0.28, y - s * 0.02, s * 0.56, s * 0.05, dark);
+    rct(x - s * 0.24, y - s * 0.22, s * 0.48, s * 0.04, dark);
+    var drip = Math.sin(now * 0.004 + (st.x || 0)) * s * 0.02;
+    rct(x + s * 0.12, y - s * 0.08 + drip, Math.max(1, s * 0.05), s * 0.1, '#e8c76a');
+  }
+  function drawKilnSprite(x, y, s, st, now) {
+    var brick = st.owner === S.key ? '#a45a3a' : '#6a4030';
+    rct(x - s * 0.3 - 1, y - s * 0.5 - 1, s * 0.6 + 2, s * 0.72 + 2, OUTL);
+    rct(x - s * 0.3, y - s * 0.48, s * 0.6, s * 0.68, brick);
+    rct(x - s * 0.12, y - s * 0.78, s * 0.24, s * 0.32, '#5a3428');
+    var glow = 0.35 + 0.25 * Math.sin(now * 0.006 + (st.y || 0));
+    ctx.globalAlpha = glow;
+    rct(x - s * 0.1, y - s * 0.18, s * 0.2, s * 0.22, '#ff9a4a');
+    ctx.globalAlpha = 1;
+    rct(x - s * 0.3, y - s * 0.28, s * 0.6, Math.max(1, s * 0.04), 'rgba(0,0,0,.3)');
+  }
+  function drawStillSprite(x, y, s, st, now) {
+    var copper = st.owner === S.key ? '#c47a3a' : '#7a5230';
+    rct(x - s * 0.22 - 1, y - s * 0.28 - 1, s * 0.44 + 2, s * 0.48 + 2, OUTL);
+    rct(x - s * 0.22, y - s * 0.26, s * 0.44, s * 0.44, copper);
+    rct(x - s * 0.16, y - s * 0.46, s * 0.32, s * 0.22, copper);
+    ctx.strokeStyle = '#3aa89a'; ctx.lineWidth = Math.max(1, s * 0.06);
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.14, y - s * 0.4);
+    ctx.quadraticCurveTo(x + s * 0.42, y - s * 0.7, x + s * 0.28, y - s * 0.08);
+    ctx.stroke();
+    rct(x + s * 0.22, y - s * 0.08, s * 0.12, s * 0.16, '#2a6a62');
+    var bubble = 0.5 + 0.5 * Math.sin(now * 0.008);
+    rct(x - s * 0.04, y - s * 0.18 - bubble * s * 0.04, s * 0.08, s * 0.08, '#8fe4d4');
+  }
+  function drawSmokerSprite(x, y, s, st, now) {
+    var wood = st.owner === S.key ? '#5a4630' : '#3a3024';
+    rct(x - s * 0.24 - 1, y - s * 0.4 - 1, s * 0.48 + 2, s * 0.62 + 2, OUTL);
+    rct(x - s * 0.24, y - s * 0.38, s * 0.48, s * 0.58, wood);
+    rct(x - s * 0.08, y - s * 0.62, s * 0.16, s * 0.26, '#2a2420');
+    ctx.globalAlpha = 0.35 + 0.2 * Math.sin(now * 0.003);
+    ell(x, y - s * 0.78, s * 0.14, s * 0.1, '#c8c0b4');
+    ell(x + s * 0.06, y - s * 0.92, s * 0.1, s * 0.08, '#d8d2c6');
+    ctx.globalAlpha = 1;
+    rct(x - s * 0.1, y - s * 0.12, s * 0.2, s * 0.14, '#2a2424');
   }
 
   // ---------- death drops (src/drops.js) -----------------------------------
@@ -3789,6 +4216,48 @@
     ell(x - s * 0.24, y - s * 0.2, s * 0.1, s * 0.05, '#f0f4ff');
     ell(x + s * 0.24, y - s * 0.2, s * 0.1, s * 0.05, '#f0f4ff');
     ctx.globalAlpha = 1;
+  }
+
+  var PET_HEX = { hopper: '#6a9a4a', pup: '#2a2424', crab: '#d8d0c0', pack: '#2a2424', tank: '#d8d0c0', wisp: '#6a9a4a' };
+  var PET_HEX2 = { hopper: '#c9a55c', pup: '#c45a28', crab: '#3aa89a', pack: '#c45a28', tank: '#3aa89a', wisp: '#c9a55c' };
+  function petPal(form, pal) {
+    var hex = PET_HEX[form] || '#6a9a4a';
+    if (typeof pal === 'string') hex = (pal.charAt(0) === '#' ? pal : (PET_HEX[pal] || hex));
+    else if (pal && typeof pal.hex === 'string') hex = pal.hex;
+    else if (pal && typeof pal.body === 'string') hex = pal.body;
+    var p = makePal(hex);
+    var trim = (pal && (pal.trim || pal.light)) || PET_HEX2[form];
+    if (typeof trim === 'string') { p.light = trim; p.glowc = trim; }
+    return p;
+  }
+  function petKind(form) {
+    if (form === 'tank' || form === 'crab') return 'tank';
+    if (form === 'pack' || form === 'pup') return 'pack';
+    return 'wisp';
+  }
+  function petSeed(pet) {
+    if (!pet) return 1;
+    if (typeof pet.id === 'number' && isFinite(pet.id)) return pet.id;
+    var s = String(pet.id || pet.form || 'pet'), h = 1;
+    for (var i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0;
+    return Math.abs(h) || 1;
+  }
+  function drawPetFollow(px, py, s, now, owner, pet) {
+    if (!pet) return;
+    var fx = owner.faceX || 0, fy = owner.faceY;
+    if (!fx && !fy) fy = 1;
+    var bob = Math.sin(now * 0.006) * s * 0.05;
+    var x = px - fx * s * 0.7, y = py - fy * s * 0.7 + bob;
+    var pal = petPal(pet.form, pet.pal);
+    var seed = petSeed(pet);
+    var ps = s * ((window.Pets && window.Pets.SCALE) || 0.55);
+    var f2 = frame2(now, seed);
+    var walk = Math.sin(owner.walk || 0);
+    var kind = petKind(pet.form);
+    if (kind === 'tank') formTank(x, y, ps, pal, f2, f2 * ps * 0.03);
+    else if (kind === 'pack') formPack(x, y, ps, pal, f2, walk);
+    else if (pet.form === 'blob') formBlob(x, y, ps, pal, f2);
+    else formWisp(x, y, ps, pal, now, seed);
   }
 
   function formTank(x, y, s, pal, f2, legs) {
@@ -4043,13 +4512,17 @@
     var inv = S.inv || {};
     INV_HTML.length = 0;
     INV_KEYS.forEach(invChip, inv);
+    for (var mi = 0; mi < INV_MORE.length; mi++) {
+      if ((inv[INV_MORE[mi]] || 0) > 0) invChip.call(inv, INV_MORE[mi]);
+    }
     // crafted gear rides in the same inventory under its item id — chip anything else.
     // gold is shown on its own HUD row (commerce), so skip it here.
     for (var ck in inv) {
       if (ck === 'gold') continue;
-      if (INV_KEYS.indexOf(ck) < 0 && inv[ck] > 0) INV_HTML.push('<span class="chip">' + iconImg(ck) + dispKey(ck) + ' ' + inv[ck] + '</span>');
+      if (INV_KEYS.indexOf(ck) < 0 && INV_MORE.indexOf(ck) < 0 && inv[ck] > 0) INV_HTML.push('<span class="chip">' + iconImg(ck) + dispKey(ck) + ' ' + inv[ck] + '</span>');
     }
     document.getElementById('h-inv').innerHTML = INV_HTML.join(' ');
+    updatePetHud();
     updateWalletHud();
     if (S.volatile) {
       var tooln = toolName(S.tool | 0);
@@ -4143,6 +4616,35 @@
       var reqStatusEl = document.getElementById('h-requisition-status');
       if (reqStatusEl) reqStatusEl.textContent = 'SHIPPING…';
     });
+    var tameBtn = document.getElementById('pet-tame-btn');
+    if (tameBtn) tameBtn.addEventListener('click', function () {
+      if (!S.ready) return;
+      send({ t: 'tame' });
+      var pst = document.getElementById('h-pet-status');
+      if (pst) pst.textContent = 'TAMING…';
+    });
+    var treatBtn = document.getElementById('pet-treat-btn');
+    if (treatBtn) treatBtn.addEventListener('click', function () {
+      if (!S.ready) return;
+      send({ t: 'pet-treat', id: S.pet.out || S.pet.owned[0] });
+      var pst = document.getElementById('h-pet-status');
+      if (pst) pst.textContent = 'TREATING…';
+    });
+    var parkBtn = document.getElementById('pet-park-btn');
+    if (parkBtn) parkBtn.addEventListener('click', function () {
+      if (!S.ready) return;
+      send({ t: 'pet-park' });
+      var pst = document.getElementById('h-pet-status');
+      if (pst) pst.textContent = 'PARKING…';
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[id^="pet-buy-"]'), function (b) {
+      b.addEventListener('click', function () {
+        if (!S.ready) return;
+        send({ t: 'buy-pet', id: b.dataset.pet });
+        var pst = document.getElementById('h-pet-status');
+        if (pst) pst.textContent = 'BUYING…';
+      });
+    });
     var willBtn = document.getElementById('will-btn');
     if (willBtn) willBtn.addEventListener('click', function () {
       if (!S.ready) return;
@@ -4165,6 +4667,13 @@
       send({ t: 'vault-withdraw' });
       var vs = document.getElementById('h-vault-status');
       if (vs) vs.textContent = 'UNSTAKING…';
+    });
+    var monumentBtn = document.getElementById('monument-btn');
+    if (monumentBtn) monumentBtn.addEventListener('click', function () {
+      if (!S.ready) return;
+      if ((S.tokenPending | 0) < 1000) { toast('NEED 1000 STRATUM PENDING'); return; }
+      S.placingMonument = true;
+      toast('TAP YOUR CLAIMED LAND TO RAISE IT', true);
     });
     try {
       var savedW = localStorage.getItem('stratum_wallet');
