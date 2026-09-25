@@ -41,6 +41,7 @@ const WalletProof = require('./src/wallet-proof.js');
 const Gldx = require('./src/gldx-yield.js');
 const Tithes = require('./src/tithes.js');
 const Vault = require('./src/vault.js');
+const Pets = require('./src/pets.js');
 
 /** Optional local `.env` (never committed). Existing process.env wins — so hosting
  *  platform secrets always override a checked-out file. Zero-dep, KEY=VALUE only. */
@@ -312,6 +313,13 @@ db.exec(`
     payout INTEGER NOT NULL,
     createdAt INTEGER NOT NULL);
   CREATE INDEX IF NOT EXISTS convert_requests_k ON convert_requests(k);
+  CREATE TABLE IF NOT EXISTS player_pets(
+    k TEXT PRIMARY KEY,
+    out TEXT,
+    lastTreatAt INTEGER NOT NULL DEFAULT 0,
+    owned TEXT NOT NULL DEFAULT '{}',
+    updated INTEGER NOT NULL
+  );
 `);
 
 // migrate a pre-maps tiles table (tiles used to be keyed by x,y only)
@@ -480,6 +488,8 @@ const qPlayLast = db.prepare('UPDATE players SET last=? WHERE k=?');
 const qLook = db.prepare('UPDATE players SET paletteId=?,bodyHue=?,trimHue=?,accessories=? WHERE k=?');
 const qState = db.prepare('INSERT OR REPLACE INTO player_state(k,map,x,y,hp,kills,inv,tool) VALUES(?,?,?,?,?,?,?,?)');
 const qStateGet = db.prepare('SELECT * FROM player_state WHERE k=?');
+const qPet = db.prepare('INSERT OR REPLACE INTO player_pets(k,out,lastTreatAt,owned,updated) VALUES(?,?,?,?,?)');
+const qPetGet = db.prepare('SELECT out, lastTreatAt, owned FROM player_pets WHERE k=?');
 
 // one-time data fold: the kiln used to produce a standalone 'silver' resource before it
 // was unified into 'gold' (src/idle.js). Any inv already holding silver from that window
@@ -1365,6 +1375,7 @@ server.on('upgrade', (req, socket) => {
     // refreshBuilderBonus() below) — never recomputed on every reward action, unlike
     // the mistake already made and fixed once for anti-cheat's pending aggregates.
     builderCount: 0, builderMultiplier: BuilderBonus.BASE_MULTIPLIER,
+    pet: Pets.emptyState(),
     ready: false, lastMove: Date.now(), dead: false,
     gone: false, bad: 0, lastRx: Date.now(), tokenAt: Date.now(), tokens: MSG_BURST, dropped: 0,
     send(obj) {
@@ -1855,6 +1866,87 @@ function stateSave(c) {
   qState.run(c.key, c.map, Math.round(c.x), Math.round(c.y), Math.round(c.hp), c.kills, JSON.stringify(c.inv), c.tool | 0);
 }
 
+function parsePetOwned(raw) {
+  let owned = {};
+  try { owned = JSON.parse(raw || '{}'); } catch (e) { owned = {}; }
+  const out = {};
+  if (Array.isArray(owned)) {
+    for (const id of owned) if (Pets.petOf(id)) out[id] = true;
+  } else if (owned && typeof owned === 'object') {
+    for (const k of Object.keys(owned)) if (owned[k] && Pets.petOf(k)) out[k] = true;
+  }
+  return out;
+}
+function loadPet(c) {
+  const row = qPetGet.get(c.key);
+  if (!row) { c.pet = Pets.emptyState(); return; }
+  const owned = parsePetOwned(row.owned);
+  const out = Pets.petOf(row.out) && owned[row.out] ? row.out : (Pets.petOf(row.out) ? row.out : null);
+  c.pet = { out, lastTreatAt: row.lastTreatAt | 0, owned };
+}
+function savePet(c) {
+  if (!c || !c.key) return;
+  const st = c.pet || Pets.emptyState();
+  qPet.run(c.key, st.out || null, st.lastTreatAt | 0, JSON.stringify(st.owned || {}), Date.now());
+}
+function ownedList(st) {
+  const owned = (st && st.owned) || {};
+  return Object.keys(owned).filter(k => owned[k] && Pets.petOf(k));
+}
+function petSnap(c) {
+  const now = Date.now();
+  const st = c.pet || Pets.emptyState();
+  const active = Pets.isActive(st, now);
+  const outPet = Pets.petOf(st.out);
+  const owned = ownedList(st);
+  const show = outPet || (owned[0] ? Pets.petOf(owned[0]) : null);
+  return {
+    out: st.out || null,
+    owned,
+    active,
+    name: show ? show.name : '',
+    form: show ? show.form : 'wisp',
+    pal: show ? show.pal : null,
+    job: (active && outPet) ? outPet.job : '',
+    treatLeftMs: Pets.treatLeftMs(st, now),
+    id: st.out || null
+  };
+}
+function petWire(c) {
+  const now = Date.now();
+  if (!Pets.isActive(c.pet, now)) return null;
+  const p = Pets.petOf(c.pet.out);
+  if (!p) return null;
+  return [c.key, p.id, Math.round(c.x * 10) / 10, Math.round(c.y * 10) / 10, p.form, p.pal];
+}
+function nearPetSpecies(c, kind) {
+  if (!c || !kind) return null;
+  const reach = Pets.TAME_REACH;
+  for (const m of world.monsters.values()) {
+    if (m.map !== c.map || m.state === 0 || !m.sp) continue;
+    if (m.sp.kind !== kind) continue;
+    const dx = m.x - c.x, dy = m.y - c.y;
+    if (dx * dx + dy * dy <= reach * reach) return m.sp.kind;
+  }
+  return null;
+}
+function sendPet(c, extra) {
+  const msg = Object.assign({ t: 'pet', pet: petSnap(c), inv: c.inv, tokenPending: c.tokenPending | 0 }, extra || {});
+  if (msg.ok === undefined) msg.ok = !msg.err;
+  c.send(msg);
+}
+function stackLimitsFor(c) {
+  const extra = Pets.carryExtra(c.pet, Date.now());
+  if (!extra) return ECO.STACK_LIMITS;
+  return {
+    wood: ECO.STACK_LIMITS.wood + extra,
+    ore: ECO.STACK_LIMITS.ore + extra,
+    herb: ECO.STACK_LIMITS.herb + extra,
+    crystal: ECO.STACK_LIMITS.crystal + extra,
+    gold: ECO.STACK_LIMITS.gold
+  };
+}
+
 // ---------- achievements ----------------------------------------------------
 function achSave(c) {
   qAch.run(c.key, JSON.stringify([...c.achIds]), JSON.stringify([...c.achMaps]), c.achCrafts | 0, c.achTitle || null);
@@ -1892,7 +1984,8 @@ function sendVitals(c, extra) {
     t: 'vitals', hp: Math.round(c.hp), maxHp: c.maxHp, inv: c.inv, kills: c.kills, atk: c.atk,
     tool: c.tool | 0, level: world.hunter(c).level,
     gold: (c.inv && c.inv.gold) | 0,
-    tokenPending: c.tokenPending | 0
+    tokenPending: c.tokenPending | 0,
+    pet: petSnap(c)
   };
   if (extra) Object.assign(o, extra);
   c.send(o);
@@ -1956,7 +2049,7 @@ const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', '
   'parcel-mint', 'parcel-list', 'parcel-buy', 'parcel-cancel', 'parcel-browse', 'parcel-mine',
   'wallet-link', 'wallet-challenge', 'claim', 'claim-gldx', 'convert', 'buy-vanity',
   'refill-will', 'tithe-start', 'tithe-cancel', 'vault-deposit', 'vault-withdraw',
-  'requisition', 'salvage']);
+  'requisition', 'salvage', 'tame', 'pet-treat', 'pet-park', 'pet-out', 'buy-pet']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -2032,6 +2125,7 @@ function onMessage(c, msg) {
       c.accessories = { hat: look.hat, cloak: look.cloak, scarf: look.scarf, visor: look.visor, pack: look.pack, patch: look.patch };
       const pal = CU.paletteOf(look.paletteId) || CU.paletteOf(CU.DEFAULT_PALETTE_ID);
       c.paletteId = pal.id; c.bodyHue = pal.bodyHue; c.trimHue = pal.trimHue;
+      loadPet(c);
 
       const now = Date.now();
       qPlay.run(key, name, hue, prev ? now : now, now, c.paletteId, c.bodyHue, c.trimHue, JSON.stringify(c.accessories));
@@ -2102,7 +2196,8 @@ function onMessage(c, msg) {
         miningStreak: c.streakState.streak | 0,
         miningStreakMultiplier: MiningStreak.multiplierForStreak(c.streakState.streak | 0),
         colonyMilestone: ColonyMilestone.milestoneFor(burnedTotal()).name,
-        colonyMultiplier: ColonyMilestone.multiplierFor(burnedTotal())
+        colonyMultiplier: ColonyMilestone.multiplierFor(burnedTotal()),
+        pet: petSnap(c)
       });
       refreshHolderBonus(c); // fire-and-forget — no-op if no wallet is linked yet
       // returning players get their unlocked state without a round-trip; a fresh
@@ -2242,7 +2337,8 @@ function onMessage(c, msg) {
       if (r.yielded) {
         // better tools pay off more; a tool never pays off LESS than bare hands.
         const boosted = ECO.toolHarvestAmount(c.tool | 0, r.kind);
-        const amount = (typeof boosted === 'number') ? Math.max(r.amount, boosted) : r.amount;
+        const amount = ((typeof boosted === 'number') ? Math.max(r.amount, boosted) : r.amount)
+          + Pets.harvestBonus(c.pet, r.kind, Date.now());
         gain(c, r.yields, amount);
         const pay = applyCommerceReward(c, 'harvest', { kind: r.kind });
         world.awardXp(c, HARVEST_XP);      // gathering is a real XP source now (ROADMAP_COZY §3)
@@ -2274,7 +2370,7 @@ function onMessage(c, msg) {
       if (x === null || y === null) return;      // not a coordinate: never answered as if it were
       const dx = x - c.x, dy = y - c.y;
       if (dx * dx + dy * dy > REACH * REACH) return c.send({ t: 'pickup', x, y, err: 'out of reach' });
-      const r = world.pickupDrop(c.map, x, y, c.inv, Date.now(), ECO.STACK_LIMITS);
+      const r = world.pickupDrop(c.map, x, y, c.inv, Date.now(), stackLimitsFor(c));
       if (!r.ok) return c.send({ t: 'pickup', x, y, err: r.reason || 'none' });
       c.inv = r.inv;
       stateSave(c);
@@ -2395,6 +2491,105 @@ function onMessage(c, msg) {
       c.send({
         t: 'salvaged', id, item: rec.output.item, count: salvageCount, refund, inv: c.inv, atkBoost: c.atkBoost
       });
+      break;
+    }
+
+    case 'tame': {
+      if (!c.ready || c.dead) return;
+      const mapPets = Pets.petsForMap(c.map);
+      const petId = cleanText(msg.id, 32) || (mapPets[0] && mapPets[0].id) || '';
+      const def = Pets.petOf(petId);
+      if (def && c.pet && c.pet.owned && c.pet.owned[petId]) {
+        return sendPet(c, { ok: false, err: 'already owned' });
+      }
+      const baitHeld = def && c.inv ? c.inv[def.bait] : 0;
+      const v = Pets.validateTame({
+        petId, map: c.map, baitHeld, nearSpeciesKind: def ? nearPetSpecies(c, def.speciesKind) : null
+      });
+      if (!v.ok) return sendPet(c, { ok: false, err: v.error });
+      const cost = {}; cost[v.cost.item] = v.cost.qty;
+      const paid = ECO.applyCost(c.inv, cost);
+      if (!paid) return sendPet(c, { ok: false, err: 'need bait' });
+      c.inv = paid;
+      c.pet = Pets.applyTreat(c.pet || Pets.emptyState(), petId, Date.now());
+      savePet(c);
+      stateSave(c);
+      sendPet(c, { ok: true });
+      break;
+    }
+
+    case 'pet-treat': {
+      if (!c.ready || c.dead) return;
+      const petId = cleanText(msg.id, 32) || (c.pet && c.pet.out) || ownedList(c.pet)[0] || '';
+      const def = Pets.petOf(petId);
+      const v = Pets.validateTreat({
+        petId,
+        owned: !!(def && c.pet && c.pet.owned && c.pet.owned[petId]),
+        out: (c.pet && c.pet.out) || null,
+        itemHeld: def && c.inv ? c.inv[def.treatItem] : 0,
+        pendingStratum: c.tokenPending | 0
+      });
+      if (!v.ok) return sendPet(c, { ok: false, err: v.error });
+      const tcost = {}; tcost[v.pet.treatItem] = v.itemCost;
+      const paid = ECO.applyCost(c.inv, tcost);
+      if (!paid) return sendPet(c, { ok: false, err: 'need treat' });
+      const led = ledgerOf(c.key);
+      if ((led.pending | 0) < v.stratumCost) return sendPet(c, { ok: false, err: 'need stratum' });
+      c.inv = paid;
+      ledgerSave(c.key, (led.pending | 0) - v.stratumCost, led.claimed, led.wallet);
+      c.tokenPending = (led.pending | 0) - v.stratumCost;
+      // Treat STRATUM is a real sink: burn-split + GLDX earmark like every other
+      // spend (the items are consumed above; this is the token half).
+      const tSplit = applyBurnSplit(v.stratumCost);
+      scheduleOnChainSink(tSplit.burned, Gldx.earmarkOf(tSplit.treasury));
+      c.pet = Pets.applyTreat(c.pet || Pets.emptyState(), petId, Date.now());
+      savePet(c);
+      stateSave(c);
+      sendPet(c, { ok: true });
+      break;
+    }
+
+    case 'pet-park': {
+      if (!c.ready || c.dead) return;
+      c.pet = Pets.park(c.pet);
+      savePet(c);
+      sendPet(c, { ok: true });
+      break;
+    }
+
+    case 'pet-out': {
+      if (!c.ready || c.dead) return;
+      const petId = cleanText(msg.id, 32) || ownedList(c.pet)[0] || '';
+      if (!Pets.petOf(petId) || !(c.pet && c.pet.owned && c.pet.owned[petId])) {
+        return sendPet(c, { ok: false, err: 'not owned' });
+      }
+      c.pet = { out: petId, lastTreatAt: (c.pet && c.pet.lastTreatAt) | 0, owned: Object.assign({}, (c.pet && c.pet.owned) || {}) };
+      savePet(c);
+      sendPet(c, { ok: true });
+      break;
+    }
+
+    // Buy a premium companion for a fixed 50,000 pending STRATUM. Burn-split +
+    // GLDX earmark like every sink; ownership merges into player_pets and the
+    // new pet walks out immediately. Refusals touch nothing.
+    case 'buy-pet': {
+      if (!c.ready || !c.key) return;
+      const petId = cleanText(msg.id, 32);
+      const st = c.pet || Pets.emptyState();
+      const owned = {};
+      for (const k of Object.keys(st.owned || {})) if (st.owned[k]) owned[k] = true;
+      const led = ledgerOf(c.key);
+      const v = Pets.validatePetBuy(petId, led.pending | 0, owned);
+      if (!v.ok) return sendPet(c, { ok: false, err: v.error });
+      ledgerSave(c.key, (led.pending | 0) - v.price, led.claimed, led.wallet);
+      c.tokenPending = (led.pending | 0) - v.price;
+      const split = applyBurnSplit(v.price);
+      scheduleOnChainSink(split.burned, Gldx.earmarkOf(split.treasury));
+      owned[petId] = true;
+      c.pet = { out: petId, lastTreatAt: st.lastTreatAt | 0, owned: owned };
+      savePet(c);
+      stateSave(c);
+      sendPet(c, { ok: true, price: v.price, burned: split.burned, treasury: split.treasury });
       break;
     }
 
@@ -3403,7 +3598,15 @@ every(100, 'world tick', () => {
   const now = Date.now();
   const ev = world.tick(ps, now);
 
-  for (const r of ev.revived) broadcastNode(r.map, r.x, r.y, r.kind, 1, 0);
+  for (const r of ev.revived) {
+    broadcastNode(r.map, r.x, r.y, r.kind, 1, 0);
+    for (const c of ps) {
+      if (c.map !== r.map || !Pets.ripePing(c.pet, now)) continue;
+      const dx = c.x - r.x, dy = c.y - r.y;
+      if (dx * dx + dy * dy > 48 * 48) continue;
+      c.send({ t: 'pet-ping', x: r.x, y: r.y, map: r.map });
+    }
+  }
   for (const m of ev.respawned) {
     for (const c of clients.values()) if (c.ready && c.map === m.map) c.send({ t: 'mon', id: m.id, kind: m.kind, x: m.x, y: m.y, hp: 1, maxHp: 1, spawn: true });
   }
@@ -3470,6 +3673,15 @@ every(100, 'presence tick', () => {
       if (near.length >= 64) break;
     }
     c.send({ t: 'players', list: near, you: [Math.round(c.x * 10) / 10, Math.round(c.y * 10) / 10, c.energy] });
+    const pets = [];
+    for (const o of all) {
+      if (o === c || o.map !== c.map) continue;
+      if (Math.abs(o.x - c.x) > 72 || Math.abs(o.y - c.y) > 72) continue;
+      const pw = petWire(o);
+      if (pw) pets.push(pw);
+      if (pets.length >= 64) break;
+    }
+    c.send({ t: 'pets', list: pets });
     c.send({ t: 'mons', map: c.map, list: world.nearby(c.map, c.x, c.y) });
   }
 });
