@@ -169,6 +169,11 @@ class Client {
   // testing the queued/not_configured path it's named for.
   const srv = startServer(port, TESTDB, {
     STRATUM_SHOP_FEE_BPS: '5000', STRATUM_MIN_CLAIM_AMOUNT: '1',
+    // This suite's seller lists after a single harvest (1-2 pending) — the live
+    // listing fee would refuse it. The fee gate itself is proven in
+    // test-sinks-stratum.js; here it is zeroed so the sale-split wiring stays
+    // the thing under test.
+    STRATUM_LISTING_FEE: '0',
     STRATUM_CLAIM_SIGNER_KEY: '', STRATUM_TREASURY_KEY: ''
   });
   await waitReady(port);

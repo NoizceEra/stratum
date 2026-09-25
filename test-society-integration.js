@@ -143,7 +143,9 @@ class Client {
   console.log('\nSTRATUM society (shops + trade + emotes) integration — live server, real wire\n');
   wipe(TESTDB); wipe(TESTDB2);
   const port = await freePort();
-  const srv = startServer(port, TESTDB);
+  // Fee gate lives in test-sinks-stratum.js; zero it here so TTL/expiry mechanics
+  // stay the thing under test (fresh players hold 0 pending).
+  const srv = startServer(port, TESTDB, { STRATUM_LISTING_FEE: '0' });
   await waitReady(port);
   let srvDead = false;
   const mustLive = () => { if (srv.exited !== null) { srvDead = true; ok(false, 'test server died mid-suite', srv.exited); } return !srvDead; };
