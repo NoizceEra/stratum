@@ -1047,6 +1047,7 @@
     foundSites: [],            // wonder site ids this player discovered
     placingMonument: false,    // armed by the MONUMENT button for the next LMB
     placingStructure: null,    // kind selected in the [I] idle panel, armed for the next LMB
+    holdCtx: null,             // touch hold-to-release progress {t0}
     idleOpen: false,
     remotes: new Map(), floats: [],
     pet: { out: null, owned: [], active: false, name: '', form: 'wisp', pal: null, job: '', treatLeftMs: 0 },
@@ -2356,6 +2357,7 @@
     tapMoved = false; holdFired = false;
     var r = cv.getBoundingClientRect();
     S.mouse.x = t.clientX - r.left; S.mouse.y = t.clientY - r.top;
+    S.holdCtx = { t0: Date.now() };
     holdTimer = setTimeout(function () {
       holdFired = true;
       var tt = screenToTile(S.mouse.x, S.mouse.y);
@@ -2377,6 +2379,7 @@
 
   function canvasTapEnd(e) {
     clearTimeout(holdTimer);
+    S.holdCtx = null;
     for (var i = 0; i < e.changedTouches.length; i++) {
       if (e.changedTouches[i].identifier !== tapId) continue;
       tapId = null;
@@ -3823,6 +3826,21 @@
         ctx.fillStyle = col2;
         ctx.fillRect(hx + 1, hy + 1, 2, 2); ctx.fillRect(hx + s - 3, hy + 1, 2, 2);
         ctx.fillRect(hx + 1, hy + s - 3, 2, 2); ctx.fillRect(hx + s - 3, hy + s - 3, 2, 2);
+
+        // touch hold-to-release: a growing gold ring over your OWN claimed tile
+        // makes the ~520ms release gesture legible before it fires
+        if (S.holdCtx) {
+          var held = S.edits.get(tk(t.x, t.y));
+          if (held && held.owner === S.key) {
+            var hp = Math.min(1, (now - S.holdCtx.t0) / 520);
+            var hcx = hx + s / 2, hcy = hy + s / 2;
+            ctx.strokeStyle = 'rgba(255,214,120,' + (0.4 + hp * 0.6).toFixed(3) + ')';
+            ctx.lineWidth = Math.max(2, s * 0.12);
+            ctx.beginPath();
+            ctx.arc(hcx, hcy, s * (0.2 + hp * 0.55), -Math.PI / 2, -Math.PI / 2 + TAU * hp);
+            ctx.stroke();
+          }
+        }
       }
     }
 
@@ -3855,6 +3873,9 @@
         ctx.font = '11px ui-monospace,monospace';
         ctx.fillStyle = 'rgba(200,190,170,.9)';
         ctx.fillText('RETURNED TO THE SHORE', cw / 2, ch * 0.44 + 26);
+        // death stakes: your dropped cache (half your mats) waits where you fell
+        ctx.fillStyle = 'rgba(201,165,92,.95)';
+        ctx.fillText('HALF YOUR CACHE LIES WHERE YOU FELL — WALK BACK FOR IT', cw / 2, ch * 0.44 + 46);
         ctx.globalAlpha = 1;
       }
     }
@@ -4100,6 +4121,12 @@
       ctx.drawImage(GLOW_WARN, bx - gs / 2, by - s * 0.3 - gs / 2, gs, gs);
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'source-over';
+      // hard ground ring — reads even from a glance, no glow needed
+      ctx.strokeStyle = 'rgba(255,120,80,' + (0.5 + gp * 0.5).toFixed(3) + ')';
+      ctx.lineWidth = Math.max(1.5, s * 0.07);
+      ctx.beginPath();
+      ctx.ellipse(bx, by + s * 0.32, s * (0.34 + gp * 0.06), s * (0.13 + gp * 0.02), 0, 0, TAU);
+      ctx.stroke();
     }
 
     switch (m.form) {
@@ -4540,7 +4567,9 @@
     var live = tg && S.mons.get(tg.id) && Date.now() < S.targetUntil;
     if (live) {
       tgtEl.classList.add('on');
-      tgtName.textContent = (tg.nm || spName(S.map, tg.kind)) + '  ' + Math.max(0, Math.round(tg.hp)) + '/' + tg.maxHp;
+      var sp = T.speciesOf(S.map, tg.kind);
+      var tierTag = (sp && typeof sp.tier === 'number' && sp.tier > 0) ? (' T' + sp.tier + ' ') : '';
+      tgtName.textContent = tierTag + (tg.nm || spName(S.map, tg.kind)) + '  ' + Math.max(0, Math.round(tg.hp)) + '/' + tg.maxHp;
       tgtBar.style.width = Math.max(0, (tg.hp / tg.maxHp) * 100).toFixed(1) + '%';
     } else {
       if (tg && !S.mons.get(tg.id)) S.target = null;

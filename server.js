@@ -1246,6 +1246,31 @@ const server = http.createServer((req, res) => {
     return res.end(body);
   }
 
+  // Operator dashboard: read-only aggregate of every sink/fee/claim source in one
+  // fetch — no player data, no secrets, no writes. Best-effort: a failed query
+  // yields a field zeroed rather than a 500.
+  if (p === '/api/ops') {
+    function opsCount(sql) {
+      try { return (db.prepare(sql).get().n | 0); } catch (e) { return 0; }
+    }
+    const econ = economyStats();
+    const treas = treasuryTotals();
+    const ops = {
+      burnedTotal: burnedTotal(),
+      treasuryFees: treas,
+      treasurySTRM: (treas.STRATUM | 0),
+      vault: vaultStats(),
+      upkeep: { burnedWeek: counterOf('upkeep_week_burned'), dividendsWeek: counterOf('upkeep_week_divs') },
+      monumentsCount: monuments.size,
+      wonderFinds: opsCount('SELECT COUNT(*) AS n FROM landmark_found'),
+      claimQueue: opsCount("SELECT COUNT(*) AS n FROM claim_requests WHERE status IN ('queued','requested')"),
+      pendingTotal: econ.faucet.totalPending,
+      pendingAvg: econ.faucet.avgPendingPerPlayer
+    };
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(ops, null, 2));
+  }
+
   if (p === '/api/palettes') {
     // Read-only, no wire protocol of its own — same "plain fetch" precedent as
     // /api/leaderboard. Lets the gate screen render swatches BEFORE the player has
