@@ -197,6 +197,19 @@ class Client {
   const strippedAck = await a.waitFor(m => m.t === 'look' && m.paletteId === chosenPalette.id, 3000);
   ok(strippedAck.hat === null, 'the unowned accessory did not make it into the applied look', strippedAck);
 
+  section('SUIT-TECH — visor/pack/patch slots equip, sync to bystanders, vanity still gated');
+  // NOTE: runs while A and B share map 0 — presence is per-map, so this must
+  // precede the wayfarer travel below.
+  a.send({ t: 'set-look', paletteId: chosenPalette.id, visor: 'dust-visor', pack: 'survey-pack', patch: 'landing-patch' });
+  const suitAck = await a.waitFor(m => m.t === 'look' && m.visor === 'dust-visor', 3000).catch(() => null);
+  ok(!!suitAck && suitAck.pack === 'survey-pack' && suitAck.patch === 'landing-patch',
+    'free suit-tech pieces equip across all three new slots', suitAck);
+  const seenSuit = await b.waitNew(m => m.t === 'players' && m.list && m.list.some(row => row[0] === keyA && row[9] === 'dust-visor'), 3000).catch(() => null);
+  ok(!!seenSuit, 'the bystander sees the visor at presence index 9', seenSuit && seenSuit.list.find(row => row[0] === keyA));
+  a.send({ t: 'set-look', paletteId: chosenPalette.id, visor: 'eclipse-visor' });
+  const vanityStripped = await a.waitFor(m => m.t === 'look' && m.visor !== 'eclipse-visor', 3000).catch(() => null);
+  ok(!!vanityStripped && vanityStripped.visor === null, 'unbought vanity visor is stripped, not applied', vanityStripped);
+
   section('UNLOCK — a real achievement over the wire (wayfarer: visit map 1), then equip its cosmetic');
   const wardenAcc = welcomeA.customization.accessories.find(x => x.unlockedBy === 'wayfarer');
   ok(!!wardenAcc, 'the catalog includes an accessory unlocked by "wayfarer" (cheap: just travel)', wardenAcc);

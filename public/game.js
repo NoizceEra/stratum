@@ -909,7 +909,7 @@
     // appearance — palette id + the two hues it carries, plus equipped accessory ids per
     // slot (null = nothing equipped). customization is the catalog the server ships in
     // 'welcome' (palettes + accessories, the latter carrying unlockDesc for the tooltip).
-    paletteId: null, bodyHue: 0, trimHue: 0, hat: null, cloak: null, scarf: null,
+    paletteId: null, bodyHue: 0, trimHue: 0, hat: null, cloak: null, scarf: null, visor: null, pack: null, patch: null,
     customization: null, wardrobeOpen: false, gatePalettes: [], gatePick: null, pendingPaletteId: null
   };
   if (S.canBuild && S.harvests < 1) S.harvests = 1; // returning builders already passed harvest
@@ -1037,6 +1037,7 @@
         if (m.look) {
           S.paletteId = m.look.paletteId; S.bodyHue = m.look.bodyHue; S.trimHue = m.look.trimHue;
           S.hat = m.look.hat; S.cloak = m.look.cloak; S.scarf = m.look.scarf;
+          S.visor = m.look.visor || null; S.pack = m.look.pack || null; S.patch = m.look.patch || null;
           try { localStorage.setItem('stratum_palette', S.paletteId); } catch (e) {}
         }
         // a swatch picked at the gate this session overrides the loaded/default look —
@@ -1677,6 +1678,7 @@
       case 'look':
         S.paletteId = m.paletteId; S.bodyHue = m.bodyHue; S.trimHue = m.trimHue;
         S.hat = m.hat; S.cloak = m.cloak; S.scarf = m.scarf;
+        S.visor = m.visor || null; S.pack = m.pack || null; S.patch = m.patch || null;
         try { localStorage.setItem('stratum_palette', S.paletteId); } catch (e) {}
         if (S.wardrobeOpen) buildWardrobe();
         break;
@@ -1696,12 +1698,14 @@
               name: p[1], x: p[2], y: p[3], rx: p[2], ry: p[3], lx: p[2], ly: p[3],
               faceX: 0, faceY: 1, walk: 0, moving: 0,
               bodyHue: p[4], trimHue: p[5], hat: p[6] || null, cloak: p[7] || null, scarf: p[8] || null,
+              visor: p[9] || null, pack: p[10] || null, patch: p[11] || null,
               // colour strings are built once, not per frame
               body: 'hsl(' + p[4] + ',58%,62%)', trim: 'hsl(' + p[5] + ',48%,40%)'
             });
           } else {
             r.x = p[2]; r.y = p[3]; r.name = p[1];
             r.hat = p[6] || null; r.cloak = p[7] || null; r.scarf = p[8] || null;
+            r.visor = p[9] || null; r.pack = p[10] || null; r.patch = p[11] || null;
             if (typeof p[4] === 'number' && (p[4] !== r.bodyHue || p[5] !== r.trimHue)) {
               r.bodyHue = p[4]; r.trimHue = p[5];
               r.body = 'hsl(' + p[4] + ',58%,62%)';
@@ -2227,11 +2231,11 @@
     wood: 'assets/resource-icons/wood.png', ore: 'assets/resource-icons/ore.png',
     herb: 'assets/resource-icons/herb.png', crystal: 'assets/resource-icons/crystal.png',
     gold: 'assets/resource-icons/gold.png',
-    honey: 'assets/10_wheat_bundle.jpg', tonic: 'assets/09_forest_mushroom.jpg',
-    charcoal: 'assets/05_cozy_campfire.jpg',
-    kiln: 'assets/05_cozy_campfire.jpg', apiary: 'assets/10_wheat_bundle.jpg',
-    still: 'assets/11_water_well.jpg', smoker: 'assets/05_cozy_campfire.jpg',
-    wall: 'assets/02_stone_ore.jpg'
+    honey: 'assets/resource-icons/honey.jpg', tonic: 'assets/resource-icons/tonic.jpg',
+    charcoal: 'assets/resource-icons/charcoal.jpg',
+    kiln: 'assets/resource-icons/kiln.jpg', apiary: 'assets/resource-icons/apiary.jpg',
+    still: 'assets/resource-icons/still.jpg', smoker: 'assets/resource-icons/smoker.jpg',
+    wall: 'assets/resource-icons/wall.jpg'
   };
   function iconFor(id) {
     if (ICONS[id]) return ICONS[id];
@@ -2881,7 +2885,7 @@
     document.getElementById('wardrobe').classList.remove('on');
   }
   function sendLook(overrides) {
-    var look = { paletteId: S.paletteId, hat: S.hat, cloak: S.cloak, scarf: S.scarf };
+    var look = { paletteId: S.paletteId, hat: S.hat, cloak: S.cloak, scarf: S.scarf, visor: S.visor, pack: S.pack, patch: S.patch };
     Object.assign(look, overrides);
     send(Object.assign({ t: 'set-look' }, look));
   }
@@ -3410,13 +3414,15 @@
       else if (kk === 6) drawLandmark(ex, ey, s, rr, now);
       else if (kk === 7) drawWallSprite(ex, ey, s, rr, now);
       else if (kk === 3) {
-        drawAvatar(ex, ey, s, now, rr.body || '#b7c8dc', rr.trim || '#7f93a8', rr.faceX, rr.faceY, rr.walk, rr.moving, -1, 0, rr.hat, rr.cloak, rr.scarf);
+        drawAvatar(ex, ey, s, now, rr.body || '#b7c8dc', rr.trim || '#7f93a8', rr.faceX, rr.faceY, rr.walk, rr.moving, -1, 0, rr.hat, rr.cloak, rr.scarf,
+          { visor: rr.visor || null, pack: rr.pack || null, patch: rr.patch || null });
         ctx.font = '10px ui-monospace,monospace'; ctx.textAlign = 'center';
         ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText(rr.name, ex + 1, ey - s * 0.95 + 1);
         ctx.fillStyle = '#e8e6df'; ctx.fillText(rr.name, ex, ey - s * 0.95);
       } else {
         drawAvatar(ex, ey, s, now, 'hsl(' + S.bodyHue + ',58%,62%)', 'hsl(' + S.trimHue + ',48%,40%)',
-          S.faceX, S.faceY, S.walk, S.moving, S.swingT, S.swingA, S.hat, S.cloak, S.scarf);
+          S.faceX, S.faceY, S.walk, S.moving, S.swingT, S.swingA, S.hat, S.cloak, S.scarf,
+          { visor: S.visor || null, pack: S.pack || null, patch: S.patch || null });
         if (S.swingT >= 0) drawSlash(ex, ey, s);
       }
     }
@@ -3904,7 +3910,18 @@
   var HAT_COL = '#2e2a22', HAT_BRIM_COL = '#241f16';
   var CLOAK_COL = '#463522', CLOAK_TRIM_COL = '#5a4326';
   var SCARF_COL = '#c9a55c';
-  function drawAvatar(x, y, s, now, body, trim, fx, fy, walk, moving, swingT, swingA, hat, cloak, scarf) {
+  // suit-tech colors per accessory id — visor glass / pack shell / patch emblem.
+  // Unknown ids fall back to neutral tones so a future catalog entry never breaks the rig.
+  var GEAR_COL = {
+    'dust-visor': ['#3b3428', '#9fd8e8'], 'surveyor-visor': ['#5a4326', '#ffd479'], 'eclipse-visor': ['#c9a55c', '#2a1a4a'],
+    'survey-pack': ['#6b6459', '#c9a55c'], 'o2-rig': ['#4a5a3a', '#c8e98f'], 'ion-thruster': ['#3a4a5a', '#8fe4ff'],
+    'landing-patch': ['#c9a55c', '#3b3428'], 'void-patch': ['#8e2f22', '#241f16'], 'goldleaf-insignia': ['#f6e6ac', '#8a6a20']
+  };
+  function gearCol(id, i) {
+    var c = GEAR_COL[id];
+    return c ? c[i] : (i ? '#9fd8e8' : '#3b3428');
+  }
+  function drawAvatar(x, y, s, now, body, trim, fx, fy, walk, moving, swingT, swingA, hat, cloak, scarf, gear) {
     var step = moving ? Math.sin(walk) : 0;
     var breath = Math.sin(now / 560) * s * 0.02;
     var bob = moving ? -Math.abs(Math.sin(walk)) * s * 0.05 : breath;
@@ -3951,6 +3968,24 @@
     if (hat) {
       rct(bx + w * 0.06, by - h * 0.02, w * 0.88, h * 0.06, HAT_BRIM_COL);
       rct(bx + w * 0.2, by - h * 0.14, w * 0.6, h * 0.14, HAT_COL);
+    }
+    // suit-tech: visor (face band, skipped when facing away), pack (back unit
+    // with a blinking beacon), patch (mission emblem on the chest). All read
+    // from the per-id color table above; unknown ids degrade to neutrals.
+    var gz = gear || {};
+    if (gz.pack) {
+      rct(bx - w * 0.34, by + h * 0.28, w * 0.3, h * 0.46, gearCol(gz.pack, 0));
+      rct(bx - w * 0.30, by + h * 0.32, w * 0.1, h * 0.38, 'rgba(255,250,225,.25)');
+      if (Math.floor(now / 480) % 2 === 0) rct(bx - w * 0.24, by + h * 0.22, Math.max(1, w * 0.1), Math.max(1, h * 0.05), gearCol(gz.pack, 1));
+    }
+    if (gz.patch) {
+      rct(bx + w * 0.42, by + h * 0.40, w * 0.16, h * 0.1, gearCol(gz.patch, 1));
+      rct(bx + w * 0.45, by + h * 0.415, w * 0.1, h * 0.07, gearCol(gz.patch, 0));
+    }
+    if (gz.visor && !(fy < 0 && fx === 0)) {
+      var off = fx * w * 0.14;
+      rct(bx + w * 0.2 + off, by + h * 0.13, w * 0.6, h * 0.12, gearCol(gz.visor, 0));
+      rct(bx + w * 0.24 + off, by + h * 0.15, w * 0.52, h * 0.05, gearCol(gz.visor, 1));
     }
     // the tool in hand, swinging through an arc while the arm is out
     var ax2 = bx + w * 1.06, ay2 = by + h * 0.5;

@@ -22,7 +22,7 @@ check('palette-shape-valid', C.ALL_PALETTES.every(function (p) {
 }));
 
 // ---------------------------------------------------------------- accessory table shape
-check('accessory-count-in-range', C.ALL_ACCESSORIES.length >= 6 && C.ALL_ACCESSORIES.length <= 16);
+check('accessory-count-in-range', C.ALL_ACCESSORIES.length >= 6 && C.ALL_ACCESSORIES.length <= 24);
 var aIds = C.ALL_ACCESSORIES.map(function (a) { return a.id; });
 check('accessory-ids-unique', new Set(aIds).size === aIds.length);
 check('accessory-shape-valid', C.ALL_ACCESSORIES.every(function (a) {
@@ -31,8 +31,8 @@ check('accessory-shape-valid', C.ALL_ACCESSORIES.every(function (a) {
     (a.unlockedBy === undefined || typeof a.unlockedBy === 'string') &&
     (a.priceStratum === undefined || (Number.isInteger(a.priceStratum) && a.priceStratum > 0));
 }));
-check('vanity-row-priced', C.ALL_ACCESSORIES.filter(function (a) { return C.isVanity(a.id); }).length === 3);
-check('slots-in-range', C.SLOTS.length >= 2 && C.SLOTS.length <= 3);
+check('vanity-row-priced', C.ALL_ACCESSORIES.filter(function (a) { return C.isVanity(a.id); }).length === 6);
+check('slots-in-range', C.SLOTS.length >= 2 && C.SLOTS.length <= 6);
 // every unlockedBy id must be a real achievement id from src/achievements.js, verbatim
 check('unlockedBy-ids-are-real-achievements', C.ALL_ACCESSORIES.every(function (a) {
   return typeof a.unlockedBy !== 'string' || !!A.achievementById(a.unlockedBy);
@@ -114,13 +114,34 @@ check('validateLook-null-look-with-garbage-unlocked',
 // ---------------------------------------------------------------- defaultLook
 check('defaultLook-shape', (function () {
   var d = C.defaultLook();
-  return d.paletteId === C.DEFAULT_PALETTE_ID && d.hat === null && d.cloak === null && d.scarf === null;
+  return d.paletteId === C.DEFAULT_PALETTE_ID && d.hat === null && d.cloak === null && d.scarf === null &&
+    d.visor === null && d.pack === null && d.patch === null;
 })());
 check('defaultLook-fresh-object', (function () {
   var d1 = C.defaultLook(); d1.paletteId = 'clay';
   var d2 = C.defaultLook();
   return d2.paletteId === C.DEFAULT_PALETTE_ID;
 })());
+
+// ---------------------------------------------------------------- suit-tech slots
+check('suit-slots-present', ['visor', 'pack', 'patch'].every(function (s) { return C.SLOTS.indexOf(s) !== -1; }));
+check('suit-free-equips', (function () {
+  var r = C.validateLook({ paletteId: 'moss', visor: 'dust-visor', pack: 'survey-pack', patch: 'landing-patch' }, [], []);
+  return r.visor === 'dust-visor' && r.pack === 'survey-pack' && r.patch === 'landing-patch';
+})());
+check('suit-gated-needs-achievement', (function () {
+  var locked = C.validateLook({ paletteId: 'moss', visor: 'surveyor-visor' }, [], []);
+  var open = C.validateLook({ paletteId: 'moss', visor: 'surveyor-visor' }, ['wayfarer'], []);
+  return locked.visor === null && open.visor === 'surveyor-visor';
+})());
+check('suit-vanity-priced', C.vanityPrice('eclipse-visor') === 150 && C.vanityPrice('ion-thruster') === 300 && C.vanityPrice('goldleaf-insignia') === 400);
+check('suit-vanity-gated-by-ownership', (function () {
+  var stripped = C.validateLook({ paletteId: 'moss', pack: 'ion-thruster' }, [], []);
+  var kept = C.validateLook({ paletteId: 'moss', pack: 'ion-thruster' }, [], ['ion-thruster']);
+  return stripped.pack === null && kept.pack === 'ion-thruster';
+})());
+check('suit-wrong-slot-rejected',
+  C.validateLook({ paletteId: 'moss', hat: 'dust-visor' }, [], []).hat === null);
 
 // ---------------------------------------------------------------- purity / hygiene
 // Scan only executable code: strip block + line comments so doc prose cannot trip the check.

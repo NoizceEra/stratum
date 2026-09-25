@@ -96,10 +96,22 @@
     // token-sink.js's splitBurn like every other sink. `priceStratum` is whole units.
     { id: 'gilded-band', name: 'Gilded Band', slot: 'hat', priceStratum: 100 },
     { id: 'ember-cloak', name: 'Ember Cloak', slot: 'cloak', priceStratum: 250 },
-    { id: 'starlight-scarf', name: 'Starlight Scarf', slot: 'scarf', priceStratum: 500 }
+    { id: 'starlight-scarf', name: 'Starlight Scarf', slot: 'scarf', priceStratum: 500 },
+    // ---- suit-tech row: space-faring colonist gear. Same three gates as the rest
+    // (free baseline, achievement unlocks, STRATUM-priced vanity) — the slots are
+    // what is new, not the economy around them.
+    { id: 'dust-visor', name: 'Dust Visor', slot: 'visor' },
+    { id: 'surveyor-visor', name: 'Surveyor Visor', slot: 'visor', unlockedBy: 'wayfarer' },
+    { id: 'eclipse-visor', name: 'Eclipse Visor', slot: 'visor', priceStratum: 150 },
+    { id: 'survey-pack', name: 'Survey Pack', slot: 'pack' },
+    { id: 'o2-rig', name: 'O2 Rig', slot: 'pack', unlockedBy: 'homesteader' },
+    { id: 'ion-thruster', name: 'Ion Thruster', slot: 'pack', priceStratum: 300 },
+    { id: 'landing-patch', name: 'Landing Patch', slot: 'patch' },
+    { id: 'void-patch', name: 'Void Patch', slot: 'patch', unlockedBy: 'slayer' },
+    { id: 'goldleaf-insignia', name: 'Goldleaf Insignia', slot: 'patch', priceStratum: 400 }
   ]);
 
-  var SLOTS = deepFreeze(['hat', 'cloak', 'scarf']);
+  var SLOTS = deepFreeze(['hat', 'cloak', 'scarf', 'visor', 'pack', 'patch']);
   var DEFAULT_PALETTE_ID = PALETTES[0].id;
 
   // ======================================================================
@@ -182,7 +194,7 @@
 
   /** A safe, always-valid look: the first palette, no accessories equipped. */
   function defaultLook() {
-    return { paletteId: DEFAULT_PALETTE_ID, hat: null, cloak: null, scarf: null };
+    return { paletteId: DEFAULT_PALETTE_ID, hat: null, cloak: null, scarf: null, visor: null, pack: null, patch: null };
   }
 
   /**

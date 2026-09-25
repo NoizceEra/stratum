@@ -1347,7 +1347,7 @@ server.on('upgrade', (req, socket) => {
     x: 0, y: 0, hp: PLAYER_HP, maxHp: PLAYER_HP, kills: 0, atk: BASE_ATK,
     inv: { wood: 0, ore: 0, herb: 0, crystal: 0, gold: 0 }, tool: 0, atkBoost: 0,
     tokenPending: 0, tokenWallet: null, walletNonce: null, walletNonceAt: 0,
-    paletteId: CU.DEFAULT_PALETTE_ID, bodyHue: 0, trimHue: 0, accessories: { hat: null, cloak: null, scarf: null },
+    paletteId: CU.DEFAULT_PALETTE_ID, bodyHue: 0, trimHue: 0, accessories: { hat: null, cloak: null, scarf: null, visor: null, pack: null, patch: null },
     achIds: new Set(), achMaps: new Set(), achCrafts: 0, achTitle: null,
     energy: ENERGY_MAX, subs: new Set(), sent: new Set(),
     // src/anti-cheat.js's rolling state — deliberately in-memory only, never persisted:
@@ -2029,9 +2029,9 @@ function onMessage(c, msg) {
         requestedLook = { paletteId: CU.ALL_PALETTES[startIdx].id };
       }
       const look = CU.validateLook(requestedLook, [...c.achIds], vanityOwned(key));
+      c.accessories = { hat: look.hat, cloak: look.cloak, scarf: look.scarf, visor: look.visor, pack: look.pack, patch: look.patch };
       const pal = CU.paletteOf(look.paletteId) || CU.paletteOf(CU.DEFAULT_PALETTE_ID);
       c.paletteId = pal.id; c.bodyHue = pal.bodyHue; c.trimHue = pal.trimHue;
-      c.accessories = { hat: look.hat, cloak: look.cloak, scarf: look.scarf };
 
       const now = Date.now();
       qPlay.run(key, name, hue, prev ? now : now, now, c.paletteId, c.bodyHue, c.trimHue, JSON.stringify(c.accessories));
@@ -2062,7 +2062,8 @@ function onMessage(c, msg) {
         energy: c.energy, energyMax: ENERGY_MAX, reach: REACH, attackRange: ATTACK_RANGE,
         claimed: countClaims(c.map), total: W * H, online: live(), mapGrid: MAPGRID,
         look: { paletteId: c.paletteId, bodyHue: c.bodyHue, trimHue: c.trimHue,
-          hat: c.accessories.hat, cloak: c.accessories.cloak, scarf: c.accessories.scarf },
+          hat: c.accessories.hat, cloak: c.accessories.cloak, scarf: c.accessories.scarf,
+          visor: c.accessories.visor, pack: c.accessories.pack, patch: c.accessories.patch },
         customization: {
           palettes: CU.ALL_PALETTES.map(p => ({ id: p.id, name: p.name, bodyHue: p.bodyHue, trimHue: p.trimHue })),
           accessories: CU.ALL_ACCESSORIES.map(a => {
@@ -3345,15 +3346,17 @@ function onMessage(c, msg) {
       // slot against this player's ACTUAL unlocked-achievement state, same as every other
       // player-controlled field gets re-validated server-side.
       const requested = (msg && typeof msg === 'object')
-        ? { paletteId: msg.paletteId, hat: msg.hat, cloak: msg.cloak, scarf: msg.scarf } : {};
+        ? { paletteId: msg.paletteId, hat: msg.hat, cloak: msg.cloak, scarf: msg.scarf,
+            visor: msg.visor, pack: msg.pack, patch: msg.patch } : {};
       const look = CU.validateLook(requested, [...c.achIds], vanityOwned(c.key));
       const pal = CU.paletteOf(look.paletteId) || CU.paletteOf(CU.DEFAULT_PALETTE_ID);
       c.paletteId = pal.id; c.bodyHue = pal.bodyHue; c.trimHue = pal.trimHue;
-      c.accessories = { hat: look.hat, cloak: look.cloak, scarf: look.scarf };
+      c.accessories = { hat: look.hat, cloak: look.cloak, scarf: look.scarf, visor: look.visor, pack: look.pack, patch: look.patch };
       qLook.run(c.paletteId, c.bodyHue, c.trimHue, JSON.stringify(c.accessories), c.key);
       c.send({
         t: 'look', paletteId: c.paletteId, bodyHue: c.bodyHue, trimHue: c.trimHue,
-        hat: c.accessories.hat, cloak: c.accessories.cloak, scarf: c.accessories.scarf
+        hat: c.accessories.hat, cloak: c.accessories.cloak, scarf: c.accessories.scarf,
+        visor: c.accessories.visor, pack: c.accessories.pack, patch: c.accessories.patch
       });
       break;
     }
@@ -3462,7 +3465,8 @@ every(100, 'presence tick', () => {
       if (o === c || o.map !== c.map) continue;
       if (Math.abs(o.x - c.x) > 72 || Math.abs(o.y - c.y) > 72) continue;
       near.push([o.key, o.name, Math.round(o.x * 10) / 10, Math.round(o.y * 10) / 10, o.bodyHue, o.trimHue,
-        o.accessories.hat, o.accessories.cloak, o.accessories.scarf]);
+        o.accessories.hat, o.accessories.cloak, o.accessories.scarf,
+        o.accessories.visor, o.accessories.pack, o.accessories.patch]);
       if (near.length >= 64) break;
     }
     c.send({ t: 'players', list: near, you: [Math.round(c.x * 10) / 10, Math.round(c.y * 10) / 10, c.energy] });
