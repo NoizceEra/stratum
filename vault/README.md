@@ -31,6 +31,7 @@ that changes the thing it describes.**
 | [[06-Ops-Deploy]] | Railway project/service/environment IDs, env var reference, how to deploy/check logs/redeploy |
 | [[07-Testing]] | Test suite conventions and the sharp edges (the `.env`-leak-into-tests lesson, isolated-DB discipline) |
 | [[08-Agent-Playbook]] | Start here. Safety rules specific to this repo, what never to do without asking, how to orient fast |
+| [[09-GLDX-Passive-Rewards]] | GLDX: the second currency, the fee-heavy sink → swap → claim mechanism, tithes/vault, and what's live vs. still uncommitted |
 
 ## Scope
 

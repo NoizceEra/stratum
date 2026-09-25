@@ -21,6 +21,18 @@ phase markers** — several cozy-pivot modules (`idle.js`, `ambient-combat.js`,
 `customization.js`) already exist in `src/`, meaning implementation is ahead of
 what a quick read of the roadmap doc alone would suggest.
 
+## Scope neither roadmap document anticipated: GLDX / passive rewards
+
+The fee-heavy GLDX passive-rewards system (`src/gldx-yield.js`, `src/token-sink.js`,
+`src/tithes.js`, `src/vault.js` — see [[09-GLDX-Passive-Rewards]] for full detail)
+is **not mentioned in either `ROADMAP.md` or `ROADMAP_COZY.md`** (checked directly,
+`grep -i gldx` on both files returns nothing). It doesn't fit as a sub-phase of the
+Cozy pivot either — it's a parallel, independent economy feature (a second
+currency plus two new sinks) built by a concurrent session, not a step toward
+ambient combat / idle structures / customization. Don't force it into an existing
+phase marker; if either ROADMAP document gets a real update pass, this needs its
+own new section rather than a retrofit into v0.5/v0.6 or a Cozy-pivot phase.
+
 ## Non-goals (both documents agree, don't relitigate these without a real reason)
 
 Land decay/upkeep, wipes, admins, moderation queue, open/global chat, trading

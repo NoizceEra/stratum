@@ -21,6 +21,13 @@ fix the stale doc too if you find one. Last updated 2026-09-25.
 - **Display ticker is `STRATUM` everywhere** (renamed from the earlier `STRM`
   placeholder to match the mint's own on-chain metadata) — UI, docs, NPC dialogue,
   landing/guide pages all consistent as of 2026-09-24.
+- **`src/gldx-yield.js` and `src/token-sink.js` (the GLDX fee-heavy passive-
+  rewards system) are committed and wired into `server.js`.** Full detail in
+  [[09-GLDX-Passive-Rewards]] — a second currency (GLDX, an external SPL token,
+  not minted by STRATUM) that players earn a claimable balance of by playing,
+  funded by swapping half of what sinks send to the treasury. Whether the
+  on-chain swap actually fires in production depends on `STRATUM_SINK_ONCHAIN`
+  — verify the Railway value, don't assume from `.env.example`'s default.
 
 ## Known gaps (honest, from README's own Status section — verify it's still current)
 
@@ -31,15 +38,23 @@ fix the stale doc too if you find one. Last updated 2026-09-25.
 - Real-money play-to-earn is a regulated space in most jurisdictions — this hasn't
   had legal review as of last check.
 
-## In-flight work (observed, not authored by this vault's writer — verify directly)
+## In-flight work (observed, not authored by this vault's writer — verify directly with `git status --short`, this drifts fast)
 
 As of this page's last update, a concurrent session had uncommitted local changes
-to `server.js` / `public/game.js` / `public/settlers.js` / `test-settlers.js`, plus
-new untracked `src/tithes.js` + its tests, and its own independent
+to `server.js` / `public/game.js` / `public/guide.html` / `public/index.html` /
+`public/settlers.js` / `test-settlers.js`, plus new **untracked** `src/tithes.js`
+and `src/vault.js` (each with pure + integration tests), and its own independent
 [HyperFrames](https://github.com) trailer build under `trailers/` at the repo root
 (unrelated to any trailer work referenced elsewhere). **Multiple sessions can be
 live on this repo at once** — see [[08-Agent-Playbook]]'s parallel-sessions rule
 before assuming the working tree is clean or that you're the only one editing.
+
+Despite being uncommitted, `src/tithes.js`/`src/vault.js` are fully wired end to
+end (server message handlers, a weekly upkeep/emission sweep, and HUD/NPC-dialogue
+UI in the also-uncommitted `public/` diff) and their pure-logic AND integration
+tests all pass as of this page's last check — see [[09-GLDX-Passive-Rewards]] for
+the full picture and exactly what commands to rerun to reconfirm. This is not a
+scaffold; treat it as real, tested, pre-commit work.
 
 The [[04-Roadmap]]'s "Cozy pivot" (`ROADMAP_COZY.md`) is partway implemented —
 `src/idle.js`, `src/ambient-combat.js`, `src/customization.js` all exist in `src/`

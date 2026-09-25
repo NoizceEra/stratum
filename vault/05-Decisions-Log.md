@@ -10,6 +10,37 @@ one of these from scratch again.
 
 ---
 
+## 2026-09-25 — GLDX audit: two integration test suites run env-unsafe but were actually fine, and one real coverage gap found
+
+Auditing the vault against `src/gldx-yield.js`/`src/tithes.js`/`src/vault.js`
+(see [[09-GLDX-Passive-Rewards]]) surfaced two things worth recording:
+
+1. **`test-tithes-integration.js` and `test-vault-integration.js` do NOT blank
+   `STRATUM_CLAIM_SIGNER_KEY`/`STRATUM_TREASURY_KEY`** in their spawned server's
+   env (they `Object.assign({}, process.env, {...})` without ever emptying those
+   keys) — on its face this is exactly the footgun [[07-Testing]]/[[05-Decisions-Log]]'s
+   `.env`-leak entry warns about. It turned out to be harmless *only* because
+   neither suite sets `STRATUM_SINK_ONCHAIN=1`, so `scheduleOnChainSink()` in
+   `server.js` never calls into `chain-adapter.js` regardless of what real key a
+   developer's local `.env` supplies — the two dangerous things (a real signer
+   key present, and the on-chain code path actually running) happened to not
+   coincide here. This is a coincidence of the current test's scope, not a
+   structural safeguard — if either test is ever extended to exercise the
+   on-chain sink path, it needs the explicit env-blank first. Verified by reading
+   both spawn calls directly, not assumed.
+2. **No `test-gldx-yield-integration.js` exists.** The `claim-gldx` server path —
+   `fundGldxClaims()`'s real-balance-capped allocation, the payout, the "nothing
+   ready" rejection — is wired into `server.js` and covered by pure math tests
+   (`test-gldx-yield.js`) but has never been proven against a real spawned server
+   the way tithes and vault have. Flagged in [[09-GLDX-Passive-Rewards]] as the
+   most concrete next step for whoever picks this system up.
+
+**What this means going forward:** "the integration test passed" is not the same
+claim as "this test would catch a real signer key leaking" — check what env vars
+a spawned test server actually sets, not just whether the suite is green.
+
+---
+
 ## 2026-09-24 — Treasury address swapped to match the actual signer wallet
 
 The treasury address baked into `token-config.js`'s `DEFAULTS` had **0 SOL and no
