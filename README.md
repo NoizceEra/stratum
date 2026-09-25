@@ -484,18 +484,20 @@ under a real rapid-fire burst) in `test-anti-cheat.js` and `test-anti-cheat-inte
 
 Playable and tested. Honest gaps:
 
-- **On-chain settlement is not live yet** — the mint is real (see the Commerce section
-  above) and the transfer code is real and Token-2022-aware, but `chain-adapter.js`
-  still refuses to run without `STRATUM_CLAIM_SIGNER_KEY`. Every claim today queues;
-  none settle. Setting that one secret on the host (never in `.env`, never committed)
-  lifts this.
+- **On-chain settlement is LIVE** (as of 2026-09-24) — `STRATUM_CLAIM_SIGNER_KEY` is
+  set in production, and the treasury address matches the wallet that key actually
+  controls (funded: ~20.2M STRATUM, ~0.31 SOL for fees — see `vault/02-Token-Economy.md`
+  for current numbers and how to recheck them). A real claim now attempts a real,
+  irreversible Token-2022 transfer. This is genuinely different from "queues, never
+  settles" — treat any claim-pipeline change with that in mind.
 - **No way to buy in-game currency with real money or crypto yet.** Gold and STRATUM are
   earned by playing only — there's no fiat on-ramp, no "buy gold with STRATUM" or "buy STRATUM
   with a card" flow, and no payment processor wired in anywhere in this codebase. This is
   a separate, not-yet-designed feature, not a bug in the claim pipeline above.
-- **Not deployed.** It runs locally. Hosting needs a long-lived process (Railway/Fly/VPS —
-  see `railway.toml` + `Dockerfile`) with a persistent volume for `data/`, plus the
-  static client — not a static host alone.
+- **Deployed and live** at [planetstratum.fun](https://planetstratum.fun) (Railway,
+  project `stratum`, service `stratum`, environment `production` — see
+  `vault/06-Ops-Deploy.md` for IDs and how to check logs/redeploy). A persistent
+  volume backs `data/`; deploys auto-trigger on push to `master`.
 - **Anti-cheat now covers economic abuse specifically** (see the Anti-cheat section
   above) — rate/rhythm/IP-density detection on every reward-earning action, throttling
   gold/STRATUM without ever blocking play. Movement rate-limiting and server-side validation
