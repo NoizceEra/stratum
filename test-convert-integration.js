@@ -189,7 +189,7 @@ class Client {
   await a.connect();
   a.send({ t: 'hello', key: KEY_A, name: 'MINER' });
   const wa = await a.waitNew(m => m.t === 'welcome');
-  ok(wa.tokenPending === 8 && wa.inv.gold === 40, 'seeded gold and pending STRM load with no wallet', wa);
+  ok(wa.tokenPending === 8 && wa.inv.gold === 40, 'seeded gold and pending STRATUM load with no wallet', wa);
 
   section('GATE — claim and convert refuse until a wallet is linked');
   a.send({ t: 'claim' });
@@ -212,14 +212,14 @@ class Client {
   ok(claimed.amount === 8 && claimed.fee === 2 && claimed.payout === 6, 'claim quotes a 25% fee and the net payout', claimed);
   ok(claimed.tokenPending === 8, 'a queued claim does not take the fee or the balance', claimed);
 
-  section('CONVERT — gold becomes pending STRM and the fee hits the vault');
+  section('CONVERT — gold becomes pending STRATUM and the fee hits the vault');
   a.send({ t: 'convert', dir: 'to-token' });
   const conv = await a.waitNew(m => m.t === 'converted' && m.ok === true);
   ok(conv.gross === 4 && conv.fee === 2 && conv.payout === 2 && conv.spentGold === 40,
-    '40 gold converts to 4 STRM with a 50% fee', conv);
-  ok(conv.tokenPending === 10 && conv.gold === 0, 'player keeps the net STRM and spends the gold', conv);
+    '40 gold converts to 4 STRATUM with a 50% fee', conv);
+  ok(conv.tokenPending === 10 && conv.gold === 0, 'player keeps the net STRATUM and spends the gold', conv);
   const stats = await getJson(port, '/api/stats');
-  ok(stats.treasury && stats.treasury.STRM === 2, 'convert fee is collected in the treasury vault', stats.treasury);
+  ok(stats.treasury && stats.treasury.STRATUM === 2, 'convert fee is collected in the treasury vault', stats.treasury);
 
   section('WALLETS = PLAYERS — the same wallet cannot bind a second colonist');
   const b = new Client('B', port);

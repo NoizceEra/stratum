@@ -38,6 +38,7 @@ const MiningStreak = require('./src/mining-streak.js');
 const ColonyMilestone = require('./src/colony-milestone.js');
 const Payout = require('./src/payout.js');
 const WalletProof = require('./src/wallet-proof.js');
+const Gldx = require('./src/gldx-yield.js');
 
 /** Optional local `.env` (never committed). Existing process.env wins — so hosting
  *  platform secrets always override a checked-out file. Zero-dep, KEY=VALUE only. */
@@ -166,21 +167,23 @@ const PARCEL_FEE_BPS = Number(process.env.STRATUM_PARCEL_FEE_BPS) >= 0
 // (taking a cut of a gift is a different, worse product decision — see ROADMAP_COZY.md).
 const SHOP_FEE_BPS = Number(process.env.STRATUM_SHOP_FEE_BPS) >= 0
   ? Number(process.env.STRATUM_SHOP_FEE_BPS) | 0 : Shops.FEE_BPS;
-// STRM sinks (src/token-sink.js): the fraction of every spend that's burned forever vs.
+// STRATUM sinks (src/token-sink.js): the fraction of every spend that's burned forever vs.
 // credited to the in-game treasury. Burn-heavy on purpose — see that module's header for
 // why a token that only ever accrues, never drains, is the real danger here, not the
 // missing chain wiring.
 const TOKEN_BURN_BPS = Number(process.env.STRATUM_TOKEN_BURN_BPS) >= 0
   ? Number(process.env.STRATUM_TOKEN_BURN_BPS) | 0 : TokenSink.BURN_BPS;
+const SINK_ONCHAIN = process.env.STRATUM_SINK_ONCHAIN === '1';
+const ONCHAIN_DEFAULT_SHIP = TokenSink.ONCHAIN_DEFAULT_SHIP;
 const RUSH_COST_PER_UNIT = Number(process.env.STRATUM_RUSH_COST_PER_UNIT) > 0
   ? Number(process.env.STRATUM_RUSH_COST_PER_UNIT) | 0 : TokenSink.RUSH_COST_PER_UNIT;
-// Floor on a 'claim' request, in whole STRM units. Real on-chain settlement (chain-
-// adapter.js) pays gas for every settled claim from the treasury wallet — a 1-STRM claim
-// costs the same gas as a 1000-STRM one, so with no floor a player (or a bot) could bleed
+// Floor on a 'claim' request, in whole STRATUM units. Real on-chain settlement (chain-
+// adapter.js) pays gas for every settled claim from the treasury wallet — a 1-STRATUM claim
+// costs the same gas as a 1000-STRATUM one, so with no floor a player (or a bot) could bleed
 // the treasury's gas float one dust-sized claim at a time. Requisition (src/token-sink.js)
 // stays floor-free on purpose — it never touches the chain, so it has no gas cost to
 // protect against. Default chosen to comfortably clear a single harvest/kill/craft reward
-// (src/rewards.js grants 1-2 STRM per action) many times over before claiming is worthwhile.
+// (src/rewards.js grants 1-2 STRATUM per action) many times over before claiming is worthwhile.
 const MIN_CLAIM_AMOUNT = Number(process.env.STRATUM_MIN_CLAIM_AMOUNT) > 0
   ? Number(process.env.STRATUM_MIN_CLAIM_AMOUNT) | 0 : 50;
 // Fee cuts on the two wallet-gated exits. 0 is a legal "no fee" setting, so this
@@ -197,13 +200,26 @@ const GOLD_PER_STRM = Number(process.env.STRATUM_GOLD_PER_STRM) > 0
   ? Number(process.env.STRATUM_GOLD_PER_STRM) | 0 : Payout.GOLD_PER_STRM;
 const MIN_CONVERT_AMOUNT = Number(process.env.STRATUM_MIN_CONVERT_AMOUNT) > 0
   ? Number(process.env.STRATUM_MIN_CONVERT_AMOUNT) | 0 : Payout.MIN_CONVERT_STRM;
+// Will refill (STRATUM sink): flat whole-STRATUM price to restore will to full.
+// Positive-only env (0 would mean "free refills", which is not a setting — use a
+// huge number to effectively disable instead).
+const WILL_REFILL_COST = Number(process.env.STRATUM_WILL_REFILL_COST) > 0
+  ? Number(process.env.STRATUM_WILL_REFILL_COST) | 0 : 10;
+// Shop listing fee (treasury collector): flat whole-STRATUM price per new listing,
+// 100% to the treasury like every other commerce fee. >= 0 so 0 disables it.
+const LISTING_FEE = Number(process.env.STRATUM_LISTING_FEE) >= 0
+  ? Number(process.env.STRATUM_LISTING_FEE) | 0 : 5;
 function payoutPublic() {
   return {
     claimBps: CLAIM_FEE_BPS,
     convertBps: CONVERT_FEE_BPS,
     goldPerStrm: GOLD_PER_STRM,
     minClaim: MIN_CLAIM_AMOUNT,
-    minConvert: MIN_CONVERT_AMOUNT
+    minConvert: MIN_CONVERT_AMOUNT,
+    willRefillCost: WILL_REFILL_COST,
+    listingFee: LISTING_FEE,
+    sinkOnChain: SINK_ONCHAIN,
+    onChainShip: ONCHAIN_DEFAULT_SHIP
   };
 }
 // Salvage refund rate (src/crafting.js) — same "fall back to the real default, not to 0
@@ -335,6 +351,24 @@ db.exec(`
     if (!names.includes('trimHue')) db.exec('ALTER TABLE players ADD COLUMN trimHue INTEGER');
     if (!names.includes('accessories')) db.exec('ALTER TABLE players ADD COLUMN accessories TEXT');
   } catch (e) { console.log('[db] customization migration skipped:', e && e.message); }
+})();
+
+// ticker rename (STRM -> STRATUM): databases from before the rename hold sink-fee
+// rows under the 'STRM' treasury key. Fold them into 'STRATUM' on boot so no fee
+// revenue goes stray. One-shot and idempotent — a second boot finds no 'STRM' row.
+(function migrateTreasuryTicker() {
+  try {
+    const row = db.prepare("SELECT qty FROM treasury WHERE item='STRM'").get();
+    if (row) {
+      const n = row.qty | 0;
+      db.prepare("UPDATE treasury SET qty = qty + ?, updated = ? WHERE item = 'STRATUM'").run(n, Date.now());
+      if (db.prepare('SELECT changes() AS c').get().c === 0) {
+        db.prepare("INSERT INTO treasury(item,qty,updated) VALUES('STRATUM',?,?)").run(n, Date.now());
+      }
+      db.prepare("DELETE FROM treasury WHERE item='STRM'").run();
+      console.log(`[db] treasury ticker migration: folded ${n} STRM into STRATUM`);
+    }
+  } catch (e) { console.log('[db] treasury ticker migration skipped:', e && e.message); }
 })();
 
 // ---------- startup persistence safety ---------------------------------------
@@ -472,22 +506,33 @@ const qAchGet = db.prepare('SELECT * FROM player_achievements WHERE k=?');
 // achievements are keyed by player + map, so "claimed" only counts what THIS player owns
 // on the map they are currently standing on — the tiles_owner index makes this cheap.
 const qClaimCount = db.prepare('SELECT COUNT(*) n FROM tiles WHERE map=? AND owner=?');
-const qLedgerGet = db.prepare('SELECT pending, claimed, wallet FROM token_ledger WHERE k=?');
+(function migrateGldxLedger() {
+  const cols = db.prepare('PRAGMA table_info(token_ledger)').all();
+  const names = new Set(cols.map(c => c.name));
+  if (cols.length && !names.has('gldx_pending')) db.exec('ALTER TABLE token_ledger ADD COLUMN gldx_pending INTEGER NOT NULL DEFAULT 0');
+  if (cols.length && !names.has('gldx_payable')) db.exec('ALTER TABLE token_ledger ADD COLUMN gldx_payable INTEGER NOT NULL DEFAULT 0');
+})();
+const qLedgerGet = db.prepare('SELECT pending, claimed, wallet, gldx_pending, gldx_payable FROM token_ledger WHERE k=?');
 const qLedgerTotal = db.prepare('SELECT COALESCE(SUM(pending),0) as t FROM token_ledger');
 const qLedgerUpsert = db.prepare(
   'INSERT INTO token_ledger(k,pending,claimed,wallet,updated) VALUES(?,?,?,?,?) ' +
   'ON CONFLICT(k) DO UPDATE SET pending=excluded.pending, claimed=excluded.claimed, wallet=excluded.wallet, updated=excluded.updated');
+const qGldxAll = db.prepare('SELECT k, gldx_pending AS pending, gldx_payable AS payable FROM token_ledger WHERE gldx_pending > 0 OR gldx_payable > 0');
+const qGldxSet = db.prepare('UPDATE token_ledger SET gldx_pending=?, gldx_payable=?, updated=? WHERE k=?');
 
 function ledgerOf(key) {
   const row = qLedgerGet.get(key);
   return row
-    ? { pending: row.pending | 0, claimed: row.claimed | 0, wallet: row.wallet || null }
-    : { pending: 0, claimed: 0, wallet: null };
+    ? {
+      pending: row.pending | 0, claimed: row.claimed | 0, wallet: row.wallet || null,
+      gldxPending: row.gldx_pending | 0, gldxPayable: row.gldx_payable | 0
+    }
+    : { pending: 0, claimed: 0, wallet: null, gldxPending: 0, gldxPayable: 0 };
 }
 function ledgerSave(key, pending, claimed, wallet) {
   qLedgerUpsert.run(key, pending | 0, claimed | 0, wallet || null, Date.now());
 }
-/** Credit pending STRM (whole units) for a player key; returns new pending total. */
+/** Credit pending STRATUM (whole units) for a player key; returns new pending total. */
 function creditToken(key, n) {
   if (!key || !Number.isFinite(n) || n <= 0) return ledgerOf(key).pending;
   const cur = ledgerOf(key);
@@ -495,8 +540,24 @@ function creditToken(key, n) {
   ledgerSave(key, pending, cur.claimed, cur.wallet);
   return pending;
 }
+/** Add raw GLDX claim units (8 decimals). Does not pay anything. */
+function creditGldx(key, raw) {
+  if (!key || !Number.isFinite(raw) || raw <= 0) return ledgerOf(key).gldxPending;
+  if (!qLedgerGet.get(key)) ledgerSave(key, 0, 0, null);
+  const cur = ledgerOf(key);
+  const pending = (cur.gldxPending | 0) + (raw | 0);
+  qGldxSet.run(pending, cur.gldxPayable | 0, Date.now(), key);
+  return pending;
+}
+function counterOf(id) {
+  const row = qBurnGet.get(id);
+  return row ? (row.total | 0) : 0;
+}
+function counterSet(id, n) {
+  qBurnUpsert.run(id, n | 0, Date.now());
+}
 
-// ---------- claim requests: the audit trail for "turn pending STRM into a real payout" --
+// ---------- claim requests: the audit trail for "turn pending STRATUM into a real payout" --
 // See src/chain-adapter.js's header for why nothing here ever actually pays out yet.
 // Every claim attempt is recorded regardless of outcome — "not configured" is a normal,
 // expected, fully-logged result, not a swallowed failure.
@@ -515,6 +576,19 @@ const qWalletIns = db.prepare('INSERT INTO wallet_players(wallet, k, linked) VAL
 const qWalletDelByKey = db.prepare('DELETE FROM wallet_players WHERE k=?');
 const qConvertIns = db.prepare(
   'INSERT INTO convert_requests(id,k,wallet,dir,gross,fee,payout,createdAt) VALUES(?,?,?,?,?,?,?,?)');
+// Vanity wardrobe: STRATUM-bought cosmetics. Ownership is per (player, item) —
+// separate from achievements (which gate the other accessories) and from the
+// equipped look (players.accessories). Buying never equips; set-look equips.
+db.exec(`CREATE TABLE IF NOT EXISTS vanity_owned(
+  k TEXT NOT NULL, item TEXT NOT NULL, boughtAt INTEGER NOT NULL,
+  PRIMARY KEY(k,item));`);
+const qVanityIns = db.prepare('INSERT OR IGNORE INTO vanity_owned(k,item,boughtAt) VALUES(?,?,?)');
+const qVanityAll = db.prepare('SELECT item FROM vanity_owned WHERE k=?');
+function vanityOwned(key) {
+  try {
+    return qVanityAll.all(key).map(r => r.item);
+  } catch (e) { return []; }
+}
 /** One in-flight claim per player key. The chain send is async; a second click
  *  before it settles must not pay the same pending balance twice. */
 const claimsInFlight = new Set();
@@ -606,13 +680,13 @@ function treasuryTotals() {
   return out;
 }
 
-// ---------- STRM sinks: Earth Requisition + Structure Rush --------------------------
-// See src/token-sink.js's header. Burned STRM is the "gone forever" half of every
+// ---------- STRATUM sinks: Earth Requisition + Structure Rush --------------------------
+// See src/token-sink.js's header. Burned STRATUM is the "gone forever" half of every
 // sink spend — a single global running total, never per-player (nobody is owed it
 // back, so there is nothing to key by player). The treasury half reuses the SAME
-// treasury table shop/parcel fees already feed, under the 'STRM' item key — one place
+// treasury table shop/parcel fees already feed, under the 'STRATUM' item key — one place
 // to look for "how much real fee revenue has this world generated," across every
-// source, in-game resources and STRM alike.
+// source, in-game resources and STRATUM alike.
 const qBurnGet = db.prepare('SELECT total FROM token_burned WHERE id=?');
 const qBurnUpsert = db.prepare(
   'INSERT INTO token_burned(id,total,updated) VALUES(?,?,?) ' +
@@ -621,15 +695,291 @@ function burnedTotal() {
   const row = qBurnGet.get('global');
   return row ? (row.total | 0) : 0;
 }
-/** Permanently destroy `n` STRM (adds to the global burned counter) and credit the
+/** Permanently destroy `n` STRATUM (adds to the global burned counter) and credit the
  *  in-game treasury with the rest of a sink's split, in one call — every sink handler
  *  ends with exactly this. Never touches any player's ledger; the caller already
  *  deducted the full spend from `pending` before calling this. */
 function applyBurnSplit(n) {
   const split = TokenSink.splitBurn(n, TOKEN_BURN_BPS);
   if (split.burned > 0) qBurnUpsert.run('global', burnedTotal() + split.burned, Date.now());
-  if (split.treasury > 0) treasuryCredit('STRM', split.treasury);
+  if (split.treasury > 0) treasuryCredit('STRATUM', split.treasury);
   return split;
+}
+
+function applyOnChainSplit(gross) {
+  const split = TokenSink.splitOnChain(gross, TOKEN_BURN_BPS);
+  if (split.burned > 0) qBurnUpsert.run('global', burnedTotal() + split.burned, Date.now());
+  if (split.treasury > 0) treasuryCredit('STRATUM', split.treasury);
+  return split;
+}
+
+function sinkOnChainLive() {
+  return SINK_ONCHAIN && ChainAdapter.isConfigured(claimEnv());
+}
+
+db.exec(`CREATE TABLE IF NOT EXISTS sink_txs(
+  txHash TEXT PRIMARY KEY, k TEXT NOT NULL, amount INTEGER NOT NULL, createdAt INTEGER NOT NULL);`);
+const qSinkTxGet = db.prepare('SELECT k FROM sink_txs WHERE txHash=?');
+const qSinkTxIns = db.prepare('INSERT INTO sink_txs(txHash,k,amount,createdAt) VALUES(?,?,?,?)');
+const sinkQuotes = new Map();
+const SINK_QUOTE_MS = 90 * 1000;
+
+/** On-chain half of a sink. Ledger burn already happened. This moves real STRATUM
+ *  to the incinerator (the transfer tax feeds holder GLDX) and swaps the earmarked
+ *  treasury slice into GLDX to fund play-claims. Off unless STRATUM_SINK_ONCHAIN=1,
+ *  and it refuses if the treasury would no longer cover outstanding STRATUM claims. */
+let sinkRunning = false;
+function scheduleOnChainSink(burnWhole, swapWhole) {
+  if ((burnWhole | 0) > 0) counterSet('chain_burn_owed', counterOf('chain_burn_owed') + (burnWhole | 0));
+  if ((swapWhole | 0) > 0) counterSet('gldx_earmark', counterOf('gldx_earmark') + (swapWhole | 0));
+  if (process.env.STRATUM_SINK_ONCHAIN !== '1') return;
+  if (sinkRunning) return;
+  sinkRunning = true;
+  executeOnChainSink().catch((e) => {
+    console.log('[sink] ' + (e && e.message ? e.message : e));
+  }).finally(() => { sinkRunning = false; });
+}
+async function executeOnChainSink() {
+  const env = claimEnv();
+  if (!ChainAdapter.isConfigured(env)) return;
+  const owed = counterOf('chain_burn_owed');
+  const mark = counterOf('gldx_earmark');
+  const signer = ChainAdapter.signerAddress(env);
+  if (!signer) return;
+  const bal = await ChainAdapter.readBalance(signer, env);
+  if (!bal.ok) {
+    console.log('[sink] treasury balance unread: ' + (bal.detail || bal.reason));
+    return;
+  }
+  const pending = (qLedgerTotal.get().t | 0);
+  if ((bal.balance | 0) - owed - mark < pending) {
+    console.log('[sink] holding the on-chain burn: treasury ' + bal.balance +
+      ' would not cover pending ' + pending + ' after burning ' + owed + ' and swapping ' + mark);
+    return;
+  }
+  if (owed > 0) {
+    const raw = (BigInt(owed) * 1000000n).toString();
+    const burned = await ChainAdapter.transferRaw(Gldx.INCINERATOR, COMMERCE.tokenMint, raw, 6, env);
+    if (!burned.ok) {
+      console.log('[sink] burn not sent: ' + burned.reason + ' ' + (burned.detail || ''));
+      return;
+    }
+    counterSet('chain_burn_owed', 0);
+    console.log('[sink] burned ' + owed + ' STRATUM on-chain ' + burned.txHash);
+  }
+  const em = counterOf('gldx_earmark');
+  if (em >= Gldx.MIN_SWAP) {
+    const sw = await ChainAdapter.swapStratumForGldx(em, Gldx.GLDX_MINT, env);
+    if (!sw.ok) {
+      console.log('[sink] GLDX swap not sent: ' + sw.reason + ' ' + (sw.detail || ''));
+      return;
+    }
+    counterSet('gldx_earmark', 0);
+    console.log('[sink] swapped ' + em + ' STRATUM for GLDX ' + (sw.txHash || ''));
+    await fundGldxClaims();
+  }
+}
+async function fundGldxClaims() {
+  const env = claimEnv();
+  if (!ChainAdapter.isConfigured(env)) return;
+  const signer = ChainAdapter.signerAddress(env);
+  if (!signer) return;
+  const bal = await ChainAdapter.readMintBalance(signer, Gldx.GLDX_MINT, Gldx.DECIMALS, env);
+  if (!bal.ok) return;
+  const rows = qGldxAll.all();
+  const next = Gldx.allocate(rows, bal.balanceRaw | 0);
+  if (next.moved <= 0) return;
+  for (const row of next.rows) qGldxSet.run(row.pending, row.payable, Date.now(), row.key);
+  for (const o of clients.values()) {
+    if (!o.key) continue;
+    const g = ledgerOf(o.key);
+    o.gldxPending = g.gldxPending;
+    o.gldxPayable = g.gldxPayable;
+    try {
+      o.send({
+        t: 'gldx', gldxPending: g.gldxPending, gldxPayable: g.gldxPayable,
+        gldxText: Gldx.format(g.gldxPending), gldxReadyText: Gldx.format(g.gldxPayable)
+      });
+    } catch (e) {}
+  }
+}
+
+function finishOnChainShip(c, amount) {
+  const split = applyOnChainSplit(amount);
+  scheduleOnChainSink(split.burned, Gldx.earmarkOf(split.treasury));
+  return split;
+}
+
+function broadcastRequisition(c, amount) {
+  if (amount < 50) return;
+  const quota = burnedTotal();
+  for (const o of clients.values()) {
+    if (o.ready && o.key !== c.key) o.send({ t: 'requisition-broadcast', by: c.name, amount: amount, colonyQuota: quota });
+  }
+}
+
+function handleOnChainRequisition(c, msg) {
+  if (!c.tokenWallet) {
+    return c.send({ t: 'requisitioned', ok: false, err: 'link a wallet first' });
+  }
+  if (typeof msg.txHash === 'string' && msg.txHash.length) {
+    confirmOnChainRequisition(c, msg);
+    return;
+  }
+  const amount = (msg.amount === undefined) ? ONCHAIN_DEFAULT_SHIP
+    : (isFin(msg.amount) ? Math.trunc(msg.amount) : -1);
+  const v = TokenSink.validateRequisition(amount, amount);
+  if (!v.ok) return c.send({ t: 'requisitioned', ok: false, err: v.error });
+  const env = claimEnv();
+  ChainAdapter.buildPlayerTransfer(c.tokenWallet, v.amount, env).then((built) => {
+    if (!built.ok) {
+      return c.send({
+        t: 'requisitioned', ok: false,
+        err: built.reason === 'insufficient_balance'
+          ? 'claim STRATUM first — ship from your wallet'
+          : (built.detail || built.reason)
+      });
+    }
+    sinkQuotes.set(c.key, { kind: 'requisition', amount: v.amount, expires: Date.now() + SINK_QUOTE_MS });
+    const split = TokenSink.splitOnChain(v.amount, TOKEN_BURN_BPS);
+    c.send({
+      t: 'requisition-sign', amount: v.amount, tx: built.tx, message: built.message,
+      tax: split.tax, arrived: split.arrived, burned: split.burned, treasury: split.treasury
+    });
+  }).catch(() => {
+    try { c.send({ t: 'requisitioned', ok: false, err: 'could not build the shipment' }); } catch (e) {}
+  });
+}
+
+function confirmOnChainRequisition(c, msg) {
+  const q = sinkQuotes.get(c.key);
+  if (!q || q.kind !== 'requisition' || Date.now() > q.expires) {
+    return c.send({ t: 'requisitioned', ok: false, err: 'sign again — quote expired' });
+  }
+  if (qSinkTxGet.get(msg.txHash)) {
+    return c.send({ t: 'requisitioned', ok: false, err: 'already shipped' });
+  }
+  ChainAdapter.verifyIncomingTransfer(msg.txHash, c.tokenWallet, q.amount, claimEnv()).then((ver) => {
+    if (!ver.ok) {
+      return c.send({ t: 'requisitioned', ok: false, err: ver.detail || ver.reason });
+    }
+    qSinkTxIns.run(msg.txHash, c.key, q.amount, Date.now());
+    sinkQuotes.delete(c.key);
+    const split = finishOnChainShip(c, q.amount);
+    const quota = burnedTotal();
+    const pending = ledgerOf(c.key).pending | 0;
+    c.send({
+      t: 'requisitioned', ok: true, amount: q.amount, burned: split.burned, treasury: split.treasury,
+      tax: split.tax, tokenPending: pending, colonyQuota: quota, onChain: true, txHash: msg.txHash
+    });
+    broadcastRequisition(c, q.amount);
+    checkAchievements(c);
+    refreshHolderBonus(c);
+  }).catch(() => {
+    try { c.send({ t: 'requisitioned', ok: false, err: 'could not confirm the shipment' }); } catch (e) {}
+  });
+}
+
+function quoteRushFor(c, msg) {
+  let rkey;
+  if (isFin(msg.x) && isFin(msg.y)) {
+    const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
+    if (x === null || y === null) return { err: 'bounds' };
+    rkey = structKey(c.map, x, y);
+  } else {
+    const id = cleanText(msg.id, 64);
+    if (!id) return { err: 'no structure there' };
+    rkey = id;
+  }
+  const struct = structures.get(rkey);
+  if (!struct || struct.map !== c.map) return { err: 'no structure there' };
+  if (struct.owner !== c.key) return { err: 'not yours' };
+  const rdx = struct.x - c.x, rdy = struct.y - c.y;
+  if (rdx * rdx + rdy * rdy > REACH * REACH) return { err: 'reach', x: struct.x, y: struct.y };
+  const def = Idle.structureOf(struct.kind);
+  if (!def) return { err: 'unknown structure' };
+  const rnow = Date.now();
+  const already = Idle.accrued(struct, rnow);
+  const quote = TokenSink.rushCost(already, def.capacity, RUSH_COST_PER_UNIT);
+  if (quote.cost <= 0) return { err: 'already full' };
+  return { struct: struct, def: def, rkey: rkey, rnow: rnow, quote: quote };
+}
+
+function applyRushFill(c, info) {
+  const rRes = Idle.collect(info.struct, c.inv, info.rnow);
+  const rInv = Object.assign({}, rRes.inv);
+  rInv[info.def.produces] = (rInv[info.def.produces] || 0) + info.quote.gained;
+  c.inv = rInv;
+  structures.set(info.rkey, rRes.struct);
+  qStruct.run(rRes.struct.id, rRes.struct.kind, rRes.struct.map, rRes.struct.x, rRes.struct.y, rRes.struct.owner, rRes.struct.builtAt, rRes.struct.lastCollectedAt);
+  stateSave(c);
+  return rRes;
+}
+
+function handleOnChainRush(c, msg) {
+  if (!c.tokenWallet) return c.send({ t: 'rushed', err: 'link a wallet first' });
+  if (typeof msg.txHash === 'string' && msg.txHash.length) {
+    confirmOnChainRush(c, msg);
+    return;
+  }
+  const info = quoteRushFor(c, msg);
+  if (info.err) return c.send({ t: 'rushed', err: info.err, x: info.x, y: info.y });
+  ChainAdapter.buildPlayerTransfer(c.tokenWallet, info.quote.cost, claimEnv()).then((built) => {
+    if (!built.ok) {
+      return c.send({
+        t: 'rushed', err: built.reason === 'insufficient_balance'
+          ? 'claim STRATUM first — rush from your wallet'
+          : (built.detail || built.reason),
+        cost: info.quote.cost
+      });
+    }
+    sinkQuotes.set(c.key, {
+      kind: 'rush', amount: info.quote.cost, x: info.struct.x, y: info.struct.y,
+      rkey: info.rkey, expires: Date.now() + SINK_QUOTE_MS
+    });
+    const split = TokenSink.splitOnChain(info.quote.cost, TOKEN_BURN_BPS);
+    c.send({
+      t: 'rush-sign', x: info.struct.x, y: info.struct.y, cost: info.quote.cost,
+      tx: built.tx, message: built.message,
+      tax: split.tax, burned: split.burned, treasury: split.treasury
+    });
+  }).catch(() => {
+    try { c.send({ t: 'rushed', err: 'could not build the rush' }); } catch (e) {}
+  });
+}
+
+function confirmOnChainRush(c, msg) {
+  const q = sinkQuotes.get(c.key);
+  if (!q || q.kind !== 'rush' || Date.now() > q.expires) {
+    return c.send({ t: 'rushed', err: 'sign again — quote expired' });
+  }
+  if (qSinkTxGet.get(msg.txHash)) return c.send({ t: 'rushed', err: 'already shipped' });
+  ChainAdapter.verifyIncomingTransfer(msg.txHash, c.tokenWallet, q.amount, claimEnv()).then((ver) => {
+    if (!ver.ok) return c.send({ t: 'rushed', err: ver.detail || ver.reason, cost: q.amount });
+    qSinkTxIns.run(msg.txHash, c.key, q.amount, Date.now());
+    sinkQuotes.delete(c.key);
+    const split = finishOnChainShip(c, q.amount);
+    const info = quoteRushFor(c, { x: q.x, y: q.y });
+    let gained = 0;
+    let resource = null;
+    let x = q.x, y = q.y;
+    if (!info.err) {
+      const rRes = applyRushFill(c, info);
+      gained = rRes.gained + info.quote.gained;
+      resource = info.def.produces;
+      x = info.struct.x;
+      y = info.struct.y;
+    }
+    c.send({
+      t: 'rushed', x: x, y: y, resource: resource,
+      gained: gained, cost: q.amount, burned: split.burned, treasury: split.treasury,
+      inv: c.inv, tokenPending: c.tokenPending, tokenBurned: burnedTotal(), onChain: true, txHash: msg.txHash
+    });
+    if (gained > 0) checkAchievements(c);
+    refreshHolderBonus(c);
+  }).catch(() => {
+    try { c.send({ t: 'rushed', err: 'could not confirm the rush' }); } catch (e) {}
+  });
 }
 
 // ---------- economy instrumentation: faucet vs sink dashboard ----------------
@@ -663,7 +1013,7 @@ function economyStats() {
     var burned = burnedTotal();
     return {
       faucet: { totalPending: totalPending, totalClaimed: totalClaimed, avgPendingPerPlayer: avgPendingPerPlayer },
-      sink: { burnedTotal: burned, treasuryFees: treas, treasurySTRM: treas.STRM | 0 },
+      sink: { burnedTotal: burned, treasuryFees: treas, treasurySTRM: treas.STRATUM | 0 },
       pendingHistogram: buckets
     };
   } catch (e) {
@@ -749,8 +1099,8 @@ const server = http.createServer((req, res) => {
       playersEver: qPlayCount.get().n,
       volatile: world.stats(),
       spawn: T.spawnPoint(0),
-      // In-game fee vault (soft resources taken as a cut of priced sales, PLUS STRM
-      // from sink spends — see treasury.STRM below).
+      // In-game fee vault (soft resources taken as a cut of priced sales, PLUS STRATUM
+      // from sink spends — see treasury.STRATUM below).
       treasury: treasuryTotals(),
       // On-chain treasury wallet (public address) + fee knobs — no secrets.
       treasuryWallet: COMMERCE.treasuryAddress,
@@ -759,7 +1109,7 @@ const server = http.createServer((req, res) => {
         rushCostPerUnit: RUSH_COST_PER_UNIT,
         salvageRefundBps: SALVAGE_REFUND_BPS, maxCraftBatch: Crafting.MAX_BATCH
       }, payoutPublic()),
-      // Total STRM ever burned via a sink — the actual "silver shipped to Earth" mission
+      // Total STRATUM ever burned via a sink — the actual "silver shipped to Earth" mission
       // metric this game's whole story is about. Never decreases; nothing owed for it.
       colonyQuota: burnedTotal(),
       // The community-wide yield bonus every player currently earns (src/colony-
@@ -1156,7 +1506,7 @@ function ipEarnerCount(ip, key, now) {
 // amplifier-only, same structural guarantee as IP density: alone, forever, they
 // contribute nothing, so a legitimate grinder who simply holds more pending than
 // average, or shares an IP with other earners, is never throttled purely for that.
-// Ledger-velocity tracks pending STRM per key per hour in-memory and flags when
+// Ledger-velocity tracks pending STRATUM per key per hour in-memory and flags when
 // one key's pending exceeds 3× the median pending among active earners. IP
 // concentration flags when one IP's players together hold >40% of world-total
 // pending. Both fully reversible and decaying: pending is re-read from the DB
@@ -1373,16 +1723,23 @@ function applyCommerceReward(c, action, ctx, multiplier) {
 
     const gold = boostByMultiplier(baseGold, combinedMult);
     const token = boostByMultiplier(baseToken, combinedMult);
+    const gldx = Gldx.creditFor(action, combinedMult, ctx || {});
     if (gold > 0) gain(c, 'gold', gold);
     if (token > 0 && c.key) c.tokenPending = creditToken(c.key, token);
-    return { gold, token, tokenPending: c.tokenPending | 0 };
+    if (gldx > 0 && c.key) c.gldxPending = creditGldx(c.key, gldx);
+    return {
+      gold, token, gldx,
+      tokenPending: c.tokenPending | 0,
+      gldxPending: c.gldxPending | 0,
+      gldxPayable: (c.gldxPayable | 0)
+    };
   } catch (e) {
     return { gold: 0, token: 0, tokenPending: c.tokenPending | 0 };
   }
 }
 
 /**
- * Best-effort, fire-and-forget refresh of a connection's on-chain STRM holder tier
+ * Best-effort, fire-and-forget refresh of a connection's on-chain STRATUM holder tier
  * (src/holder-bonus.js). Never awaited by its caller — the WS handlers that trigger this
  * (wallet-link, and 'welcome' for a returning player whose wallet was already linked)
  * finish synchronously either way; this just updates c.holderBalance/c.holderMultiplier
@@ -1542,7 +1899,8 @@ const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', '
   'build-structure', 'collect-structure', 'structure-rush', 'release-structure', 'set-look',
   'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote',
   'parcel-mint', 'parcel-list', 'parcel-buy', 'parcel-cancel', 'parcel-browse', 'parcel-mine',
-  'wallet-link', 'wallet-challenge', 'claim', 'convert', 'requisition', 'salvage']);
+  'wallet-link', 'wallet-challenge', 'claim', 'claim-gldx', 'convert', 'buy-vanity',
+  'refill-will', 'requisition', 'salvage']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -1595,6 +1953,8 @@ function onMessage(c, msg) {
       const led = ledgerOf(key);
       c.tokenPending = led.pending | 0;
       c.tokenWallet = led.wallet || null;
+      c.gldxPending = led.gldxPending | 0;
+      c.gldxPayable = led.gldxPayable | 0;
       if (!c.inv || typeof c.inv.gold !== 'number') c.inv.gold = (c.inv && c.inv.gold) | 0;
 
       // appearance: a returning player's saved look, re-validated against their current
@@ -1612,7 +1972,7 @@ function onMessage(c, msg) {
         const startIdx = hue % CU.ALL_PALETTES.length;
         requestedLook = { paletteId: CU.ALL_PALETTES[startIdx].id };
       }
-      const look = CU.validateLook(requestedLook, [...c.achIds]);
+      const look = CU.validateLook(requestedLook, [...c.achIds], vanityOwned(key));
       const pal = CU.paletteOf(look.paletteId) || CU.paletteOf(CU.DEFAULT_PALETTE_ID);
       c.paletteId = pal.id; c.bodyHue = pal.bodyHue; c.trimHue = pal.trimHue;
       c.accessories = { hat: look.hat, cloak: look.cloak, scarf: look.scarf };
@@ -1651,13 +2011,19 @@ function onMessage(c, msg) {
           palettes: CU.ALL_PALETTES.map(p => ({ id: p.id, name: p.name, bodyHue: p.bodyHue, trimHue: p.trimHue })),
           accessories: CU.ALL_ACCESSORIES.map(a => {
             const req = a.unlockedBy ? ACH.achievementById(a.unlockedBy) : null;
-            return { id: a.id, name: a.name, slot: a.slot, unlockedBy: a.unlockedBy || null, unlockDesc: req ? req.desc : null };
+            return { id: a.id, name: a.name, slot: a.slot, unlockedBy: a.unlockedBy || null, unlockDesc: req ? req.desc : null,
+              priceStratum: CU.vanityPrice(a.id), owned: CU.isVanity(a.id) ? vanityOwned(key).indexOf(a.id) >= 0 : undefined };
           })
         },
         commerce: TokenConfig.publicConfig(COMMERCE),
         gold: (c.inv.gold | 0),
         tokenPending: c.tokenPending | 0,
         tokenWallet: c.tokenWallet || null,
+        gldxMint: Gldx.GLDX_MINT,
+        gldxPending: c.gldxPending | 0,
+        gldxPayable: c.gldxPayable | 0,
+        gldxText: Gldx.format(c.gldxPending | 0),
+        gldxReadyText: Gldx.format(c.gldxPayable | 0),
         payout: payoutPublic(),
         colonyQuota: burnedTotal(),
         // Reward-yield bonuses — see applyCommerceReward()'s header for how all four
@@ -1830,7 +2196,10 @@ function onMessage(c, msg) {
         if (pay.token) gains.token = pay.token;
         c.send({
           t: 'harvested', x, y, kind: r.kind, state: 0, ripeSec, gains, inv: c.inv,
-          tokenPending: c.tokenPending | 0, streak: c.streakState.streak | 0,
+          tokenPending: c.tokenPending | 0, gldx: pay.gldx | 0,
+          gldxPending: c.gldxPending | 0, gldxPayable: c.gldxPayable | 0,
+          gldxText: Gldx.format(c.gldxPending | 0), gldxReadyText: Gldx.format(c.gldxPayable | 0),
+          streak: c.streakState.streak | 0,
           streakMultiplier: MiningStreak.multiplierForStreak(c.streakState.streak | 0)
         });
         creditNearby(c, x, y, HARVEST_XP * GROUP_XP_SHARE);   // light grouping (ROADMAP_COZY §5)
@@ -1876,7 +2245,9 @@ function onMessage(c, msg) {
         c.send({
           t: 'combat', id: r.id, killed: true, name: r.name, loot: r.loot,
           kills: c.kills, atk: c.atk, inv: c.inv, level: world.hunter(c).level,
-          gains: { gold: pay.gold, token: pay.token }, tokenPending: c.tokenPending | 0
+          gains: { gold: pay.gold, token: pay.token }, tokenPending: c.tokenPending | 0,
+          gldx: pay.gldx | 0, gldxPending: c.gldxPending | 0, gldxPayable: c.gldxPayable | 0,
+          gldxText: Gldx.format(c.gldxPending | 0), gldxReadyText: Gldx.format(c.gldxPayable | 0)
         });
         checkAchievements(c);                  // kills track AND level (XP is only awarded here)
         creditNearby(c, r.x, r.y, r.xp * GROUP_XP_SHARE);   // light grouping (ROADMAP_COZY §5): XP only, loot stays with the killer
@@ -1933,7 +2304,9 @@ function onMessage(c, msg) {
       sendVitals(c);
       c.send({
         t: 'crafted', id, item, count, inv: c.inv, atkBoost: c.atkBoost,
-        gains: { gold: pay.gold, token: pay.token }, tokenPending: c.tokenPending | 0
+        gains: { gold: pay.gold, token: pay.token }, tokenPending: c.tokenPending | 0,
+        gldx: pay.gldx | 0, gldxPending: c.gldxPending | 0, gldxPayable: c.gldxPayable | 0,
+        gldxText: Gldx.format(c.gldxPending | 0), gldxReadyText: Gldx.format(c.gldxPayable | 0)
       });
       checkAchievements(c);
       break;
@@ -1942,7 +2315,7 @@ function onMessage(c, msg) {
     // Salvage (src/crafting.js): break down `count` held crafted items back into a partial
     // materials refund (SALVAGE_REFUND_BPS, default 50%). Deliberately no commerce reward
     // here — this reverses a purchase, it doesn't earn a new one — and deliberately no
-    // anti-cheat evaluation either: salvaging never grants gold or STRM, so it isn't a
+    // anti-cheat evaluation either: salvaging never grants gold or STRATUM, so it isn't a
     // reward-earning action anti-cheat needs to watch (see applyCommerceReward()'s header).
     case 'salvage': {
       if (!c.ready || c.dead) return;
@@ -2063,11 +2436,11 @@ function onMessage(c, msg) {
       break;
     }
 
-    // Turn a player's pending STRM ledger balance into a claim attempt. This is the
+    // Turn a player's pending STRATUM ledger balance into a claim attempt. This is the
     // ONE place src/chain-adapter.js gets called. Real SPL transfer code exists there
     // now, but it still answers 'not_configured' today because the mint is still the
     // placeholder sentinel (see README.md's Commerce note) — that gate lifts
-    // automatically once a real STRM mint is set via STRATUM_TOKEN_MINT.
+    // automatically once a real STRATUM mint is set via STRATUM_TOKEN_MINT.
     // The pending balance is NEVER decremented on a 'not_configured' answer: nothing was
     // lost, the claim just sits recorded and queued, exactly as owed as it was before the
     // request. The async settle call is why this handler (alone, today) doesn't finish
@@ -2106,7 +2479,7 @@ function onMessage(c, msg) {
           const claimed = (latest.claimed | 0) + payout;
           const pending = Math.max(0, (latest.pending | 0) - amount);
           ledgerSave(key, pending, claimed, latest.wallet);
-          if (fee > 0) treasuryCredit('STRM', fee);
+          if (fee > 0) treasuryCredit('STRATUM', fee);
           qClaimUpdate.run('settled', null, res.txHash || null, Date.now(), id);
           notifyPlayer(key, {
             t: 'claimed', ok: true, amount, fee, payout, txHash: res.txHash,
@@ -2131,9 +2504,47 @@ function onMessage(c, msg) {
       break;
     }
 
-    // Gold <-> pending STRM. Wallet required. Fee is STRM added to the treasury
+    // Pay a funded GLDX claim from the treasury's real GLDX. Never mints any.
+    case 'claim-gldx': {
+      if (!c.ready || !c.key) return;
+      if (!c.tokenWallet) return c.send({ t: 'gldx-claimed', ok: false, err: 'link a wallet first' });
+      const env = claimEnv();
+      fundGldxClaims().then(() => {
+        const g = ledgerOf(c.key);
+        const pay = g.gldxPayable | 0;
+        if (pay <= 0) {
+          return c.send({
+            t: 'gldx-claimed', ok: false, err: 'nothing ready — keep playing, or hold STRATUM while others ship',
+            gldxPending: g.gldxPending | 0, gldxPayable: 0,
+            gldxText: Gldx.format(g.gldxPending | 0), gldxReadyText: '0'
+          });
+        }
+        return ChainAdapter.transferRaw(c.tokenWallet, Gldx.GLDX_MINT, String(pay), Gldx.DECIMALS, env).then((res) => {
+          if (!res.ok) {
+            return c.send({
+              t: 'gldx-claimed', ok: false, err: res.detail || res.reason || 'send failed',
+              gldxPending: g.gldxPending | 0, gldxPayable: pay,
+              gldxText: Gldx.format(g.gldxPending | 0), gldxReadyText: Gldx.format(pay)
+            });
+          }
+          qGldxSet.run(g.gldxPending | 0, 0, Date.now(), c.key);
+          c.gldxPending = g.gldxPending | 0;
+          c.gldxPayable = 0;
+          c.send({
+            t: 'gldx-claimed', ok: true, txHash: res.txHash, paid: pay, paidText: Gldx.format(pay),
+            gldxPending: c.gldxPending, gldxPayable: 0,
+            gldxText: Gldx.format(c.gldxPending), gldxReadyText: '0'
+          });
+        });
+      }).catch(() => {
+        try { c.send({ t: 'gldx-claimed', ok: false, err: 'could not read the treasury' }); } catch (e) {}
+      });
+      break;
+    }
+
+    // Gold <-> pending STRATUM. Wallet required. Fee is STRATUM added to the treasury
     // vault. This does not broadcast a chain transaction — claim is the only
-    // path that moves STRM onto a wallet.
+    // path that moves STRATUM onto a wallet.
     case 'convert': {
       if (!c.ready || !c.key) return;
       if (!c.tokenWallet) {
@@ -2163,7 +2574,7 @@ function onMessage(c, msg) {
       ledgerSave(c.key, newPending, led.claimed, led.wallet);
       c.tokenPending = newPending;
       c.inv.gold = newGold;
-      if (q.fee > 0) treasuryCredit('STRM', q.fee);
+      if (q.fee > 0) treasuryCredit('STRATUM', q.fee);
       qConvertIns.run(crypto.randomUUID(), c.key, c.tokenWallet, dir, q.gross, q.fee, q.payout, Date.now());
       stateSave(c);
       c.send({
@@ -2174,14 +2585,78 @@ function onMessage(c, msg) {
       break;
     }
 
-    // Earth Requisition: spend pending STRM directly, off-chain, right now — no wallet,
-    // no chain-adapter, no waiting on real settlement. Most of it is burned forever
-    // (src/token-sink.js's split); a slice funds the treasury. This is deliberately the
-    // FIRST real reason STRM exists beyond a number that goes up — see the design
-    // discussion in ROADMAP_COZY.md and this commit's own message for why a mint-only
-    // token was the actual danger here, not the missing on-chain wiring.
+    // Vanity wardrobe: buy a STRATUM-priced cosmetic with pending STRATUM. Pure
+    // vanity (zero stats) and a real burn sink — price funnels through
+    // applyBurnSplit like every other sink, and the treasury slice is earmarked
+    // for the GLDX swap like requisition's. Buying unlocks; set-look equips.
+    // Refusals never touch the ledger or ownership.
+    case 'buy-vanity': {
+      if (!c.ready || !c.key) return;
+      const itemId = cleanText(msg.id, 32);
+      const led = ledgerOf(c.key);
+      const pending = led.pending | 0;
+      const owned = vanityOwned(c.key);
+      const v = CU.validateVanityBuy(itemId, pending, owned);
+      if (!v.ok) {
+        return c.send({ t: 'vanity-bought', ok: false, err: v.error, id: itemId,
+          price: v.price, tokenPending: pending });
+      }
+      const qNewPending = pending - v.price;
+      ledgerSave(c.key, qNewPending, led.claimed, led.wallet);
+      c.tokenPending = qNewPending;
+      qVanityIns.run(c.key, itemId, Date.now());
+      const qSplit = applyBurnSplit(v.price);
+      scheduleOnChainSink(qSplit.burned, Gldx.earmarkOf(qSplit.treasury));
+      stateSave(c);
+      c.send({
+        t: 'vanity-bought', ok: true, id: itemId, price: v.price,
+        burned: qSplit.burned, treasury: qSplit.treasury,
+        tokenPending: qNewPending, colonyQuota: burnedTotal()
+      });
+      break;
+    }
+
+    // Will refill: restore will to full for a flat STRATUM price. Repeatable,
+    // capped (full will refuses), same burn-split + GLDX earmark as every sink.
+    case 'refill-will': {
+      if (!c.ready || !c.key) return;
+      if ((c.energy | 0) >= ENERGY_MAX) {
+        return c.send({ t: 'will-filled', ok: false, err: 'will already full',
+          energy: c.energy | 0, cost: WILL_REFILL_COST, tokenPending: ledgerOf(c.key).pending | 0 });
+      }
+      const led = ledgerOf(c.key);
+      const pending = led.pending | 0;
+      if (pending < WILL_REFILL_COST) {
+        return c.send({ t: 'will-filled', ok: false, err: 'cannot afford',
+          energy: c.energy | 0, cost: WILL_REFILL_COST, tokenPending: pending });
+      }
+      const qNewPending = pending - WILL_REFILL_COST;
+      ledgerSave(c.key, qNewPending, led.claimed, led.wallet);
+      c.tokenPending = qNewPending;
+      c.energy = ENERGY_MAX;
+      const qSplit = applyBurnSplit(WILL_REFILL_COST);
+      scheduleOnChainSink(qSplit.burned, Gldx.earmarkOf(qSplit.treasury));
+      stateSave(c);
+      sendVitals(c);
+      c.send({
+        t: 'will-filled', ok: true, energy: c.energy | 0, cost: WILL_REFILL_COST,
+        burned: qSplit.burned, treasury: qSplit.treasury,
+        tokenPending: qNewPending, colonyQuota: burnedTotal()
+      });
+      break;
+    }
+
+    // Earth Requisition. Default path spends pending on the ledger (tests, and any
+    // host that has not turned STRATUM_SINK_ONCHAIN on). Live path spends claimed
+    // STRATUM from the linked wallet: the mint taxes the transfer, then 80% of what
+    // arrives is burned on-chain and 20% stays in the treasury. Pending is left
+    // alone — it is the float you earn before a claim, not a supply burn.
     case 'requisition': {
       if (!c.ready || !c.key) return;
+      if (sinkOnChainLive()) {
+        handleOnChainRequisition(c, msg);
+        break;
+      }
       const qled = ledgerOf(c.key);
       const pending = qled.pending | 0;
       if (msg.amount === undefined && pending <= 0) {
@@ -2200,11 +2675,12 @@ function onMessage(c, msg) {
       ledgerSave(c.key, qNewPending, qled.claimed, qled.wallet);
       c.tokenPending = qNewPending;
       const qSplit = applyBurnSplit(v.amount);
+      scheduleOnChainSink(qSplit.burned, Gldx.earmarkOf(qSplit.treasury));
       stateSave(c);
       const quota = burnedTotal();
       c.send({
         t: 'requisitioned', ok: true, amount: v.amount, burned: qSplit.burned, treasury: qSplit.treasury,
-        tokenPending: qNewPending, colonyQuota: quota
+        tokenPending: qNewPending, colonyQuota: quota, onChain: false
       });
       // A big requisition is a moment worth other colonists seeing — same spirit as an
       // emote, purely cosmetic, no gameplay effect for anyone but the shipper.
@@ -2309,55 +2785,35 @@ function onMessage(c, msg) {
       break;
     }
 
-    // Pay STRM to instantly finish a structure's current batch instead of waiting.
+    // Pay STRATUM to instantly finish a structure's current batch instead of waiting.
     // The already-accrued portion still goes through Idle.collect() exactly like an
     // ordinary collect; the rushed remainder is a straight purchase, credited the same
-    // uncapped way idle.js's own collect() credits a resource. STRM is deducted BEFORE
+    // uncapped way idle.js's own collect() credits a resource. STRATUM is deducted BEFORE
     // anything is granted — a spend that fails partway must never hand out free goods.
     case 'structure-rush': {
       if (!c.ready || c.dead) return;
-      let rkey;
-      if (isFin(msg.x) && isFin(msg.y)) {
-        const x = inBounds(msg.x, W), y = inBounds(msg.y, H);
-        if (x === null || y === null) return c.send({ t: 'rushed', err: 'bounds' });
-        rkey = structKey(c.map, x, y);
-      } else {
-        const id = cleanText(msg.id, 64);
-        if (!id) return c.send({ t: 'rushed', err: 'no structure there' });
-        rkey = id;
+      if (sinkOnChainLive()) {
+        handleOnChainRush(c, msg);
+        break;
       }
-      const struct = structures.get(rkey);
-      if (!struct || struct.map !== c.map) return c.send({ t: 'rushed', err: 'no structure there' });
-      if (struct.owner !== c.key) return c.send({ t: 'rushed', err: 'not yours' });
-      const rdx = struct.x - c.x, rdy = struct.y - c.y;
-      if (rdx * rdx + rdy * rdy > REACH * REACH) return c.send({ t: 'rushed', err: 'reach', x: struct.x, y: struct.y });
-      const def = Idle.structureOf(struct.kind);
-      if (!def) return c.send({ t: 'rushed', err: 'unknown structure' });
-      const rnow = Date.now();
-      const already = Idle.accrued(struct, rnow);
-      const quote = TokenSink.rushCost(already, def.capacity, RUSH_COST_PER_UNIT);
-      if (quote.cost <= 0) return c.send({ t: 'rushed', err: 'already full' });
+      const info = quoteRushFor(c, msg);
+      if (info.err) return c.send({ t: 'rushed', err: info.err, x: info.x, y: info.y });
       const rled = ledgerOf(c.key);
-      if ((rled.pending | 0) < quote.cost) {
-        return c.send({ t: 'rushed', err: 'cannot afford', cost: quote.cost, tokenPending: rled.pending | 0 });
+      if ((rled.pending | 0) < info.quote.cost) {
+        return c.send({ t: 'rushed', err: 'cannot afford', cost: info.quote.cost, tokenPending: rled.pending | 0 });
       }
-      const rNewPending = (rled.pending | 0) - quote.cost;
+      const rNewPending = (rled.pending | 0) - info.quote.cost;
       ledgerSave(c.key, rNewPending, rled.claimed, rled.wallet);
       c.tokenPending = rNewPending;
-      const rSplit = applyBurnSplit(quote.cost);
-      const rRes = Idle.collect(struct, c.inv, rnow);
-      const rInv = Object.assign({}, rRes.inv);
-      rInv[def.produces] = (rInv[def.produces] || 0) + quote.gained;
-      c.inv = rInv;
-      structures.set(rkey, rRes.struct);
-      qStruct.run(rRes.struct.id, rRes.struct.kind, rRes.struct.map, rRes.struct.x, rRes.struct.y, rRes.struct.owner, rRes.struct.builtAt, rRes.struct.lastCollectedAt);
-      stateSave(c);
+      const rSplit = applyBurnSplit(info.quote.cost);
+      scheduleOnChainSink(rSplit.burned, Gldx.earmarkOf(rSplit.treasury));
+      const rRes = applyRushFill(c, info);
       c.send({
-        t: 'rushed', x: struct.x, y: struct.y, resource: def.produces,
-        gained: rRes.gained + quote.gained, cost: quote.cost, burned: rSplit.burned, treasury: rSplit.treasury,
-        inv: c.inv, tokenPending: c.tokenPending, tokenBurned: burnedTotal()
+        t: 'rushed', x: info.struct.x, y: info.struct.y, resource: info.def.produces,
+        gained: rRes.gained + info.quote.gained, cost: info.quote.cost, burned: rSplit.burned, treasury: rSplit.treasury,
+        inv: c.inv, tokenPending: c.tokenPending, tokenBurned: burnedTotal(), onChain: false
       });
-      if (rRes.gained + quote.gained > 0) checkAchievements(c);
+      if (rRes.gained + info.quote.gained > 0) checkAchievements(c);
       break;
     }
 
@@ -2405,6 +2861,21 @@ function onMessage(c, msg) {
       if (!knownItem(item)) return c.send({ t: 'shop-listed', err: 'unknown item' });
       if (!knownItem(priceItem)) return c.send({ t: 'shop-listed', err: 'unknown price item' });
 
+      // Listing fee (treasury collector): a flat STRATUM price per new listing,
+      // 100% to the treasury like every other commerce fee. Proof-of-play gating
+      // is the point — a listing costs something earned, so spam listings cost
+      // real effort. Refused listings touch nothing (same contract as every gate).
+      if (LISTING_FEE > 0) {
+        const led = ledgerOf(c.key);
+        if ((led.pending | 0) < LISTING_FEE) {
+          return c.send({ t: 'shop-listed', err: 'listing fee: need ' + LISTING_FEE + ' STRATUM pending',
+            listingFee: LISTING_FEE, tokenPending: led.pending | 0 });
+        }
+        ledgerSave(c.key, (led.pending | 0) - LISTING_FEE, led.claimed, led.wallet);
+        c.tokenPending = (led.pending | 0) - LISTING_FEE;
+        treasuryCredit('STRATUM', LISTING_FEE);
+      }
+
       const escrowed = Shops.escrow(c.inv, item, qty);
       if (!escrowed) return c.send({ t: 'shop-listed', err: 'not enough ' + dispKey(item) });
       c.inv = escrowed;                        // the goods leave live inventory THE MOMENT the listing exists
@@ -2414,7 +2885,7 @@ function onMessage(c, msg) {
       shopListings.set(id, listing);
       qShopIns.run(id, c.key, c.map, x, y, item, qty, priceItem, priceQty, now);
       stateSave(c);
-      c.send({ t: 'shop-listed', id, listing, inv: c.inv });
+      c.send({ t: 'shop-listed', id, listing, inv: c.inv, listingFee: LISTING_FEE, tokenPending: c.tokenPending | 0 });
       break;
     }
 
@@ -2737,7 +3208,7 @@ function onMessage(c, msg) {
       // player-controlled field gets re-validated server-side.
       const requested = (msg && typeof msg === 'object')
         ? { paletteId: msg.paletteId, hat: msg.hat, cloak: msg.cloak, scarf: msg.scarf } : {};
-      const look = CU.validateLook(requested, [...c.achIds]);
+      const look = CU.validateLook(requested, [...c.achIds], vanityOwned(c.key));
       const pal = CU.paletteOf(look.paletteId) || CU.paletteOf(CU.DEFAULT_PALETTE_ID);
       c.paletteId = pal.id; c.bodyHue = pal.bodyHue; c.trimHue = pal.trimHue;
       c.accessories = { hat: look.hat, cloak: look.cloak, scarf: look.scarf };
@@ -2981,6 +3452,7 @@ server.listen(PORT, HOST, () => {
   console.log(`[commerce] settlement live=${ChainAdapter.isConfigured(claimEnv())}` +
     ` rpc=${ready.rpcConfigured} mint=${ready.mintConfigured}` +
     ` treasury=${ready.treasuryConfigured} signer=${ready.signerPresent}` +
-    ` implemented=${ready.settlementImplemented}`);
+    ` implemented=${ready.settlementImplemented}` +
+    ` sinkOnChain=${SINK_ONCHAIN}`);
   if (ready.signerAddress) console.log(`[commerce] signer wallet ${ready.signerAddress}`);
 });

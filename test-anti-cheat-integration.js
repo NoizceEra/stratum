@@ -5,7 +5,7 @@
  *
  * test-anti-cheat.js proves the pure rate/rhythm/decay math in isolation. This file
  * proves the SERVER actually uses it correctly: a rapid-fire burst of real craft actions
- * eventually gets its economic reward (gold/STRM) suppressed while the underlying game
+ * eventually gets its economic reward (gold/STRATUM) suppressed while the underlying game
  * action (materials consumed, item still crafted) keeps working exactly as normal — never
  * a block, never a ban, nothing a human has to review (see applyCommerceReward()'s own
  * comment in server.js) — and that a second client playing at an ordinary human pace

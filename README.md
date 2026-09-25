@@ -295,10 +295,11 @@ STRATUM_TOKEN_DECIMALS=6
 # STRATUM_CLAIM_SIGNER_KEY=…   # local .env only — never committed, never logged
 ```
 
-Connect a wallet in the HUD (Phantom / Solflare) to read on-chain STRATUM
-(read-only — `public/wallet.js` never signs or sends a transaction). Pending STRATUM accrues
-in a server ledger (`token_ledger`); a **CLAIM STRATUM** button in the HUD sends it toward
-settlement, but read the next section before assuming that means a payout happens.
+Connect a wallet in the HUD (Phantom / Solflare) to read on-chain STRATUM, prove a
+link (`signMessage`), claim, and — when `STRATUM_SINK_ONCHAIN=1` — sign a requisition
+or rush that spends claimed STRATUM. Pending STRATUM accrues in a server ledger
+(`token_ledger`); **CLAIM STRATUM** turns that float into a wallet balance, and
+**CLAIM GLDX** pays a funded play-claim from the treasury's real GLDX (never minted).
 `/api/stats` exposes both the soft fee vault (`treasury`) and the on-chain wallet
 (`treasuryWallet` / `commerce`) for operators — the HUD does not show the treasury address.
 
@@ -355,23 +356,41 @@ see `contracts/README.md` (fixed supply via `--lock`, no freeze authority — so
 compromised treasury key can drain at most the treasury's existing balance, never
 inflate supply) for the full create-and-wire-in walkthrough.
 
-### Token sinks — where pending STRATUM actually goes
+### Token sinks — pending float vs on-chain burn
 
-Every previous piece of commerce only ever *added* to a player's pending STRATUM balance.
-`src/token-sink.js` is the drain: two ways to spend it, both funneling through the same
-`splitBurn()` — most of what's spent is **burned** (removed from the economy forever, never
-added to anyone's `claimed` total) and a smaller slice goes to the treasury, default 80/20,
-tunable via `STRATUM_TOKEN_BURN_BPS`. `/api/stats.colonyQuota` and the HUD's "silver shipped"
-counter track the running burn total.
+Play credits the server ledger, not GLDX. Harvest is 2 gold and 2 pending STRATUM, craft
+is 3 pending, a kill is 3 pending plus 1 per 10 XP. Idle collection pays gold only.
+Claiming sends that pending balance from the treasury wallet minus a 2.5% game fee
+(min 50). The Token-2022 tax then takes 1% of the transfer, so a claim already feeds
+the holder GLDX pool.
 
-- **Earth Requisition** — a **SHIP TO EARTH** HUD button spends some or all of a player's
-  pending STRATUM directly (`{t:'requisition', amount?}` — omit `amount` to ship everything).
-  A single shipment of 50+ STRATUM broadcasts to every other player on the map. Refusals
-  (`nothing pending`, `cannot afford`) never touch the ledger.
-- **Structure Rush** — Shift+click your own idle structure to instantly fill whatever's
-  left of its capacity for STRATUM, instead of collecting only what has accrued so far
-  (plain click still does that). Priced at `STRATUM_RUSH_COST_PER_UNIT` STRATUM per resource
-  unit skipped (default 2); an already-full structure costs nothing to rush.
+Pending is the float before a claim. It does not count toward the hold tier and a
+ledger-only requisition does not shrink on-chain supply.
+
+`src/token-sink.js` still splits every spend 80/20 (`splitBurn()`, tunable via
+`STRATUM_TOKEN_BURN_BPS`). With `STRATUM_SINK_ONCHAIN=1` and a live signer, Earth
+Requisition and Structure Rush spend **claimed STRATUM from the linked wallet**:
+
+1. The player signs a transfer to the treasury. The mint withholds 1%; StonkFun pays
+   that tax to holders as GLDX.
+2. Of what arrives, 80% is burned to the incinerator (another taxed transfer) and 20%
+   stays in the treasury (`splitOnChain()`).
+3. Half of that 20% is swapped on the STRATUM/GLDX pair (`Gldx.earmarkOf`) so the
+   treasury holds GLDX it can pay as play-claims. Reward mode pays the treasury
+   nothing on its own — this sell is the funding path.
+
+Harvest, craft, and kill also credit a pending GLDX claim (`src/gldx-yield.js`),
+multiplied by the same holder / mining-streak / builder stack gold already uses.
+Settlement pays that claim only up to the treasury's real GLDX, pro-rata, and never
+mints the rest.
+
+- **Earth Requisition** — **SHIP TO EARTH**. Ledger hosts still spend pending
+  (`amount` omitted ships everything pending). Live hosts ship
+  `TokenSink.ONCHAIN_DEFAULT_SHIP` (100) from the wallet and leave pending untouched.
+  A shipment of 50+ broadcasts to the map.
+- **Structure Rush** — Shift+click your own idle structure to fill the remaining
+  capacity. Priced at `STRATUM_RUSH_COST_PER_UNIT` per resource unit skipped (default 2).
+  Live hosts take that cost from the wallet; ledger hosts take it from pending.
 
 ## Crafting
 

@@ -5,7 +5,7 @@
  *
  * test-rewards.js / test-chain-adapter.js / test-shops.js prove the pure math and the
  * chain-adapter stub in isolation. This file proves the SERVER actually uses them
- * correctly: harvesting grants a real STRM ledger credit, wallet-link validates the
+ * correctly: harvesting grants a real STRATUM ledger credit, wallet-link validates the
  * address format and persists it, a claim without a linked wallet or with nothing
  * pending is refused, a real claim is recorded (claim_requests) and answers "queued —
  * not configured" WITHOUT losing the pending balance (chain-adapter.js never settles
@@ -158,7 +158,7 @@ class Client {
   // cases; this integration test's job is only to prove the server actually wires
   // SHOP_FEE_BPS into Shops.buy() and credits both sides, not to re-prove the floor).
   // Same reasoning for the min-claim floor: dropped to 1 so a single real harvest (1-2
-  // STRM) clears it, because THIS suite's claim section proves the not_configured/queued
+  // STRATUM) clears it, because THIS suite's claim section proves the not_configured/queued
   // wiring and the "balance is never touched" contract, not the floor itself — that gets
   // its own dedicated coverage in test-claim-floor-integration.js against the real default.
   // STRATUM_CLAIM_SIGNER_KEY/STRATUM_TREASURY_KEY explicitly blanked: server.js's own
@@ -185,7 +185,7 @@ class Client {
     'welcome carries the public treasury wallet address', wa.commerce && wa.commerce.treasuryAddress);
   ok(wa.commerce && !('privateKey' in wa.commerce) && !('signerKey' in wa.commerce),
     'welcome commerce config never includes a private key field', wa.commerce);
-  ok(wa.tokenPending === 0, 'a fresh player has never earned any pending STRM', wa.tokenPending);
+  ok(wa.tokenPending === 0, 'a fresh player has never earned any pending STRATUM', wa.tokenPending);
 
   const bootStats = await getStats(port);
   ok(bootStats.treasuryWallet === wa.commerce.treasuryAddress,
@@ -196,7 +196,7 @@ class Client {
     '/api/stats reports the live fee knobs (this suite forces shop=5000bps)', bootStats.fees);
 
   // --------------------------------------------------------------------------
-  section('REWARDS — a real harvest grants pending STRM, not just materials');
+  section('REWARDS — a real harvest grants pending STRATUM, not just materials');
   // --------------------------------------------------------------------------
   const T = require('./public/terrain.js');
   const spawn0 = T.spawnPoint(0);
@@ -212,7 +212,7 @@ class Client {
   await sleep(150);
   a.send({ t: 'harvest', x: nodeXY.x, y: nodeXY.y });
   const harvested = await a.waitNew(m => m.t === 'harvested' && !m.err);
-  ok(harvested.tokenPending > 0, 'the harvest granted real pending STRM, not zero', harvested.tokenPending);
+  ok(harvested.tokenPending > 0, 'the harvest granted real pending STRATUM, not zero', harvested.tokenPending);
   const pendingAfterHarvest = harvested.tokenPending;
 
   // --------------------------------------------------------------------------

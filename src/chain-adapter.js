@@ -1,5 +1,5 @@
 /**
- * chain-adapter.js — the ONE place a real on-chain STRM payout happens.
+ * chain-adapter.js — the ONE place a real on-chain STRATUM payout happens.
  *
  * WHY THIS FILE EXISTS
  *   src/rewards.js pays players soft `gold` + hard `token` units into `token_ledger.pending`.
@@ -12,7 +12,7 @@
  *
  * THE CHAIN: SOLANA (SPL TOKEN)
  *   Settlement is an SPL-token transfer: treasury's associated token account (ATA) ->
- *   player's ATA for the STRM mint, creating the player's ATA inside the same
+ *   player's ATA for the STRATUM mint, creating the player's ATA inside the same
  *   transaction when it doesn't exist yet. Reads are plain RPC `getTokenAccountsByOwner`
  *   calls — no signer, no queue. This file is the deliberate, scoped exception to the
  *   project's hand-rolled habit: it uses `@solana/web3.js` + `@solana/spl-token` (see
@@ -59,7 +59,7 @@
  *     server.js claim_requests column name stable across the chain switch).
  */
 'use strict';
-const { Connection, Keypair, PublicKey, Transaction } = require('@solana/web3.js');
+const { Connection, Keypair, PublicKey, Transaction, VersionedTransaction } = require('@solana/web3.js');
 const {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
@@ -72,6 +72,29 @@ const {
 const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 /** Hand-rolled base58 decode — key-material decoding only, never signatures. */
+function b58encode(bytes) {
+  if (!bytes || !bytes.length) return '';
+  var zeros = 0;
+  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
+  var digits = [0];
+  for (var i = 0; i < bytes.length; i++) {
+    var carry = bytes[i];
+    for (var j = 0; j < digits.length; j++) {
+      carry += digits[j] << 8;
+      digits[j] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = (carry / 58) | 0;
+    }
+  }
+  var out = '';
+  for (var z = 0; z < zeros; z++) out += '1';
+  for (var k = digits.length - 1; k >= 0; k--) out += B58_ALPHABET.charAt(digits[k]);
+  return out;
+}
+
 function b58decode(s) {
   if (typeof s !== 'string' || !s.length) return null;
   var zeros = 0;
@@ -141,7 +164,7 @@ function isPubkey(s) {
  *   STRATUM_CLAIM_SIGNER_KEY / STRATUM_TREASURY_KEY  (presence only — see signerAddress
  *                            below for the one derived value from it this ever exposes)
  *   STRATUM_TOKEN_IS_PLACEHOLDER  ('0' = real mint; anything else = still the placeholder)
- *   STRATUM_TOKEN_DECIMALS  (SPL: 0..9, falls back to 6 — the real STRM mint's own
+ *   STRATUM_TOKEN_DECIMALS  (SPL: 0..9, falls back to 6 — the real STRATUM mint's own
  *                            decimals — if missing/out of range)
  */
 function describe(env) {
@@ -176,10 +199,16 @@ function isConfigured(env) {
     d.signerPresent && d.settlementImplemented && !d.tokenIsPlaceholder;
 }
 
+/** RPC + mint + treasury address. Player-signed spends do not need the signer key. */
+function canReadMint(env) {
+  var d = describe(env);
+  return d.rpcConfigured && d.mintConfigured && d.treasuryConfigured && !d.tokenIsPlaceholder;
+}
+
 function tokenDecimals(env) {
   var e = (env && typeof env === 'object') ? env : {};
   var dec = Number(e.STRATUM_TOKEN_DECIMALS);
-  // 6, not the SPL ceiling of 9 — the real STRM mint uses 6 decimals (verified
+  // 6, not the SPL ceiling of 9 — the real STRATUM mint uses 6 decimals (verified
   // on-chain 2026-09-24), so an unset/invalid env var must fall back to the actual
   // mint's decimals, not a generic maximum. Getting this wrong would encode every
   // real transfer amount 1000x too large against this specific mint.
@@ -210,6 +239,15 @@ function defaultDeps() {
       return sig;
     }
   };
+}
+
+/** Public key of the signer. Never returns the secret. */
+function signerAddress(env) {
+  try {
+    if (!isConfigured(env)) return null;
+    var kp = defaultDeps().makeKeypair(secretOf(env));
+    return kp.publicKey.toBase58();
+  } catch (e) { return null; }
 }
 
 function mintOf(env) {
@@ -271,7 +309,7 @@ async function sendToChain(req, env, amount, deps) {
   }
 
   // Pre-flight: the mint must exist. Read its OWNING program here, first — a mint can
-  // live under either the legacy Token program or Token-2022 (STRATUM's own STRM mint
+  // live under either the legacy Token program or Token-2022 (STRATUM's own STRATUM mint
   // is Token-2022, with a transfer-fee extension), and every account/instruction below
   // derives differently depending on which one owns it. Hardcoding legacy TOKEN_PROGRAM_ID
   // would silently derive the WRONG associated-token-account addresses and build
@@ -281,7 +319,7 @@ async function sendToChain(req, env, amount, deps) {
   try {
     mintInfo = await connection.getAccountInfo(mint);
     if (!mintInfo) {
-      return { ok: false, reason: 'bad_mint', detail: 'STRM mint not found on this cluster' };
+      return { ok: false, reason: 'bad_mint', detail: 'STRATUM mint not found on this cluster' };
     }
     programId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
   } catch (eMint) {
@@ -296,7 +334,7 @@ async function sendToChain(req, env, amount, deps) {
     return { ok: false, reason: 'bad_request', detail: 'could not derive token accounts' };
   }
 
-  // The treasury ATA must hold enough STRM. Refusing here avoids paying SOL for a
+  // The treasury ATA must hold enough STRATUM. Refusing here avoids paying SOL for a
   // guaranteed-to-fail transaction. Note tBal reads the RAW account balance — under
   // Token-2022's transfer-fee extension the RECIPIENT receives slightly less than
   // amountRaw (a withheld fee the token program deducts automatically on every
@@ -307,7 +345,7 @@ async function sendToChain(req, env, amount, deps) {
     var tInfo = await connection.getAccountInfo(treasuryAta);
     var tBal = tInfo ? readTokenAmount(tInfo.data) : 0n;
     if (tBal === null || tBal < amountRaw) {
-      return { ok: false, reason: 'insufficient_treasury_balance', detail: 'treasury holds less STRM than this claim needs' };
+      return { ok: false, reason: 'insufficient_treasury_balance', detail: 'treasury holds less STRATUM than this claim needs' };
     }
   } catch (eBal) {
     return { ok: false, reason: 'rpc_error', detail: 'could not read treasury balance: ' + (eBal && eBal.message) };
@@ -347,14 +385,14 @@ function enqueueSend(req, env, amount, deps) {
 }
 
 /**
- * Read-only on-chain STRM balance check for an arbitrary address — powers
- * src/holder-bonus.js's yield tier (a wallet holding more STRM earns a permanent reward
+ * Read-only on-chain STRATUM balance check for an arbitrary address — powers
+ * src/holder-bonus.js's yield tier (a wallet holding more STRATUM earns a permanent reward
  * multiplier). Unlike settleClaim(), this needs no signer key and never queues: it's a
  * plain RPC read, not a transaction, so concurrent reads can't collide the way
  * concurrent sends could. Gated the same way as settlement — an RPC/mint
  * misconfiguration or the still-placeholder mint both resolve
  * { ok:false, reason:'not_configured' }, never a fabricated balance. Always resolves
- * (never rejects); returns `balance` as a whole-STRM-unit integer (decimals already
+ * (never rejects); returns `balance` as a whole-STRATUM-unit integer (decimals already
  * applied and floored), matching src/holder-bonus.js's tier table.
  */
 async function readBalance(address, env, deps) {
@@ -414,7 +452,7 @@ async function readBalance(address, env, deps) {
  * Not configured (still the common case today — placeholder mint, see README.md)
  * -> { ok:false, reason:'not_configured', ... }; pending balance must stay put.
  * Configured -> a real SPL transfer (treasury ATA -> player ATA) of req.amountUnits
- * STRM, queued behind any other claim currently being sent.
+ * STRATUM, queued behind any other claim currently being sent.
  */
 async function settleClaim(req, env, deps) {
   try {
@@ -450,9 +488,304 @@ async function settleClaim(req, env, deps) {
   }
 }
 
+function enqueueJob(fn) {
+  var task = sendQueue.then(fn);
+  sendQueue = task.catch(function () {});
+  return task;
+}
+
+/**
+ * Transfer `amountRaw` base units of `mintAddress` from the treasury to `dest`.
+ * Creates the destination ATA when it is missing. Always resolves.
+ */
+async function transferRaw(destAddress, mintAddress, amountRaw, decimals, env, deps) {
+  try {
+    if (!isConfigured(env)) return { ok: false, reason: 'not_configured', detail: 'signer or mint is not live' };
+    var raw;
+    try { raw = BigInt(amountRaw); } catch (e) { raw = 0n; }
+    if (raw <= 0n) return { ok: false, reason: 'bad_request', detail: 'non-positive amount' };
+    return await enqueueJob(function () {
+      return sendTokens(destAddress, mintAddress, raw, decimals, env, deps);
+    });
+  } catch (e) {
+    return { ok: false, reason: 'internal_error', detail: e && e.message };
+  }
+}
+
+async function sendTokens(destAddress, mintAddress, amountRaw, decimals, env, deps) {
+  var fns = Object.assign(defaultDeps(), deps || {});
+  var connection, treasury, mint, dest;
+  try {
+    connection = fns.makeConnection(rpcOf(env));
+    treasury = fns.makeKeypair(secretOf(env));
+    mint = new PublicKey(mintAddress);
+    dest = new PublicKey(destAddress);
+  } catch (e) {
+    return { ok: false, reason: 'signer_error', detail: e && e.message };
+  }
+  var dec = (Number.isFinite(decimals) && decimals >= 0 && decimals <= 9) ? (decimals | 0) : 6;
+  var programId;
+  try {
+    var mintInfo = await connection.getAccountInfo(mint);
+    if (!mintInfo) return { ok: false, reason: 'bad_mint', detail: 'mint not found' };
+    programId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+  } catch (eMint) {
+    return { ok: false, reason: 'rpc_error', detail: eMint && eMint.message };
+  }
+  var fromAta, toAta;
+  try {
+    fromAta = getAssociatedTokenAddressSync(mint, treasury.publicKey, true, programId);
+    toAta = getAssociatedTokenAddressSync(mint, dest, true, programId);
+  } catch (eAta) {
+    return { ok: false, reason: 'bad_request', detail: 'could not derive token accounts' };
+  }
+  try {
+    var tInfo = await connection.getAccountInfo(fromAta);
+    var tBal = tInfo ? readTokenAmount(tInfo.data) : 0n;
+    if (tBal === null || tBal < amountRaw) {
+      return { ok: false, reason: 'insufficient_treasury_balance', detail: 'treasury cannot cover this transfer' };
+    }
+    var tx = new Transaction();
+    var dInfo = await connection.getAccountInfo(toAta);
+    if (!dInfo) {
+      tx.add(createAssociatedTokenAccountInstruction(
+        treasury.publicKey, toAta, dest, mint, programId, ASSOCIATED_TOKEN_PROGRAM_ID
+      ));
+    }
+    tx.add(createTransferCheckedInstruction(
+      fromAta, mint, toAta, treasury.publicKey, amountRaw, dec, [], programId
+    ));
+    var sig = await fns.sendAndConfirm(tx, connection, [treasury]);
+    return { ok: true, txHash: sig };
+  } catch (eSend) {
+    return { ok: false, reason: 'send_failed', detail: eSend && eSend.message };
+  }
+}
+
+/** Raw balance of one mint for one owner. `balanceRaw` is a safe integer, or the read fails. */
+async function readMintBalance(owner, mintAddress, decimals, env, deps) {
+  try {
+    if (!isPubkey(owner) || !isPubkey(mintAddress)) {
+      return { ok: false, reason: 'bad_request', detail: 'invalid address' };
+    }
+    var d = describe(env);
+    if (!d.rpcConfigured) return { ok: false, reason: 'not_configured', detail: 'no rpc' };
+    var fns = Object.assign(defaultDeps(), deps || {});
+    var connection = fns.makeConnection(rpcOf(env));
+    var res = await connection.getParsedTokenAccountsByOwner(new PublicKey(owner), { mint: new PublicKey(mintAddress) });
+    var total = 0n;
+    var list = (res && res.value) || [];
+    for (var i = 0; i < list.length; i++) {
+      var amt = list[i] && list[i].account && list[i].account.data &&
+        list[i].account.data.parsed && list[i].account.data.parsed.info &&
+        list[i].account.data.parsed.info.tokenAmount;
+      if (amt && typeof amt.amount === 'string') {
+        try { total += BigInt(amt.amount); } catch (e) {}
+      }
+    }
+    if (total > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return { ok: false, reason: 'overflow', detail: 'balance does not fit a safe integer' };
+    }
+    return { ok: true, balanceRaw: Number(total), decimals: decimals | 0 };
+  } catch (e) {
+    return { ok: false, reason: 'rpc_error', detail: e && e.message };
+  }
+}
+
+/**
+ * Sell whole STRATUM units from the treasury into the STRATUM/GLDX pair via Jupiter.
+ * The quote token received is GLDX. Always resolves. Never called unless the
+ * sink switch is on.
+ */
+async function swapStratumForGldx(amountWhole, gldxMint, env, deps) {
+  try {
+    if (!isConfigured(env)) return { ok: false, reason: 'not_configured', detail: 'signer or mint is not live' };
+    var whole = amountWhole | 0;
+    if (whole <= 0) return { ok: false, reason: 'bad_request', detail: 'non-positive swap' };
+    return await enqueueJob(function () { return doSwap(whole, gldxMint, env, deps); });
+  } catch (e) {
+    return { ok: false, reason: 'internal_error', detail: e && e.message };
+  }
+}
+
+async function doSwap(whole, gldxMint, env, deps) {
+  var fns = Object.assign(defaultDeps(), deps || {});
+  var connection, treasury;
+  try {
+    connection = fns.makeConnection(rpcOf(env));
+    treasury = fns.makeKeypair(secretOf(env));
+  } catch (e) {
+    return { ok: false, reason: 'signer_error', detail: e && e.message };
+  }
+  var raw = BigInt(whole) * (10n ** BigInt(tokenDecimals(env)));
+  var input = mintOf(env);
+  var quoteUrl = 'https://lite-api.jup.ag/swap/v1/quote?inputMint=' + input +
+    '&outputMint=' + gldxMint + '&amount=' + raw.toString() + '&slippageBps=150';
+  var quoteRes;
+  try { quoteRes = await fetch(quoteUrl); }
+  catch (eNet) { return { ok: false, reason: 'quote_failed', detail: eNet && eNet.message }; }
+  if (!quoteRes.ok) return { ok: false, reason: 'quote_failed', detail: 'jupiter quote ' + quoteRes.status };
+  var quote = await quoteRes.json();
+  if (!quote || !quote.outAmount) return { ok: false, reason: 'quote_failed', detail: 'no route' };
+  var swapRes;
+  try {
+    swapRes = await fetch('https://lite-api.jup.ag/swap/v1/swap', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        quoteResponse: quote,
+        userPublicKey: treasury.publicKey.toBase58(),
+        wrapAndUnwrapSol: false,
+        dynamicComputeUnitLimit: true
+      })
+    });
+  } catch (eSwap) {
+    return { ok: false, reason: 'swap_failed', detail: eSwap && eSwap.message };
+  }
+  if (!swapRes.ok) return { ok: false, reason: 'swap_failed', detail: 'jupiter swap ' + swapRes.status };
+  var body = await swapRes.json();
+  if (!body || !body.swapTransaction) return { ok: false, reason: 'swap_failed', detail: 'no transaction' };
+  try {
+    var vtx = VersionedTransaction.deserialize(Buffer.from(body.swapTransaction, 'base64'));
+    vtx.sign([treasury]);
+    var sig = await connection.sendRawTransaction(vtx.serialize());
+    await connection.confirmTransaction(sig, 'confirmed');
+    return { ok: true, txHash: sig, outAmount: String(quote.outAmount) };
+  } catch (eSend) {
+    return { ok: false, reason: 'send_failed', detail: eSend && eSend.message };
+  }
+}
+
+/**
+ * Unsigned player → treasury STRATUM transfer. The player is the fee payer.
+ * Returns { ok, tx, message, amountRaw } for the wallet to sign, or a typed error.
+ * Never broadcasts. Always resolves.
+ */
+async function buildPlayerTransfer(fromWallet, amountWhole, env, deps) {
+  try {
+    if (!canReadMint(env)) {
+      return { ok: false, reason: 'not_configured', detail: 'mint or treasury is not live' };
+    }
+    if (!isPubkey(fromWallet)) return { ok: false, reason: 'bad_request', detail: 'invalid wallet' };
+    var whole = amountWhole | 0;
+    if (whole <= 0) return { ok: false, reason: 'bad_request', detail: 'non-positive amount' };
+    var fns = Object.assign(defaultDeps(), deps || {});
+    var connection = fns.makeConnection(rpcOf(env));
+    var mint = new PublicKey(mintOf(env));
+    var player = new PublicKey(fromWallet);
+    var treasury = new PublicKey(env.STRATUM_TREASURY_ADDRESS);
+    var dec = tokenDecimals(env);
+    var amountRaw = BigInt(whole) * (10n ** BigInt(dec));
+    var mintInfo = await connection.getAccountInfo(mint);
+    if (!mintInfo) return { ok: false, reason: 'bad_mint', detail: 'mint not found' };
+    var programId = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+    var fromAta = getAssociatedTokenAddressSync(mint, player, false, programId);
+    var toAta = getAssociatedTokenAddressSync(mint, treasury, true, programId);
+    var fromInfo = await connection.getAccountInfo(fromAta);
+    var fromBal = fromInfo ? readTokenAmount(fromInfo.data) : 0n;
+    if (fromBal === null || fromBal < amountRaw) {
+      return { ok: false, reason: 'insufficient_balance', detail: 'wallet holds less STRATUM than this ship needs' };
+    }
+    var tx = new Transaction();
+    var toInfo = await connection.getAccountInfo(toAta);
+    if (!toInfo) {
+      tx.add(createAssociatedTokenAccountInstruction(
+        player, toAta, treasury, mint, programId, ASSOCIATED_TOKEN_PROGRAM_ID
+      ));
+    }
+    tx.add(createTransferCheckedInstruction(
+      fromAta, mint, toAta, player, amountRaw, dec, [], programId
+    ));
+    var lh = await connection.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = lh.blockhash;
+    tx.feePayer = player;
+    var raw = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+    var msg = tx.serializeMessage();
+    return {
+      ok: true,
+      tx: Buffer.from(raw).toString('base64'),
+      message: b58encode(msg),
+      amountRaw: amountRaw.toString(),
+      blockhash: lh.blockhash
+    };
+  } catch (e) {
+    return { ok: false, reason: 'internal_error', detail: e && e.message };
+  }
+}
+
+function tokenDelta(list, owner, mint) {
+  var total = 0n;
+  var rows = list || [];
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (!row || row.owner !== owner || row.mint !== mint) continue;
+    var amt = row.uiTokenAmount && row.uiTokenAmount.amount;
+    if (typeof amt === 'string') {
+      try { total += BigInt(amt); } catch (e) {}
+    }
+  }
+  return total;
+}
+
+/**
+ * Confirm a player already sent `amountWhole` STRATUM to the treasury.
+ * Source must drop by the full gross; destination must rise by at least 99%
+ * (the 1% tax is withheld by the mint, not received). Always resolves.
+ */
+async function verifyIncomingTransfer(txHash, fromWallet, amountWhole, env, deps) {
+  try {
+    if (!canReadMint(env)) {
+      return { ok: false, reason: 'not_configured', detail: 'mint or treasury is not live' };
+    }
+    if (typeof txHash !== 'string' || txHash.length < 32 || txHash.length > 88) {
+      return { ok: false, reason: 'bad_request', detail: 'invalid signature' };
+    }
+    if (!isPubkey(fromWallet)) return { ok: false, reason: 'bad_request', detail: 'invalid wallet' };
+    var whole = amountWhole | 0;
+    if (whole <= 0) return { ok: false, reason: 'bad_request', detail: 'non-positive amount' };
+    var fns = Object.assign(defaultDeps(), deps || {});
+    var connection = fns.makeConnection(rpcOf(env));
+    var parsed = await connection.getParsedTransaction(txHash, {
+      maxSupportedTransactionVersion: 0, commitment: 'confirmed'
+    });
+    if (!parsed || !parsed.meta) {
+      return { ok: false, reason: 'not_found', detail: 'transaction not confirmed yet' };
+    }
+    if (parsed.meta.err) {
+      return { ok: false, reason: 'failed', detail: 'transaction failed on chain' };
+    }
+    var mint = mintOf(env);
+    var treasury = env.STRATUM_TREASURY_ADDRESS;
+    var dec = tokenDecimals(env);
+    var gross = BigInt(whole) * (10n ** BigInt(dec));
+    var tax = (gross * 100n) / 10000n;
+    var minArrived = gross - tax;
+    var playerDelta = tokenDelta(parsed.meta.postTokenBalances, fromWallet, mint) -
+      tokenDelta(parsed.meta.preTokenBalances, fromWallet, mint);
+    var treDelta = tokenDelta(parsed.meta.postTokenBalances, treasury, mint) -
+      tokenDelta(parsed.meta.preTokenBalances, treasury, mint);
+    if (playerDelta !== -gross) {
+      return { ok: false, reason: 'mismatch', detail: 'wallet did not send the quoted STRATUM' };
+    }
+    if (treDelta < minArrived) {
+      return { ok: false, reason: 'mismatch', detail: 'treasury did not receive the shipment' };
+    }
+    return { ok: true, arrivedRaw: treDelta.toString() };
+  } catch (e) {
+    return { ok: false, reason: 'rpc_error', detail: e && e.message };
+  }
+}
+
 module.exports = {
   describe: describe,
   isConfigured: isConfigured,
+  canReadMint: canReadMint,
   settleClaim: settleClaim,
-  readBalance: readBalance
+  readBalance: readBalance,
+  transferRaw: transferRaw,
+  readMintBalance: readMintBalance,
+  swapStratumForGldx: swapStratumForGldx,
+  buildPlayerTransfer: buildPlayerTransfer,
+  verifyIncomingTransfer: verifyIncomingTransfer,
+  signerAddress: signerAddress
 };

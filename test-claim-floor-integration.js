@@ -7,7 +7,7 @@
  *
  * WHY THE FLOOR EXISTS
  *   Real on-chain settlement (src/chain-adapter.js) pays gas for every settled claim from
- *   the treasury wallet — a 1-STRM claim costs the same gas as a 1000-STRM one. With no
+ *   the treasury wallet — a 1-STRATUM claim costs the same gas as a 1000-STRATUM one. With no
  *   floor, a player (or a bot) could bleed the treasury's gas float one dust-sized claim
  *   at a time. See server.js's MIN_CLAIM_AMOUNT constant for the full reasoning.
  *
@@ -173,7 +173,7 @@ class Client {
   const KEY_A = 'floor-key-AAAA-0001';
   const WALLET_A = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
-  // Establish the player row for real (a genuine hello), then seed a pending STRM balance
+  // Establish the player row for real (a genuine hello), then seed a pending STRATUM balance
   // just under the real default floor.
   let a0 = new Client('A0', port);
   await a0.connect();
@@ -201,7 +201,7 @@ class Client {
   });
   const r1 = await restart(srv, port);
   srv = r1.srv; port = r1.port;
-  ok(mustLive(), 'server restarted cleanly after seeding a below-floor pending STRM balance');
+  ok(mustLive(), 'server restarted cleanly after seeding a below-floor pending STRATUM balance');
 
   const a = new Client('A', port);
   await a.connect();
@@ -241,7 +241,7 @@ class Client {
   });
   const r3 = await restart(srv, port);
   srv = r3.srv; port = r3.port;
-  ok(mustLive(), 'server restarted cleanly after seeding an at-floor pending STRM balance');
+  ok(mustLive(), 'server restarted cleanly after seeding an at-floor pending STRATUM balance');
 
   const b = new Client('B', port);
   await b.connect();

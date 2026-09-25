@@ -22,14 +22,16 @@ check('palette-shape-valid', C.ALL_PALETTES.every(function (p) {
 }));
 
 // ---------------------------------------------------------------- accessory table shape
-check('accessory-count-in-range', C.ALL_ACCESSORIES.length >= 6 && C.ALL_ACCESSORIES.length <= 10);
+check('accessory-count-in-range', C.ALL_ACCESSORIES.length >= 6 && C.ALL_ACCESSORIES.length <= 16);
 var aIds = C.ALL_ACCESSORIES.map(function (a) { return a.id; });
 check('accessory-ids-unique', new Set(aIds).size === aIds.length);
 check('accessory-shape-valid', C.ALL_ACCESSORIES.every(function (a) {
   return typeof a.id === 'string' && typeof a.name === 'string' && a.name.length > 0 &&
     C.SLOTS.indexOf(a.slot) !== -1 &&
-    (a.unlockedBy === undefined || typeof a.unlockedBy === 'string');
+    (a.unlockedBy === undefined || typeof a.unlockedBy === 'string') &&
+    (a.priceStratum === undefined || (Number.isInteger(a.priceStratum) && a.priceStratum > 0));
 }));
+check('vanity-row-priced', C.ALL_ACCESSORIES.filter(function (a) { return C.isVanity(a.id); }).length === 3);
 check('slots-in-range', C.SLOTS.length >= 2 && C.SLOTS.length <= 3);
 // every unlockedBy id must be a real achievement id from src/achievements.js, verbatim
 check('unlockedBy-ids-are-real-achievements', C.ALL_ACCESSORIES.every(function (a) {

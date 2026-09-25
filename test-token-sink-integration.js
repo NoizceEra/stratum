@@ -4,10 +4,10 @@
  *
  * test-token-sink.js proves the pure burn/treasury-split and cost math in isolation.
  * This file proves the SERVER actually uses it correctly: a real requisition spends
- * real pending STRM, splits it burned/treasury per TOKEN_BURN_BPS, and the burned half
+ * real pending STRATUM, splits it burned/treasury per TOKEN_BURN_BPS, and the burned half
  * is genuinely gone forever (never added to anyone's claimed total, never recoverable);
  * a requisition beyond what's pending is refused with nothing spent; a big requisition
- * broadcasts to bystanders; a structure rush costs STRM to skip real accrued time
+ * broadcasts to bystanders; a structure rush costs STRATUM to skip real accrued time
  * (proven the same way test-idle-integration.js proves lazy accrual: kill the server,
  * back-date a structure's lastCollectedAt on disk, reboot, and check the numbers match
  * what the pure module predicts), grants exactly what's owed (already-accrued PLUS the
@@ -51,7 +51,7 @@ function startServer(port, extraEnv) {
   if (port === LIVE_PORT) throw new Error('refusing to run a test server on ' + LIVE_PORT);
   const srv = spawn(process.execPath, ['server.js'], {
     cwd: CWD,
-    env: Object.assign({}, process.env, { PORT: String(port), STRATUM_DB: TESTDB, STRATUM_RESPAWN_SCALE: '1' }, extraEnv || {}),
+    env: Object.assign({}, process.env, { PORT: String(port), STRATUM_DB: TESTDB, STRATUM_RESPAWN_SCALE: '1', STRATUM_SINK_ONCHAIN: '0' }, extraEnv || {}),
     stdio: ['ignore', 'pipe', 'pipe']
   });
   srv.log = '';
@@ -181,7 +181,7 @@ class Client {
   const spawn0 = T.spawnPoint(0);
   const KEY_A = 'sink-key-AAAA-0001';
 
-  // Establish A's rows for real (a genuine hello), then seed a large pending STRM
+  // Establish A's rows for real (a genuine hello), then seed a large pending STRATUM
   // balance via the SAME durable-state DB-fixture technique test-idle-integration.js
   // uses for lastCollectedAt: kill the server, edit the row directly, reboot against
   // the same DB. This is the honest way to get a real, server-persisted starting
@@ -217,13 +217,13 @@ class Client {
   });
   const r1 = await restart(srv, port);
   srv = r1.srv; port = r1.port;
-  ok(mustLive(), 'server restarted cleanly after seeding a real pending STRM balance');
+  ok(mustLive(), 'server restarted cleanly after seeding a real pending STRATUM balance');
 
   const a = new Client('A', port);
   await a.connect();
   a.send({ t: 'hello', key: KEY_A, name: 'SHIPPER' });
   const wa = await a.waitFor(m => m.t === 'welcome');
-  ok(wa.tokenPending === SEEDED_PENDING, 'the seeded pending STRM balance survived the restart, exactly', wa.tokenPending);
+  ok(wa.tokenPending === SEEDED_PENDING, 'the seeded pending STRATUM balance survived the restart, exactly', wa.tokenPending);
   const pendingAfterFarm = wa.tokenPending;
 
   function findNodesNear(spawn, radius, count) {
@@ -267,8 +267,8 @@ class Client {
 
   const statsAfterShip = await getStats(port);
   ok(statsAfterShip.colonyQuota === shipped.burned, '/api/stats reports the same colony quota', statsAfterShip.colonyQuota);
-  ok(statsAfterShip.treasury && statsAfterShip.treasury.STRM === shipped.treasury,
-    '/api/stats treasury.STRM reflects the treasury half of the sink spend', statsAfterShip.treasury);
+  ok(statsAfterShip.treasury && statsAfterShip.treasury.STRATUM === shipped.treasury,
+    '/api/stats treasury.STRATUM reflects the treasury half of the sink spend', statsAfterShip.treasury);
 
   // --------------------------------------------------------------------------
   section('EARTH REQUISITION — a big requisition broadcasts to bystanders, a small one does not');
@@ -323,7 +323,7 @@ class Client {
   a.close(); b.close();
   // Apiary: 1 honey / 45s, capacity 20. Back-date 5*45s = 225000ms -> 5 already accrued,
   // 15 short of capacity -> rushCost(5,20,2) = {gained:15, cost:30} (default per-unit 2).
-  // Re-seed pending STRM too — the requisition tests above drove it to exactly 0, and
+  // Re-seed pending STRATUM too — the requisition tests above drove it to exactly 0, and
   // the rush needs real balance to spend; same fixture window, same durable-state
   // technique, just two rows instead of one.
   const now = Date.now();
@@ -340,7 +340,7 @@ class Client {
   c.send({ t: 'hello', key: 'sink-key-AAAA-0001', name: 'SHIPPER' });
   const wc = await c.waitFor(m => m.t === 'welcome');
   const pendingBeforeRush = wc.tokenPending | 0;
-  ok(pendingBeforeRush >= 30, 'the reconnected player has enough pending STRM to afford the rush', pendingBeforeRush);
+  ok(pendingBeforeRush >= 30, 'the reconnected player has enough pending STRATUM to afford the rush', pendingBeforeRush);
   const honeyBefore = (wc.inv && wc.inv.honey) || 0;
 
   const d = new Client('D', port);
@@ -359,7 +359,7 @@ class Client {
   const rushed = await c.waitNew(m => m.t === 'rushed' && !m.err, 4000);
   ok(rushed.resource === 'honey', 'the rush resolved against the honey-producing apiary', rushed);
   ok(rushed.gained === 20, 'total gained (5 already-accrued + 15 rushed) equals the full 20-honey capacity', rushed);
-  ok(rushed.cost === 30, 'the rush cost exactly 30 STRM (15 units short x 2 STRM/unit)', rushed);
+  ok(rushed.cost === 30, 'the rush cost exactly 30 STRATUM (15 units short x 2 STRATUM/unit)', rushed);
   ok(rushed.burned === 24 && rushed.treasury === 6, 'the rush cost itself splits 80/20 burned/treasury, same as any sink spend', rushed);
   ok(rushed.tokenPending === pendingBeforeRush - 30, 'pending dropped by exactly the rush cost', rushed.tokenPending);
   ok(rushed.inv && rushed.inv.honey === honeyBefore + 20, 'the full 20 honey landed in inventory', rushed.inv);

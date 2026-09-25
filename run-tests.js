@@ -26,7 +26,7 @@ function wipe(db) { for (const s of ['', '-wal', '-shm']) { try { fs.unlinkSync(
 function startServer(port, db, respawnScale) {
   const srv = spawn(process.execPath, ['server.js'], {
     cwd: CWD,
-    env: { ...process.env, PORT: String(port), STRATUM_DB: db, STRATUM_RESPAWN_SCALE: String(respawnScale) },
+    env: { ...process.env, PORT: String(port), STRATUM_DB: db, STRATUM_RESPAWN_SCALE: String(respawnScale), STRATUM_SINK_ONCHAIN: '0' },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   srv.stdout.on('data', d => process.stdout.write('[srv] ' + d));

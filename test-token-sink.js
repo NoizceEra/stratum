@@ -55,6 +55,24 @@ check('splitBurn-full-bps-sweep-never-loses-dust', (function () {
   return true;
 })());
 
+check('taxOf-1-percent-of-100', TS.taxOf(100) === 1);
+check('taxOf-under-100-floors-to-0', TS.taxOf(50) === 0);
+check('taxOf-bad-amount-zero', TS.taxOf(0) === 0 && TS.taxOf(-4) === 0);
+
+check('splitOnChain-100', (function () {
+  const r = TS.splitOnChain(100);
+  return r.gross === 100 && r.tax === 1 && r.arrived === 99 &&
+    r.burned === 79 && r.treasury === 20 &&
+    r.burned + r.treasury === r.arrived && r.tax + r.arrived === r.gross;
+})());
+check('splitOnChain-50-tax-floors-then-80-20', (function () {
+  const r = TS.splitOnChain(50);
+  return r.tax === 0 && r.arrived === 50 && r.burned === 40 && r.treasury === 10;
+})());
+check('splitOnChain-bad-amount-zeros', TS.splitOnChain(0).arrived === 0);
+check('onchain-default-ship-is-100', TS.ONCHAIN_DEFAULT_SHIP === 100);
+check('tax-bps-is-100', TS.TAX_BPS === 100);
+
 // ---------------------------------------------------------------- validateRequisition()
 check('validateRequisition-ok-partial-spend', (function () {
   const r = TS.validateRequisition(50, 100);

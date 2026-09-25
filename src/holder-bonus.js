@@ -1,19 +1,19 @@
 /**
- * holder-bonus.js — "simple as holding the token": a wallet's on-chain STRM balance
- * grants a permanent multiplier on the gold/STRM a player earns from playing.
+ * holder-bonus.js — "simple as holding the token": a wallet's on-chain STRATUM balance
+ * grants a permanent multiplier on the gold/STRATUM a player earns from playing.
  *
  * WHY THIS FILE EXISTS
- *   Every other commerce module here answers "what happens when you spend/earn STRM
+ *   Every other commerce module here answers "what happens when you spend/earn STRATUM
  *   during a session" (src/rewards.js mints it, src/token-sink.js drains it). This
  *   module answers a different question the project owner asked for: "why would anyone
- *   HOLD STRM instead of immediately spending it?" The answer is a yield-style tier
- *   table — the more STRM your linked wallet holds, the bigger a multiplier is applied
+ *   HOLD STRATUM instead of immediately spending it?" The answer is a yield-style tier
+ *   table — the more STRATUM your linked wallet holds, the bigger a multiplier is applied
  *   to every gold/token reward src/rewards.js hands you. It is deliberately the
  *   simplest possible hook: no staking, no lockup, no claim step — just holding more
  *   moves you up a tier, permanently, for as long as the balance is above threshold.
  *
  * WHY THIS MODULE NEVER TOUCHES A CHAIN BALANCE ITSELF
- *   STRM has no live on-chain mint yet — src/token-config.js carries the
+ *   STRATUM has no live on-chain mint yet — src/token-config.js carries the
  *   `STRM_MINT_NOT_YET_DEPLOYED` sentinel, and src/chain-adapter.js
  *   gates all real settlement behind that flag (see its header + README.md's Commerce
  *   section for the full story). Any balance this module were handed today could be
@@ -31,7 +31,7 @@
  *   - Fully pure and deterministic: no Date.now(), no Math.random(), no globals written.
  *     Every helper returns fresh values (or a shared frozen tier reference) and never
  *     mutates its arguments.
- *   - Integer math for reward amounts — gold/STRM are always whole ledger units
+ *   - Integer math for reward amounts — gold/STRATUM are always whole ledger units
  *     elsewhere in this codebase (src/rewards.js). The multiplier itself is a float
  *     (e.g. 1.25); applying it to an amount floors to an integer, matching
  *     token-sink.js's splitBurn "floor, never round up" convention — except here the
@@ -77,7 +77,7 @@
   ]);
 
   /**
-   * The tier for a given on-chain STRM balance. Walks TIERS from the top down and
+   * The tier for a given on-chain STRATUM balance. Walks TIERS from the top down and
    * returns the highest tier whose minBalance the balance clears. Malformed input
    * (non-number, NaN, Infinity, negative) always resolves to the base Colonist tier —
    * never throws, never returns undefined. Returns the actual frozen tier object from

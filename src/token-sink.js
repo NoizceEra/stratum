@@ -1,9 +1,9 @@
 /**
- * token-sink.js — what happens to STRM when a player spends it in-game.
+ * token-sink.js — what happens to STRATUM when a player spends it in-game.
  *
  * WHY THIS FILE EXISTS
  *   Every previous piece of the commerce system only ever ADDS to a player's pending
- *   STRM balance (src/rewards.js mints it; nothing ever spent it — see the ROADMAP
+ *   STRATUM balance (src/rewards.js mints it; nothing ever spent it — see the ROADMAP
  *   discussion this module is a direct answer to). A token that only ever accrues and
  *   never drains is the textbook play-to-earn failure mode: unbounded supply, no reason
  *   to hold it, value trending to zero as the faucet keeps running with nothing opposing
@@ -14,14 +14,17 @@
  *   (server.js already has one, fed today only by marketplace fees; this becomes its
  *   second income source).
  *
- * WHAT "BURN" MEANS TODAY, CONCRETELY
- *   STRM has no live on-chain contract yet (src/token-config.js's CA is still a
- *   placeholder, src/chain-adapter.js still can't settle a claim). So a "burn" here is
- *   an off-chain ledger fact: the amount is removed from a player's spendable
- *   `pending` balance and added to a server-wide, permanent `token_burned` counter —
- *   it is NEVER added to anyone's `claimed` total, so there is nothing to later pay out
- *   for it. When real settlement eventually exists, this module's contract does not
- *   change: burned STRM was never owed to anyone, on-chain or off.
+ * WHAT "BURN" MEANS
+ *   Two layers, same 80/20 split:
+ *     - Ledger pending is the float you earn before a claim. Spending it (the
+ *       default path, used when STRATUM_SINK_ONCHAIN is off) only moves the
+ *       server counter. It does not shrink on-chain supply and is not a taxed
+ *       transfer, so it pays nobody GLDX.
+ *     - A live requisition or rush (STRATUM_SINK_ONCHAIN=1) spends claimed
+ *       STRATUM from the linked wallet. The mint withholds 1% on that transfer
+ *       (StonkFun pays that tax to holders as GLDX). Of what arrives at the
+ *       treasury, 80% is burned on-chain and 20% stays. splitOnChain() is that
+ *       tax-then-split, in whole ledger units.
  *
  * CONTRACT
  *   - Dependency-free. No require(), no DOM, no I/O anywhere (not even at top level).
@@ -29,7 +32,7 @@
  *     when loaded as a plain <script>. Detection is a bare `typeof module` check.
  *   - Fully pure and deterministic: no Date.now(), no Math.random(), no globals written.
  *     Every helper returns fresh objects and never mutates its arguments.
- *   - Integer math throughout — STRM is whole ledger units, same as everywhere else in
+ *   - Integer math throughout — STRATUM is whole ledger units, same as everywhere else in
  *     this codebase (src/rewards.js, the token_ledger table).
  */
 (function (root, factory) {
@@ -63,9 +66,17 @@
    *  drain on supply. Tunable by the caller (server.js reads it from env, same pattern
    *  as SHOP_FEE_BPS/PARCEL_FEE_BPS). */
   var BURN_BPS = 8000;
+  /** Token-2022 transfer fee on the live STRATUM mint, in the same bps units. The
+   *  token program withholds this on every move; this module only mirrors it so the
+   *  80/20 split is applied to what the treasury actually receives. */
+  var TAX_BPS = 100;
+  /** One-button Earth Requisition, when paying from the wallet instead of pending.
+   *  Shipping the whole bag would drop the holder tier; 100 is Backer and leaves
+   *  anything above that still earning. */
+  var ONCHAIN_DEFAULT_SHIP = 100;
 
   /**
-   * Split `amount` STRM into { burned, treasury }, using `burnBps` (falls back to
+   * Split `amount` STRATUM into { burned, treasury }, using `burnBps` (falls back to
    * BURN_BPS for a missing/out-of-range value — unlike shops.js's feeFor, a sink
    * defaulting to "no burn" would be the WORSE failure direction here, since the whole
    * point is that spending always destroys most of what's spent). `burned` is the
@@ -79,8 +90,29 @@
     return { burned: burned, treasury: amount - burned };
   }
 
+  /** Whole units the mint withholds from `amount`. Amounts under 100 have a
+   *  sub-unit on-chain tax (6 decimals) that this whole-unit floor reports as 0. */
+  function taxOf(amount, taxBps) {
+    if (!isPosInt(amount)) return 0;
+    var b = (isInt(taxBps) && taxBps >= 0 && taxBps <= FEE_DENOM) ? taxBps : TAX_BPS;
+    return Math.floor((amount * b) / FEE_DENOM);
+  }
+
+  /**
+   * Player sends `amount` whole STRATUM to the treasury. The mint keeps `tax`.
+   * Of `arrived`, 80% burns and 20% stays — same splitBurn the ledger path uses.
+   * `burned + treasury === arrived` and `tax + arrived === amount`.
+   */
+  function splitOnChain(amount, burnBps, taxBps) {
+    if (!isPosInt(amount)) return { gross: 0, tax: 0, arrived: 0, burned: 0, treasury: 0 };
+    var tax = taxOf(amount, taxBps);
+    var arrived = amount - tax;
+    var s = splitBurn(arrived, burnBps);
+    return { gross: amount, tax: tax, arrived: arrived, burned: s.burned, treasury: s.treasury };
+  }
+
   // ======================================================================
-  // sink 1: Earth Requisition — spend pending STRM directly for quota progress
+  // sink 1: Earth Requisition — spend pending STRATUM directly for quota progress
   // ======================================================================
 
   /** Floor on a single requisition — a 0-or-negative request is never a valid spend. */
@@ -99,16 +131,16 @@
   }
 
   // ======================================================================
-  // sink 2: Structure Rush — pay STRM to skip the wait on an idle structure
+  // sink 2: Structure Rush — pay STRATUM to skip the wait on an idle structure
   // ======================================================================
 
-  /** STRM cost per whole unit of resource skipped. Tunable by the caller. Deliberately
+  /** STRATUM cost per whole unit of resource skipped. Tunable by the caller. Deliberately
    *  a flat rate rather than scaling with the structure's tier/value — simplicity here
    *  matters more than precision-pricing a handful of structure kinds. */
   var RUSH_COST_PER_UNIT = 2;
 
   /**
-   * Cost in STRM to instantly fill the remaining `capacity - accrued` gap of a structure.
+   * Cost in STRATUM to instantly fill the remaining `capacity - accrued` gap of a structure.
    * `accrued`/`capacity` are whole resource units (src/idle.js's own vocabulary — this
    * module never touches idle.js directly, the caller passes the numbers in, keeping the
    * two modules independent and each independently testable).
@@ -128,10 +160,14 @@
   return {
     FEE_DENOM: FEE_DENOM,
     BURN_BPS: BURN_BPS,
+    TAX_BPS: TAX_BPS,
+    ONCHAIN_DEFAULT_SHIP: ONCHAIN_DEFAULT_SHIP,
     MIN_REQUISITION: MIN_REQUISITION,
     RUSH_COST_PER_UNIT: RUSH_COST_PER_UNIT,
     splitBurn: splitBurn,               // { burned, treasury } summing exactly to amount.
-    validateRequisition: validateRequisition, // { ok, amount, error } against a pending balance.
+    taxOf: taxOf,                       // whole units withheld by the 1% transfer fee.
+    splitOnChain: splitOnChain,         // tax, then 80/20 of what arrives.
+    validateRequisition: validateRequisition, // { ok, amount, error } against a spendable balance.
     rushCost: rushCost                  // { cost, gained } to instantly fill a structure's gap.
   };
 });

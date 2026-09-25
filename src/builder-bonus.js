@@ -1,6 +1,6 @@
 /**
  * builder-bonus.js — "simple as building": how many structures you currently have
- * standing on your own claimed land grants a permanent multiplier on the gold/STRM
+ * standing on your own claimed land grants a permanent multiplier on the gold/STRATUM
  * you earn from playing.
  *
  * WHY THIS FILE EXISTS

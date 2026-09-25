@@ -90,7 +90,13 @@
     { id: 'slayers-hood', name: "Slayer's Hood", slot: 'hat', unlockedBy: 'slayer' },
     { id: 'ascendant-crown', name: "Ascendant's Crown", slot: 'hat', unlockedBy: 'ascendant' },
     { id: 'wanderers-scarf', name: "Wanderer's Scarf", slot: 'scarf', unlockedBy: 'wayfarer' },
-    { id: 'smiths-mantle', name: "Master Smith's Mantle", slot: 'cloak', unlockedBy: 'master-smith' }
+    { id: 'smiths-mantle', name: "Master Smith's Mantle", slot: 'cloak', unlockedBy: 'master-smith' },
+    // ---- vanity row: bought with pending STRATUM, never earned by achievements.
+    // Pure cosmetics (zero stats) and a real burn sink: the price funnels through
+    // token-sink.js's splitBurn like every other sink. `priceStratum` is whole units.
+    { id: 'gilded-band', name: 'Gilded Band', slot: 'hat', priceStratum: 100 },
+    { id: 'ember-cloak', name: 'Ember Cloak', slot: 'cloak', priceStratum: 250 },
+    { id: 'starlight-scarf', name: 'Starlight Scarf', slot: 'scarf', priceStratum: 500 }
   ]);
 
   var SLOTS = deepFreeze(['hat', 'cloak', 'scarf']);
@@ -143,6 +149,37 @@
     return hasId(unlockedAchievementIds, a.unlockedBy);
   }
 
+  /**
+   * STRATUM price of a vanity accessory, or 0 when it isn't bought with STRATUM
+   * (free, achievement-gated, or unknown id). Whole units, never negative.
+   */
+  function vanityPrice(accessoryId) {
+    var a = accessoryOf(accessoryId);
+    if (!a || typeof a.priceStratum !== 'number' || !(a.priceStratum > 0)) return 0;
+    return Math.floor(a.priceStratum);
+  }
+
+  /** True when the id names a vanity (STRATUM-priced) accessory. Never throws. */
+  function isVanity(accessoryId) {
+    return vanityPrice(accessoryId) > 0;
+  }
+
+  /**
+   * Validate a vanity purchase: the accessory must exist, be vanity-priced, not
+   * already owned, and affordable from `pending`. Returns { ok, price, error }.
+   * Never mutates anything — the caller applies the ledger change. `ownedIds`
+   * is an array/Set/map of already-bought vanity ids (any shape hasId() reads).
+   */
+  function validateVanityBuy(accessoryId, pending, ownedIds) {
+    if (!isVanity(accessoryId)) return { ok: false, price: 0, error: 'not for sale' };
+    if (hasId(ownedIds, accessoryId)) return { ok: false, price: 0, error: 'already owned' };
+    var price = vanityPrice(accessoryId);
+    if (typeof pending !== 'number' || !isFinite(pending) || Math.floor(pending) < price) {
+      return { ok: false, price: price, error: 'cannot afford' };
+    }
+    return { ok: true, price: price, error: null };
+  }
+
   /** A safe, always-valid look: the first palette, no accessories equipped. */
   function defaultLook() {
     return { paletteId: DEFAULT_PALETTE_ID, hat: null, cloak: null, scarf: null };
@@ -150,13 +187,14 @@
 
   /**
    * Sanitize a requested `{paletteId, hat, cloak, scarf}` look against a player's actual
-   * unlocked-achievement state. Never trusts the client's claim to own an accessory:
-   * a slot is kept only when it names an accessory that exists, sits in that slot, and
-   * is unlocked for this player — everything else silently drops to null. Malformed
-   * input (not an object, garbage fields, whatever) degrades to defaultLook(), never
+   * unlocked-achievement state AND bought vanity set. Never trusts the client's claim
+   * to own an accessory: a slot is kept only when it names an accessory that exists,
+   * sits in that slot, and is unlocked for this player (achievement) or bought
+   * (vanity, via `ownedVanityIds`, optional for backward compatibility) — everything
+   * else silently drops to null. Malformed input degrades to defaultLook(), never
    * an error. Always returns a fresh object; never mutates `requested`.
    */
-  function validateLook(requested, unlockedAchievementIds) {
+  function validateLook(requested, unlockedAchievementIds, ownedVanityIds) {
     var out = defaultLook();
     if (!requested || typeof requested !== 'object') return out;
 
@@ -169,7 +207,9 @@
       if (typeof reqId !== 'string' || !reqId) continue;
       var a = accessoryOf(reqId);
       if (!a || a.slot !== slot) continue;
-      if (!isUnlocked(a.id, unlockedAchievementIds)) continue;
+      if (isVanity(a.id)) {
+        if (!hasId(ownedVanityIds, a.id)) continue;
+      } else if (!isUnlocked(a.id, unlockedAchievementIds)) continue;
       out[slot] = a.id;
     }
     return out;
@@ -188,6 +228,9 @@
     accessoryOf: accessoryOf,        // accessory record for an id, or null.
     cosmeticFor: cosmeticFor,        // accessory id an achievement id unlocks, or null.
     isUnlocked: isUnlocked,          // whether an accessory is available to equip.
+    vanityPrice: vanityPrice,        // STRATUM price of a vanity accessory, else 0.
+    isVanity: isVanity,              // true for STRATUM-priced accessories.
+    validateVanityBuy: validateVanityBuy, // { ok, price, error } for a vanity purchase.
     defaultLook: defaultLook,        // a safe default look (fresh object).
     validateLook: validateLook       // sanitize a requested look against unlocked state.
   };

@@ -118,6 +118,67 @@
     return btoa(s);
   }
 
+  function b64ToBytes(b64) {
+    var s = atob(b64);
+    var u8 = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+    return u8;
+  }
+
+  var B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  function bytesToB58(bytes) {
+    var zeros = 0;
+    while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
+    var digits = [0];
+    for (var i = 0; i < bytes.length; i++) {
+      var carry = bytes[i];
+      for (var j = 0; j < digits.length; j++) {
+        carry += digits[j] << 8;
+        digits[j] = carry % 58;
+        carry = (carry / 58) | 0;
+      }
+      while (carry > 0) { digits.push(carry % 58); carry = (carry / 58) | 0; }
+    }
+    var out = '';
+    for (var z = 0; z < zeros; z++) out += '1';
+    for (var k = digits.length - 1; k >= 0; k--) out += B58.charAt(digits[k]);
+    return out;
+  }
+
+  /**
+   * Sign and broadcast an unsigned transfer the server built.
+   * `txB64` is a full unsigned Transaction; `messageB58` is its message
+   * (Phantom's request() API). Returns the signature string.
+   */
+  async function signAndSendTx(txB64, messageB58) {
+    var w = provider();
+    if (!w) throw new Error('No Solana wallet found — install Phantom or Solflare');
+    var raw = b64ToBytes(txB64);
+    var fake = {
+      serialize: function () { return raw; },
+      serializeMessage: function () { return raw; },
+      version: 0,
+      signatures: []
+    };
+    if (typeof w.signAndSendTransaction === 'function') {
+      try {
+        var res = await w.signAndSendTransaction(fake);
+        var sig = (res && res.signature) ? res.signature : res;
+        if (sig) return String(sig);
+      } catch (e1) { /* fall through to request() */ }
+    }
+    if (typeof w.request === 'function') {
+      var msg = messageB58 || bytesToB58(raw);
+      var res2 = await w.request({
+        method: 'signAndSendTransaction',
+        params: { message: msg }
+      });
+      var sig2 = (res2 && res2.signature) ? res2.signature : res2;
+      if (sig2) return String(sig2);
+    }
+    throw new Error('This wallet cannot send a transaction — update Phantom or Solflare');
+  }
+
   // Fixed message the server verifies in src/wallet-proof.js. Proves this
   // browser holds the wallet before a link can resume another colonist.
   async function signLink(address, playerKey, nonce) {
@@ -136,6 +197,7 @@
     provider: provider,
     connect: connect,
     signLink: signLink,
+    signAndSendTx: signAndSendTx,
     ensureCluster: ensureCluster,
     // Back-compat alias: the HUD calls ensureChain(); on Solana there is no
     // EVM-style chain switch — this verifies the wallet's cluster instead.

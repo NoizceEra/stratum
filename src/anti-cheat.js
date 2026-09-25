@@ -5,7 +5,7 @@
  * WHY THIS EXISTS NOW, AND WHY IT LOOKS LIKE THIS
  *   ROADMAP.md is explicit that STRATUM has no admins and no moderation queue — nobody
  *   reviews a report and decides to ban someone. That was a fine, deliberate design when
- *   STRM was just a number going up. Now that chain-adapter.js can really sign and
+ *   STRATUM was just a number going up. Now that chain-adapter.js can really sign and
  *   broadcast a transfer (still gated off today, see its own header), a harvest-botting
  *   or multi-accounting script becomes a direct financial exploit, not a leaderboard
  *   nuisance — "no admins" can no longer mean "no defense." It has to mean the defense is
@@ -29,7 +29,7 @@
  *      contributes nothing unless RATE or RHYTHM has already fired on the same action (see
  *      WEIGHT_IP_DENSITY's comment for why "weighted low" alone isn't a strong enough
  *      guarantee here).
- *   4. LEDGER VELOCITY — pending STRM for this key growing >3× the median pending among
+ *   4. LEDGER VELOCITY — pending STRATUM for this key growing >3× the median pending among
  *      active players (1-hour window). Amplifier only — alone it contributes nothing; it
  *      catches a slow-bot that stays under RATE/RHYTHM thresholds but accumulates rewards
  *      faster than the population. Fully reversible: pending balances decay toward median
@@ -163,11 +163,11 @@
   }
 
   // ======================================================================
-  // signal 4: LEDGER VELOCITY — per-key pending-STRM growth vs. median (amplifier only)
+  // signal 4: LEDGER VELOCITY — per-key pending-STRATUM growth vs. median (amplifier only)
   // ======================================================================
 
   /** Pending growth is suspicious only when it exceeds this multiple of the median
-   *  pending among active players. 3x mirrors the "track pending STRM per key per hour"
+   *  pending among active players. 3x mirrors the "track pending STRATUM per key per hour"
    *  brief and is deliberately generous — a legitimate grinder who simply plays more
    *  than average is not flagged; only a key meaningfully outpacing the population is. */
   var LEDGER_VELOCITY_FACTOR = 3;
@@ -178,7 +178,7 @@
   var LEDGER_VELOCITY_WINDOW_MS = 3600000;
 
   /**
-   * True when a single player's pending STRM meaningfully outpaces the population
+   * True when a single player's pending STRATUM meaningfully outpaces the population
    * median — `pendingForKey > median * LEDGER_VELOCITY_FACTOR`.
    * Amplifier only (see suspicionDelta): contributes nothing unless RATE or RHYTHM
    * has already fired, so a high-but-human-rate earner is never throttled by this alone.
@@ -285,7 +285,7 @@
    *  same linear-decay reason documented above. Either alone, forever, would eventually
    *  out-accumulate the fixed DECAY_PER_MS — only structurally gating them on
    *  (rate || rhythm) keeps a legitimate high-but-human-rate grinder from slowly
-   *  accumulating a throttle purely from holding more pending STRM than the median, or
+   *  accumulating a throttle purely from holding more pending STRATUM than the median, or
    *  from sharing an IP with many earners who together dominate the pending pool. */
   var WEIGHT_LEDGER_VELOCITY = 3;
   var WEIGHT_IP_PENDING = 3;

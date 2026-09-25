@@ -13,13 +13,13 @@
  *   mining/gameplay yield gets a small permanent multiplier bump, applied identically
  *   regardless of who did the spending.
  *
- *   The intent is a flywheel, not a bank account: spending STRM (which destroys most of
+ *   The intent is a flywheel, not a bank account: spending STRATUM (which destroys most of
  *   it) makes everyone's future earning better, which gives players a reason to spend
  *   even though burning feels like a loss in the moment. This is deliberately the
- *   opposite shape from a personal "hold this much STRM" bonus (a different module,
+ *   opposite shape from a personal "hold this much STRATUM" bonus (a different module,
  *   built in parallel, rewards NOT spending) — here the reward is for the community
  *   having spent, and it can never go down once earned, because colonyQuota itself never
- *   decreases. There is no un-burning STRM, so there is no un-earning a colony milestone.
+ *   decreases. There is no un-burning STRATUM, so there is no un-earning a colony milestone.
  *
  * CONTRACT
  *   - Dependency-free. No require(), no DOM, no I/O anywhere (not even at top level).
@@ -60,7 +60,7 @@
   var BASE_MULTIPLIER = 1.0;
 
   /**
-   * Thresholds on the server-wide, never-decreasing colonyQuota (total STRM ever burned
+   * Thresholds on the server-wide, never-decreasing colonyQuota (total STRATUM ever burned
    * via a sink, across ALL players). Ascending by minQuota; the last tier has no upper
    * bound. Values are fixed by the project owner — do not redesign them.
    */

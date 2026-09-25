@@ -1,7 +1,7 @@
 /**
  * token-config.js — Solana commerce token for STRATUM.
  *
- * STRM (on-chain name "Planet Stratum", on-chain symbol "STRATUM") lives on Solana
+ * STRATUM (on-chain name "Planet Stratum", on-chain symbol "STRATUM") lives on Solana
  * mainnet-beta as a Token-2022 mint with a transfer-fee extension (1% per the mint's
  * own on-chain config, enforced by the token program on every transfer — not something
  * this codebase adds or can remove), 6 decimals. Minted 2026; mint authority is null
@@ -66,14 +66,14 @@
     explorerTokenUrl: 'https://explorer.solana.com/address/',
     explorerAddressUrl: 'https://explorer.solana.com/address/',
     nativeCurrency: deepFreeze({ name: 'SOL', symbol: 'SOL', decimals: 9 }),
-    /** SPL mint for STRM — Token-2022, 6 decimals, verified on mainnet-beta 2026-09-24. */
+    /** SPL mint for STRATUM — Token-2022, 6 decimals, verified on mainnet-beta 2026-09-24. */
     tokenMint: 'EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU',
     /** Alias kept so existing client/server code reading `tokenAddress` keeps working. */
     tokenAddress: 'EtCLoVVQ87RfiJELMvcHxf1JwcSP2iNAaL73uacPFaLU',
     /** On-chain payout wallet (public). Fresh Solana keypair generated 2026-09-22. */
     treasuryAddress: 'AYMwwmPxucSXDoc3Qx7prVnH5rP3XpgBDJVENed4A9mo',
     /** Display ticker — matches the mint's own on-chain Token-2022 metadata symbol
-     *  exactly ("STRATUM"), verified 2026-09-24. Was "STRM" as a distinct shorthand
+     *  exactly ("STRATUM"), verified 2026-09-24. Was "STRATUM" as a distinct shorthand
      *  before the real mint existed; corrected to match the actual contract once it
      *  did, per the project owner's explicit call (a shorthand that doesn't match the
      *  real ticker risks confusing anyone verifying the token against the contract). */

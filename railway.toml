@@ -7,6 +7,7 @@
 #      STRATUM_TOKEN_MINT already ships as the real mint in src/token-config.js's
 #      defaults. The one commerce secret still needed for real settlement:
 #      STRATUM_CLAIM_SIGNER_KEY.
+#      STRATUM_SINK_ONCHAIN=1  (player-wallet requisition/rush + GLDX funding swap)
 [build]
 builder = "dockerfile"
 

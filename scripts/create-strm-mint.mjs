@@ -1,5 +1,5 @@
 /**
- * create-strm-mint.mjs — create the official STRM SPL mint on Solana.
+ * create-strm-mint.mjs — create the official STRATUM SPL mint on Solana.
  *
  * OPERATOR-RUN, NOT AGENT-RUN. This spends real SOL (mint creation + metadata)
  * and creates a real, permanent token supply — run it yourself, from your own
@@ -12,7 +12,7 @@
  *
  * What it does:
  *   - creates an SPL mint with 9 decimals, mint authority = your wallet
- *   - mints `initialSupply` whole STRM to YOUR wallet's ATA (pass --supply N)
+ *   - mints `initialSupply` whole STRATUM to YOUR wallet's ATA (pass --supply N)
  *   - optionally revokes the mint authority (--lock) so supply is fixed forever,
  *     matching the fixed-supply promise in README.md's Commerce section
  *
@@ -75,7 +75,7 @@ console.log('mint ' + mint.toBase58());
 const ata = await getOrCreateAssociatedTokenAccount(connection, payer, mint, payer.publicKey);
 const raw = BigInt(supply) * (10n ** BigInt(decimals));
 await mintTo(connection, payer, mint, ata.address, payer.publicKey, raw);
-console.log('minted ' + supply + ' STRM to ' + ata.address.toBase58());
+console.log('minted ' + supply + ' STRATUM to ' + ata.address.toBase58());
 
 if (lock) {
   await setAuthority(connection, payer, mint, null, AuthorityType.MintTokens);

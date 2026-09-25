@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Report whether this machine can settle STRM. Prints public addresses and
+ * Report whether this machine can settle STRATUM. Prints public addresses and
  * balances only — never the signer secret.
  *
  *   node scripts/check-solana.cjs

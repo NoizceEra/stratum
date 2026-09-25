@@ -248,6 +248,10 @@
   <div class="barlab"><span>life</span><span id="h-hp">100 / 100</span></div>
   <div class="bar" id="willbar"><div></div></div>
   <div class="barlab"><span>will</span><span id="h-energy">240</span></div>
+  <div class="hud-row">
+    <button type="button" id="will-btn" class="hud-btn" title="Restore will to full for STRATUM (burned)">REFILL WILL</button>
+    <span class="k" id="h-will-status" style="margin-left:6px;font-size:10px"></span>
+  </div>
   <div id="hotbar"></div>
   <div class="k" id="h-sel" style="margin-top:6px">—</div>
   <div id="h-target">
@@ -261,7 +265,7 @@
   <div class="big gold" id="h-pct">0.0000%</div>
   <div class="k" id="h-claimed">0 / 1,048,576</div>
   <div style="margin-top:7px"><span class="k">remain</span> <span class="v" id="h-remain">1,048,576</span></div>
-  <!-- Colony quota: total STRM ever shipped to Earth (burned via Earth Requisition).
+  <!-- Colony quota: total STRATUM ever shipped to Earth (burned via Earth Requisition).
        The actual mission-progress metric the game's story is about — separate from
        land claimed, which is colonization; this is extraction. -->
   <div style="margin-top:7px"><span class="k">silver shipped</span> <span class="v gold" id="h-quota">0</span></div>
@@ -302,6 +306,10 @@
          it costs no extra space on a phone; the title attribute carries the full
          per-source breakdown for a hover (desktop) or an accessibility-tree read (agent). -->
     <div class="k" style="margin-top:6px;font-size:10px" id="h-yield" title="">yield 1.00x</div>
+    <div style="margin-top:6px">
+      <span class="k">GLDX claim</span> <span class="v gold" id="h-gldx">0</span>
+      <span class="k" style="margin-left:6px;font-size:9px">ready</span> <span class="v" id="h-gldx-ready">0</span>
+    </div>
     <div class="hud-row">
       <button type="button" id="wallet-btn" class="hud-btn">CONNECT WALLET</button>
       <span class="k" id="h-wallet" style="margin-left:6px;font-size:10px"></span>
@@ -309,6 +317,8 @@
     <div class="k" id="h-payout-note" style="margin-top:6px;font-size:10px;max-width:280px">Play first. Connect a wallet to claim or convert — a fee applies then.</div>
     <div class="hud-row">
       <button type="button" id="claim-btn" class="hud-btn" title="Requires a connected wallet">CLAIM STRATUM</button>
+      <button type="button" id="claim-gldx-btn" class="hud-btn" style="margin-left:4px" title="Claim GLDX the treasury has funded">CLAIM GLDX</button>
+      <span class="k" id="h-gldx-status" style="margin-left:6px;font-size:10px"></span>
       <span class="k" id="h-claim-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <div class="hud-row">
@@ -316,11 +326,11 @@
       <button type="button" id="convert-strm-btn" class="hud-btn" style="margin-left:4px" title="Requires a connected wallet">STRATUM → GOLD</button>
       <span class="k" id="h-convert-status" style="margin-left:6px;font-size:10px"></span>
     </div>
-    <!-- Earth Requisition: the actual STRM sink. Most of what you ship is burned
-         forever; a slice funds the treasury. This is the first real reason STRM is
-         worth anything beyond a number that goes up — see src/token-sink.js. -->
+    <!-- Earth Requisition: the STRATUM sink. Live hosts ship from the linked wallet
+         (1% tax to holders, then 80% burned / 20% treasury). Pending is the float
+         you earn before a claim. -->
     <div class="hud-row">
-      <button type="button" id="requisition-btn" class="hud-btn" title="Requires a connected wallet and pending STRATUM">SHIP TO EARTH</button>
+      <button type="button" id="requisition-btn" class="hud-btn" title="Ships STRATUM. Live hosts pull from your wallet; otherwise from pending.">SHIP TO EARTH</button>
       <span class="k" id="h-requisition-status" style="margin-left:6px;font-size:10px"></span>
     </div>
     <!-- populated by game.js's applyCommerceConfig() as soon as commerce config
@@ -419,9 +429,9 @@
         Stratum isn't a quarry you empty, it's a world you settle.<br>
       <b>You can only release a claim</b> — you can never take one from another colonist.<br>
       <b>Refine what you mine.</b> A kiln turns ore into more gold — the reason Earth sent you.<br>
-      <b>Play first.</b> Mining and crafting earn gold and STRATUM with no wallet.<br>
-      <b>Wallet when you cash out.</b> Connect a Solana wallet to claim STRATUM or convert gold.
-        A fee is taken only on claim and convert.
+      <b>Play first.</b> Mining and crafting earn gold, STRATUM, and a GLDX claim. Holding STRATUM makes that claim larger, and trades of STRATUM pay holders in GLDX.<br>
+      <b>Wallet when you cash out.</b> Connect a Solana wallet to claim STRATUM, claim GLDX, convert gold,
+        or ship claimed STRATUM to Earth. A fee is taken only on claim and convert.
     </div>
     <input id="name-in" maxlength="18" placeholder="COLONIST NAME" autocomplete="off">
     <div id="gateswatch"></div>

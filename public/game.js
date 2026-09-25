@@ -878,6 +878,7 @@
     hp: 100, maxHp: 100, atk: 7, kills: 0, inv: { wood: 0, ore: 0, herb: 0, crystal: 0, gold: 0 },
     claimed: 0, total: W * H, online: 0, volatile: null,
     commerce: null, tokenPending: 0, tokenOnChain: null, walletAddress: null, colonyQuota: 0,
+    gldxPending: 0, gldxPayable: 0, gldxText: '0', gldxReadyText: '0',
     sel: 0, zoom: 1, ready: false,
     cam: { x: 0, y: 0 }, mouse: { x: 0, y: 0 },
     edits: new Map(), baseCache: new Map(), lamps: new Set(),
@@ -1015,6 +1016,10 @@
         S.customization = m.customization || null;
         if (m.commerce) applyCommerceConfig(m.commerce);
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.gldxPending === 'number') S.gldxPending = m.gldxPending;
+        if (typeof m.gldxPayable === 'number') S.gldxPayable = m.gldxPayable;
+        if (m.gldxText) S.gldxText = m.gldxText;
+        if (m.gldxReadyText) S.gldxReadyText = m.gldxReadyText;
         if (m.tokenWallet) S.walletAddress = m.tokenWallet;
         if (m.payout) S.payout = m.payout;
         if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
@@ -1114,6 +1119,29 @@
         S.builderCount = m.count | 0; S.builderMultiplier = m.multiplier; S.builderTier = m.tier;
         updateYieldHud();
         break;
+      case 'gldx':
+        if (typeof m.gldxPending === 'number') S.gldxPending = m.gldxPending;
+        if (typeof m.gldxPayable === 'number') S.gldxPayable = m.gldxPayable;
+        if (m.gldxText) S.gldxText = m.gldxText;
+        if (m.gldxReadyText) S.gldxReadyText = m.gldxReadyText;
+        updateWalletHud();
+        if ((m.gldxPayable | 0) > 0) toast('GLDX READY TO CLAIM', true);
+        break;
+      case 'gldx-claimed':
+        if (typeof m.gldxPending === 'number') S.gldxPending = m.gldxPending;
+        if (typeof m.gldxPayable === 'number') S.gldxPayable = m.gldxPayable;
+        if (m.gldxText) S.gldxText = m.gldxText;
+        if (m.gldxReadyText) S.gldxReadyText = m.gldxReadyText;
+        var gst = document.getElementById('h-gldx-status');
+        if (m.ok) {
+          if (gst) gst.textContent = 'CLAIMED ' + (m.paidText || '');
+          toast('GLDX CLAIMED', true);
+        } else {
+          if (gst) gst.textContent = '';
+          toast((m.err || 'GLDX CLAIM FAILED').toUpperCase());
+        }
+        updateWalletHud();
+        break;
       case 'holder-tier':
         S.holderMultiplier = m.multiplier; S.holderTier = m.tier;
         updateYieldHud();
@@ -1167,6 +1195,8 @@
         if (nd && m.state === 0) { nd.state = 0; nd.until = Date.now() + (m.ripeSec || 0) * 1000; }
         if (m.inv) S.inv = m.inv;
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.gldxPending === 'number') { S.gldxPending = m.gldxPending; S.gldxText = m.gldxText || S.gldxText; }
+        if (typeof m.gldxPayable === 'number') { S.gldxPayable = m.gldxPayable; S.gldxReadyText = m.gldxReadyText || S.gldxReadyText; }
         if (typeof m.streakMultiplier === 'number') { S.streakMultiplier = m.streakMultiplier; updateYieldHud(); }
         if (m.gains) {
           S.harvests += 1;
@@ -1179,8 +1209,10 @@
           }
           var ndc = NODECLR[m.kind] || '#c9e08a';
           puff(m.x + 0.5, m.y + 0.3, ndc, 7, 1.8);
+          if (m.gldx > 0) float(m.x, m.y - 0.6, '+' + formatGldx(m.gldx) + ' GLDX', '#e8c76a', 0.35);
           sfx('harvest');
           refreshQuest(true);
+          updateWalletHud();
         } else if (m.partial) {
           float(m.x, m.y, 'struck', '#cbbf9a', 0);
           puff(m.x + 0.5, m.y + 0.3, '#cbbf9a', 3, 1.2);
@@ -1257,6 +1289,9 @@
         if (m.killed) {
           S.kills = m.kills; S.atk = m.atk; S.inv = m.inv;
           if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+          if (typeof m.gldxPending === 'number') { S.gldxPending = m.gldxPending; S.gldxText = m.gldxText || formatGldx(m.gldxPending); }
+          if (typeof m.gldxPayable === 'number') { S.gldxPayable = m.gldxPayable; S.gldxReadyText = m.gldxReadyText || formatGldx(m.gldxPayable); }
+          if (m.gldx > 0 && mm) float(mm.rx, mm.ry - 1.2, '+' + formatGldx(m.gldx) + ' GLDX', '#e8c76a', 0.35);
           if (typeof m.level === 'number' && m.level > (S.level || 1)) {
             S.level = m.level;
             toast('LEVEL ' + m.level + ' — LIFE AND STRENGTH GROW', true);
@@ -1343,11 +1378,15 @@
         if (m.err) { toast(String(m.err).toUpperCase()); sfx('deny'); break; }
         if (m.inv) S.inv = m.inv;
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.gldxPending === 'number') { S.gldxPending = m.gldxPending; S.gldxText = m.gldxText || formatGldx(m.gldxPending); }
+        if (typeof m.gldxPayable === 'number') { S.gldxPayable = m.gldxPayable; S.gldxReadyText = m.gldxReadyText || formatGldx(m.gldxPayable); }
         var craftedN = m.count | 0 || 1;
         S.crafts += craftedN;
         toast((craftedN > 1 ? craftedN + 'x ' : 'CRAFTED: ') + String(m.item || '').toUpperCase(), true);
         if (m.gains && m.gains.gold) float(S.x, S.y - 0.6, '+' + m.gains.gold + ' gold', '#e8c76a', 0);
         if (m.gains && m.gains.token) float(S.x, S.y - 0.9, '+' + m.gains.token + ' ' + ((S.commerce && S.commerce.symbol) || 'STRATUM'), '#8fe4ff', 0);
+        if (m.gldx > 0) float(S.x, S.y - 1.2, '+' + formatGldx(m.gldx) + ' GLDX', '#e8c76a', 0.35);
+        updateWalletHud();
         sfx('craft');
         if (S.craftOpen) buildCraft();
         if (window.StratumHud) window.StratumHud.noteAction();
@@ -1440,6 +1479,30 @@
         updateWalletHud();
         break;
       }
+      case 'requisition-sign': {
+        var reqSignEl = document.getElementById('h-requisition-status');
+        if (reqSignEl) reqSignEl.textContent = 'SIGN IN WALLET';
+        toast('SIGN THE SHIPMENT IN YOUR WALLET');
+        signSinkTx(m, function (sig) {
+          send({ t: 'requisition', amount: m.amount, txHash: sig });
+          if (reqSignEl) reqSignEl.textContent = 'CONFIRMING…';
+        }, function (err) {
+          if (reqSignEl) reqSignEl.textContent = 'SIGN FAILED';
+          toast(String(err || 'SIGN FAILED').toUpperCase());
+          sfx('deny');
+        });
+        break;
+      }
+      case 'rush-sign': {
+        toast('SIGN THE RUSH IN YOUR WALLET');
+        signSinkTx(m, function (sig) {
+          send({ t: 'structure-rush', x: m.x, y: m.y, txHash: sig });
+        }, function (err) {
+          toast(String(err || 'SIGN FAILED').toUpperCase());
+          sfx('deny');
+        });
+        break;
+      }
       case 'requisitioned': {
         var reqStatusEl = document.getElementById('h-requisition-status');
         if (!m.ok) {
@@ -1457,12 +1520,51 @@
           ' — ' + m.burned + ' BURNED, ' + m.treasury + ' TO TREASURY', true);
         sfx('craft');
         updateWalletHud();
+        refreshOnChainBalance();
         break;
       }
       case 'requisition-broadcast': {
         if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
         toast(String(m.by || 'SOMEONE').toUpperCase() + ' SHIPPED ' + m.amount +
           ' ' + ((S.commerce && S.commerce.symbol) || 'STRATUM') + ' TO EARTH');
+        break;
+      }
+      case 'vanity-bought': {
+        if (!m.ok) {
+          toast(String(m.err || 'CANNOT BUY').toUpperCase());
+          sfx('deny');
+          if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+          updateWalletHud();
+          break;
+        }
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
+        // mark owned locally so the row equips immediately without a re-hello
+        if (S.customization) {
+          for (var vi = 0; vi < S.customization.accessories.length; vi++) {
+            if (S.customization.accessories[vi].id === m.id) S.customization.accessories[vi].owned = true;
+          }
+        }
+        toast('VANITY UNLOCKED — ' + m.burned + ' BURNED, ' + m.treasury + ' TO TREASURY', true);
+        sfx('levelup');
+        if (S.wardrobeOpen) buildWardrobe();
+        updateWalletHud();
+        break;
+      }
+      case 'will-filled': {
+        var willStatus = document.getElementById('h-will-status');
+        if (!m.ok) {
+          if (willStatus) willStatus.textContent = String(m.err || '').toUpperCase();
+          toast(String(m.err || 'CANNOT REFILL').toUpperCase());
+          sfx('deny');
+          break;
+        }
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
+        if (willStatus) willStatus.textContent = 'REFILLED';
+        toast('WILL RESTORED — ' + m.burned + ' BURNED', true);
+        sfx('levelup');
+        updateWalletHud();
         break;
       }
       case 'rushed': {
@@ -1475,6 +1577,7 @@
         float(m.x, m.y - 0.6, '+' + m.gained + ' ' + m.resource, '#8fe4ff', 0);
         sfx('craft');
         updateWalletHud();
+        if (m.onChain) refreshOnChainBalance();
         break;
       }
       case 'tooled': {
@@ -1714,7 +1817,7 @@
       // A wall makes nothing to collect — clicking your own one tears it down instead,
       // the same "click it to undo it" gesture RELEASE already uses for a claimed tile.
       if (st.blocksMovement) { send({ t: 'release-structure', x: x, y: y }); return; }
-      // Shift+click pays STRM to instantly finish the wait instead of collecting what
+      // Shift+click pays STRATUM to instantly finish the wait instead of collecting what
       // has accrued so far — see src/token-sink.js's rushCost() for the pricing.
       if (keys['shift']) send({ t: 'structure-rush', x: x, y: y });
       else send({ t: 'collect-structure', x: x, y: y });
@@ -2079,6 +2182,13 @@
 
   /** Shortens a base58 address to `abcd…wxyz` for compact HUD display — the full
    *  value always still lives in the title/href for anyone who wants to verify it. */
+  function formatGldx(raw) {
+    raw = raw | 0;
+    if (raw < 0) raw = 0;
+    var whole = Math.floor(raw / 100000000);
+    var frac = String(raw % 100000000).padStart(8, '0').replace(/0+$/, '');
+    return frac ? (whole + '.' + frac) : String(whole);
+  }
   function shortAddr(a) {
     return (typeof a === 'string' && a.length > 12) ? (a.slice(0, 4) + '…' + a.slice(-4)) : (a || '');
   }
@@ -2126,7 +2236,7 @@
       'mining streak ' + streak.toFixed(2) + 'x' + (S.harvests ? '' : ' (mine to build a streak)'),
       'builder ' + builder.toFixed(2) + 'x (' + (S.builderTier || 'Settler') + ', ' + (S.builderCount | 0) + ' structure' + ((S.builderCount | 0) === 1 ? '' : 's') + ')',
       'colony ' + colony.toFixed(2) + 'x (' + (S.colonyMilestone || 'Outpost') + ')',
-      'holding ' + holder.toFixed(2) + 'x (' + (S.holderTier || 'Colonist') + ')'
+      'holding ' + holder.toFixed(2) + 'x (' + (S.holderTier || 'Colonist') + ', multiplies STRATUM and GLDX)'
     ];
     var breakdown = parts.join(' · ');
     el.title = breakdown;
@@ -2140,6 +2250,10 @@
     var goldEl = document.getElementById('h-gold');
     if (goldEl) goldEl.textContent = String((S.inv && S.inv.gold) | 0);
     if (pendingEl) pendingEl.textContent = String(S.tokenPending | 0);
+    var gldxEl = document.getElementById('h-gldx');
+    var gldxReadyEl = document.getElementById('h-gldx-ready');
+    if (gldxEl) gldxEl.textContent = S.gldxText || formatGldx(S.gldxPending | 0);
+    if (gldxReadyEl) gldxReadyEl.textContent = S.gldxReadyText || formatGldx(S.gldxPayable | 0);
     if (lab) {
       lab.textContent = S.walletAddress && window.StratumWallet
         ? window.StratumWallet.shortAddr(S.walletAddress) : '';
@@ -2156,7 +2270,12 @@
     var csBtn = document.getElementById('convert-strm-btn');
     if (csBtn) csBtn.classList.toggle('dim', !hasWallet);
     var reqBtn = document.getElementById('requisition-btn');
-    if (reqBtn) reqBtn.classList.toggle('dim', !hasWallet || !(S.tokenPending | 0));
+    if (reqBtn) {
+      var shipOnChain = !!(S.payout && S.payout.sinkOnChain);
+      reqBtn.classList.toggle('dim', shipOnChain ? !hasWallet : !(S.tokenPending | 0));
+    }
+    var gldxBtn = document.getElementById('claim-gldx-btn');
+    if (gldxBtn) gldxBtn.classList.toggle('dim', !hasWallet || !(S.gldxPayable | 0));
     if (chainEl) {
       if (S.tokenOnChain == null) chainEl.textContent = 'on-chain —';
       else {
@@ -2170,9 +2289,35 @@
     if (note && S.payout) {
       var claimPct = (S.payout.claimBps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
       var convPct = (S.payout.convertBps / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
-      note.textContent = 'Play first. Claim fee ' + claimPct + '% · convert fee ' + convPct +
-        '% · ' + S.payout.goldPerStrm + ' gold = 1 ' + ((S.commerce && S.commerce.symbol) || 'STRATUM');
+      note.textContent = 'Hold STRATUM, earn GLDX from trades. Play to grow a GLDX claim — holding multiplies it. Claim fee ' +
+        claimPct + '% · convert fee ' + convPct + '% · ' + S.payout.goldPerStrm + ' gold = 1 ' +
+        ((S.commerce && S.commerce.symbol) || 'STRATUM') +
+        (S.payout.sinkOnChain
+          ? ('. Ship ' + (S.payout.onChainShip | 0) + ' from your wallet to burn 80% and fund GLDX.')
+          : '.');
     }
+    var willBtn2 = document.getElementById('will-btn');
+    if (willBtn2) {
+      var wc = (S.payout && S.payout.willRefillCost) || 10;
+      willBtn2.textContent = 'REFILL WILL · ' + wc + ' STRATUM';
+      willBtn2.classList.toggle('dim', (S.energy | 0) >= (S.energyMax | 0) || (S.tokenPending | 0) < wc);
+    }
+  }
+  function signSinkTx(m, onSig, onErr) {
+    if (!window.StratumWallet || typeof window.StratumWallet.signAndSendTx !== 'function') {
+      onErr('wallet cannot sign');
+      return;
+    }
+    window.StratumWallet.signAndSendTx(m.tx, m.message).then(onSig).catch(function (e) {
+      onErr((e && e.message) || 'sign failed');
+    });
+  }
+  function refreshOnChainBalance() {
+    if (!window.StratumWallet || !S.commerce || !S.walletAddress) return;
+    window.StratumWallet.balanceOf(S.commerce, S.walletAddress).then(function (bal) {
+      S.tokenOnChain = bal;
+      updateWalletHud();
+    }).catch(function () {});
   }
   var challengeWait = null;
   function requestChallenge() {
@@ -2679,15 +2824,22 @@
       var a = S.customization.accessories[j];
       var unlocked = !a.unlockedBy || S.achUnlockedIds.indexOf(a.unlockedBy) !== -1;
       var equipped = S[a.slot] === a.id;
-      acHtml += '<div class="acrow' + (equipped ? ' on' : '') + (unlocked ? '' : ' locked') + '" data-id="' + a.id +
-        '" data-slot="' + a.slot + '" data-unlocked="' + (unlocked ? '1' : '0')
-        + (unlocked ? '' : '" title="LOCKED — ' + (a.unlockDesc || '') ) + '">' +
+      // Vanity row: STRATUM-priced, owned flag rides the welcome payload. Unowned
+      // vanity renders a BUY affordance instead of the equip path — clicking buys
+      // (server deducts + burns), clicking owned equips like everything else.
+      var isVanity = typeof a.priceStratum === 'number' && a.priceStratum > 0;
+      var owned = isVanity ? !!a.owned : true;
+      var canWear = unlocked && owned;
+      acHtml += '<div class="acrow' + (equipped ? ' on' : '') + (canWear ? '' : ' locked') + '" data-id="' + a.id +
+        '" data-slot="' + a.slot + '" data-unlocked="' + (canWear ? '1' : '0') + '" data-vanity="' + (isVanity && !owned ? '1' : '0')
+        + (canWear ? '' : '" title="LOCKED — ' + (isVanity && !owned ? ('BUY FOR ' + a.priceStratum + ' STRATUM') : (a.unlockDesc || '')) ) + '">' +
         '<div class="acswab"></div><div class="acnm">' + a.name.toUpperCase() + '</div>' +
-        '<div class="acslot">' + a.slot.toUpperCase() + (equipped ? ' · WORN' : '') + '</div></div>';
+        '<div class="acslot">' + a.slot.toUpperCase() + (equipped ? ' · WORN' : (isVanity && !owned ? ' · ' + a.priceStratum + ' STRATUM' : '')) + '</div></div>';
     }
     ac.innerHTML = acHtml;
     Array.prototype.forEach.call(ac.children, function (el) {
           el.addEventListener('click', function () {
+            if (el.dataset.vanity === '1') { send({ t: 'buy-vanity', id: el.dataset.id }); sfx('ui'); return; }
             if (el.dataset.unlocked !== '1') { sfx('deny'); return; }
             var slot = el.dataset.slot, id = el.dataset.id;
             // clicking an already-equipped accessory takes it off; otherwise it's equipped
@@ -3854,13 +4006,34 @@
     if (convertGoldBtn) convertGoldBtn.addEventListener('click', function () { convert('to-token'); });
     var convertStrmBtn = document.getElementById('convert-strm-btn');
     if (convertStrmBtn) convertStrmBtn.addEventListener('click', function () { convert('to-gold'); });
+    var gldxClaimBtn = document.getElementById('claim-gldx-btn');
+    if (gldxClaimBtn) gldxClaimBtn.addEventListener('click', function () {
+      if (!S.ready) return;
+      if (!S.walletAddress) { toast('LINK A WALLET FIRST'); return; }
+      if (!(S.gldxPayable | 0)) { toast('NO GLDX FUNDED YET'); return; }
+      send({ t: 'claim-gldx' });
+      var gst = document.getElementById('h-gldx-status');
+      if (gst) gst.textContent = 'CLAIMING GLDX…';
+    });
     var requisitionBtn = document.getElementById('requisition-btn');
     if (requisitionBtn) requisitionBtn.addEventListener('click', function () {
       if (!S.ready) return;
-      if (!(S.tokenPending | 0)) { toast('NOTHING PENDING'); return; }
+      var live = !!(S.payout && S.payout.sinkOnChain);
+      if (live) {
+        if (!S.walletAddress) { toast('LINK A WALLET FIRST'); return; }
+      } else if (!(S.tokenPending | 0)) {
+        toast('NOTHING PENDING'); return;
+      }
       send({ t: 'requisition' });
       var reqStatusEl = document.getElementById('h-requisition-status');
       if (reqStatusEl) reqStatusEl.textContent = 'SHIPPING…';
+    });
+    var willBtn = document.getElementById('will-btn');
+    if (willBtn) willBtn.addEventListener('click', function () {
+      if (!S.ready) return;
+      send({ t: 'refill-will' });
+      var willStatus = document.getElementById('h-will-status');
+      if (willStatus) willStatus.textContent = 'REFILLING…';
     });
     try {
       var savedW = localStorage.getItem('stratum_wallet');

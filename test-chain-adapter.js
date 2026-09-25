@@ -1,7 +1,7 @@
 /* test-chain-adapter.js — assertions for src/chain-adapter.js (Solana SPL). PASS/FAIL per case, non-zero exit on failure.
  *
  * No test in this file ever touches a real network, signs a real transaction, or moves a
- * real cent of STRM — settleClaim()/readBalance()'s test-only `deps` argument (see that
+ * real cent of STRATUM — settleClaim()/readBalance()'s test-only `deps` argument (see that
  * file's header) swaps in a fake connection, so `npm test` stays fully offline even
  * though the production code path really does build and send an SPL transfer. ATA
  * derivation and instruction building run for real (they're pure/offline); only the
@@ -66,11 +66,18 @@ function fakeConnection(opts) {
         if (o.noTreasuryAta) return null;
         return tokenAcct(o.treasuryRaw !== undefined ? o.treasuryRaw : 1000n);
       }
-      if (s === pAta) return o.playerExists ? tokenAcct(0n) : null;
+      if (s === pAta) {
+        if (o.playerRaw !== undefined) return tokenAcct(o.playerRaw);
+        return o.playerExists ? tokenAcct(0n) : null;
+      }
       return null;
     },
     getLatestBlockhash: async function () {
       return { blockhash: 'EETubP5AKHgjPAhzPAFcb8BAY1hMH639CWCFTqi3hqUy', lastValidBlockHeight: 1000 };
+    },
+    getParsedTransaction: async function () {
+      if (o.failParsedTx) throw new Error('rpc down');
+      return o.parsedTx === undefined ? null : o.parsedTx;
     },
     sendRawTransaction: async function (raw) {
       if (o.failSend) throw new Error('send exploded');
@@ -219,7 +226,7 @@ check('isConfigured-false-without-signer-even-when-marked-real', CA.isConfigured
   check('settleClaim-reports-bad_mint-when-mint-missing',
     noMint.ok === false && noMint.reason === 'bad_mint');
 
-  // STRATUM's real STRM mint is Token-2022 (with a transfer-fee extension), not the
+  // STRATUM's real STRATUM mint is Token-2022 (with a transfer-fee extension), not the
   // legacy Token program — settleClaim() must detect that from the mint account's own
   // `owner` field and derive/build against TOKEN_2022_PROGRAM_ID, not assume legacy.
   // A fixture using the legacy program id (every other case above) would derive
@@ -286,12 +293,12 @@ check('isConfigured-false-without-signer-even-when-marked-real', CA.isConfigured
   check('readBalance-applies-decimals-correctly-at-0-decimals', decCheckRead.balance === 777);
 
   // At 9 decimals (SPL's own ceiling, still a legal value to explicitly set even
-  // though it doesn't match THIS mint), 1_500_000_000 base units read as 1 whole STRM.
+  // though it doesn't match THIS mint), 1_500_000_000 base units read as 1 whole STRATUM.
   const nineEnv = Object.assign({}, realEnv, { STRATUM_TOKEN_DECIMALS: '9' });
   const nineRead = await CA.readBalance(WALLET, nineEnv, fakeDeps({ parsed: parsedBal('1500000000') }));
   check('readBalance-floors-base-units-at-9-decimals', nineRead.ok === true && nineRead.balance === 1);
 
-  // An unset/invalid STRATUM_TOKEN_DECIMALS must fall back to 6 — the real STRM mint's
+  // An unset/invalid STRATUM_TOKEN_DECIMALS must fall back to 6 — the real STRATUM mint's
   // own decimals — not a generic SPL ceiling. Getting this wrong silently encodes every
   // real transfer amount 1000x too large against this specific mint.
   const noDecEnv = Object.assign({}, realEnv); delete noDecEnv.STRATUM_TOKEN_DECIMALS;
@@ -343,6 +350,54 @@ check('isConfigured-false-without-signer-even-when-marked-real', CA.isConfigured
     check('settleClaim-queue-both-queued-calls-still-succeed', r1q.ok === true && r2q.ok === true);
     check('settleClaim-queue-both-calls-get-their-own-txHash', r1q.txHash === 'sig-first' && r2q.txHash === 'sig-second');
   })();
+
+  check('canReadMint-true-without-signer', CA.canReadMint(Object.assign({}, realEnv, {
+    STRATUM_CLAIM_SIGNER_KEY: undefined, STRATUM_TREASURY_KEY: undefined
+  })) === true);
+  check('canReadMint-false-when-placeholder', CA.canReadMint(fullEnv) === false);
+
+  const built = await CA.buildPlayerTransfer(WALLET, 10, realEnv, fakeDeps({ playerRaw: 1000n }));
+  check('buildPlayerTransfer-returns-unsigned-tx',
+    built.ok === true && typeof built.tx === 'string' && built.tx.length > 20 &&
+    typeof built.message === 'string' && built.message.length > 20);
+
+  const broke = await CA.buildPlayerTransfer(WALLET, 10, realEnv, fakeDeps({ playerRaw: 1n }));
+  check('buildPlayerTransfer-refuses-when-wallet-cannot-cover',
+    broke.ok === false && broke.reason === 'insufficient_balance');
+
+  const noPlayer = await CA.buildPlayerTransfer(WALLET, 10, realEnv, fakeDeps());
+  check('buildPlayerTransfer-refuses-when-player-has-no-ata',
+    noPlayer.ok === false && noPlayer.reason === 'insufficient_balance');
+
+  function parsedMove(playerDrop, treasuryGain) {
+    return {
+      meta: {
+        err: null,
+        preTokenBalances: [
+          { owner: WALLET, mint: MINT, uiTokenAmount: { amount: String(playerDrop) } },
+          { owner: TREASURY, mint: MINT, uiTokenAmount: { amount: '0' } }
+        ],
+        postTokenBalances: [
+          { owner: WALLET, mint: MINT, uiTokenAmount: { amount: '0' } },
+          { owner: TREASURY, mint: MINT, uiTokenAmount: { amount: String(treasuryGain) } }
+        ]
+      }
+    };
+  }
+  // realEnv decimals are 0, so 10 whole = 10 raw. 1% tax of 10 floors to 0.
+  const verified = await CA.verifyIncomingTransfer('sigTEST123456789012345678901234567890123456', WALLET, 10, realEnv,
+    fakeDeps({ parsedTx: parsedMove(10, 10) }));
+  check('verifyIncomingTransfer-accepts-matching-move', verified.ok === true);
+
+  const shortPay = await CA.verifyIncomingTransfer('sigTEST123456789012345678901234567890123456', WALLET, 10, realEnv,
+    fakeDeps({ parsedTx: parsedMove(4, 4) }));
+  check('verifyIncomingTransfer-rejects-wrong-amount',
+    shortPay.ok === false && shortPay.reason === 'mismatch');
+
+  const missingTx = await CA.verifyIncomingTransfer('sigTEST123456789012345678901234567890123456', WALLET, 10, realEnv,
+    fakeDeps());
+  check('verifyIncomingTransfer-not-found-when-absent',
+    missingTx.ok === false && missingTx.reason === 'not_found');
 
   // ---------------------------------------------------------------- purity / hygiene
   const source = require('fs').readFileSync('./src/chain-adapter.js', 'utf8')
