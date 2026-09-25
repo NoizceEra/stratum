@@ -21,8 +21,9 @@ check('isAction', S.isAction('craft') === true && S.isAction('dance') === false)
 
 // ---- talk shape ----
 const t0 = S.talk('sable', {});
-check('talk-shape', t0 && t0.name === 'SABLE' && typeof t0.line === 'string' && t0.line.length > 0 && Array.isArray(t0.actions) && t0.actions.length === 3);
+check('talk-shape', t0 && t0.name === 'SABLE' && typeof t0.line === 'string' && t0.line.length > 0 && Array.isArray(t0.actions) && t0.actions.length === 4);
 check('talk-actions-legal', t0.actions.every(a => S.isAction(a.do)));
+check('talk-has-tithe', t0.actions.some(a => a.do === 'tithe'));
 check('talk-unknown-null', S.talk('ghost', {}) === null);
 check('talk-garbage-ctx', (function () {
   const t = S.talk('ilo', null);

@@ -39,6 +39,8 @@ const ColonyMilestone = require('./src/colony-milestone.js');
 const Payout = require('./src/payout.js');
 const WalletProof = require('./src/wallet-proof.js');
 const Gldx = require('./src/gldx-yield.js');
+const Tithes = require('./src/tithes.js');
+const Vault = require('./src/vault.js');
 
 /** Optional local `.env` (never committed). Existing process.env wins — so hosting
  *  platform secrets always override a checked-out file. Zero-dep, KEY=VALUE only. */
@@ -589,6 +591,50 @@ function vanityOwned(key) {
     return qVanityAll.all(key).map(r => r.item);
   } catch (e) { return []; }
 }
+// Settler tithes: standing orders (k, settler). Entry is 100% treasury, upkeep is
+// a weekly burn-split from pending, lapse (not seizure) on unaffordable weeks.
+db.exec(`CREATE TABLE IF NOT EXISTS tithes(
+  k TEXT NOT NULL, settler TEXT NOT NULL, startedAt INTEGER NOT NULL,
+  lastUpkeepAt INTEGER NOT NULL, PRIMARY KEY(k,settler));`);
+const qTitheIns = db.prepare('INSERT OR IGNORE INTO tithes(k,settler,startedAt,lastUpkeepAt) VALUES(?,?,?,?)');
+const qTitheDel = db.prepare('DELETE FROM tithes WHERE k=? AND settler=?');
+const qTitheAll = db.prepare('SELECT settler, startedAt, lastUpkeepAt FROM tithes WHERE k=?');
+const qTitheDue = db.prepare('SELECT k, settler, lastUpkeepAt FROM tithes');
+function titheSettlers(key) {
+  try {
+    return qTitheAll.all(key).map(r => r.settler);
+  } catch (e) { return []; }
+}
+// Weekly tithe upkeep, in whole STRATUM from pending. Env-tunable; entry is not.
+const TITHE_WEEKLY = Number(process.env.STRATUM_TITHE_WEEKLY) > 0
+  ? Number(process.env.STRATUM_TITHE_WEEKLY) | 0 : Tithes.WEEKLY;
+// STRATUM vault: staked pending earning a weekly GLDX emission pro-rata.
+// Deposit takes 1% to treasury, withdrawal takes 2.5% to treasury; the stake
+// itself never burns (it comes back on withdraw) — the fees plus the GLDX pull
+// are the entanglement. Emission week tracked in counters (vault_kitty_week).
+db.exec(`CREATE TABLE IF NOT EXISTS vault_balances(
+  k TEXT PRIMARY KEY, balance INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL);`);
+const qVaultGet = db.prepare('SELECT balance FROM vault_balances WHERE k=?');
+const qVaultSet = db.prepare('INSERT INTO vault_balances(k,balance,updated) VALUES(?,?,?) ' +
+  'ON CONFLICT(k) DO UPDATE SET balance=excluded.balance, updated=excluded.updated');
+const qVaultAll = db.prepare('SELECT k, balance FROM vault_balances WHERE balance > 0');
+function vaultBalance(key) {
+  try {
+    const r = qVaultGet.get(key);
+    return r ? (r.balance | 0) : 0;
+  } catch (e) { return 0; }
+}
+function vaultStats() {
+  try {
+    const rows = qVaultAll.all();
+    let tvl = 0;
+    for (const r of rows) tvl += (r.balance | 0);
+    return { tvl: tvl, depositors: rows.length };
+  } catch (e) { return { tvl: 0, depositors: 0 }; }
+}
+// Weekly GLDX emission pool for depositors, raw units. Env-tunable.
+const VAULT_WEEKLY_GLDX = Number(process.env.STRATUM_VAULT_GLDX_WEEKLY) > 0
+  ? Number(process.env.STRATUM_VAULT_GLDX_WEEKLY) | 0 : Vault.WEEKLY_GLDX;
 /** One in-flight claim per player key. The chain send is async; a second click
  *  before it settles must not pay the same pending balance twice. */
 const claimsInFlight = new Set();
@@ -1011,15 +1057,20 @@ function economyStats() {
     } catch (e2) { /* histogram is best-effort */ }
     var treas = treasuryTotals();
     var burned = burnedTotal();
+    var vault = vaultStats();
     return {
       faucet: { totalPending: totalPending, totalClaimed: totalClaimed, avgPendingPerPlayer: avgPendingPerPlayer },
       sink: { burnedTotal: burned, treasuryFees: treas, treasurySTRM: treas.STRATUM | 0 },
+      vault: { tvl: vault.tvl, depositors: vault.depositors },
+      upkeep: { burnedWeek: counterOf('upkeep_week_burned'), dividendsWeek: counterOf('upkeep_week_divs') },
       pendingHistogram: buckets
     };
   } catch (e) {
     return {
       faucet: { totalPending: 0, totalClaimed: 0, avgPendingPerPlayer: 0 },
       sink: { burnedTotal: 0, treasuryFees: {}, treasurySTRM: 0 },
+      vault: { tvl: 0, depositors: 0 },
+      upkeep: { burnedWeek: 0, dividendsWeek: 0 },
       pendingHistogram: { '0': 0, '1-10': 0, '11-50': 0, '51-200': 0, '201-1000': 0, '1000+': 0 }
     };
   }
@@ -1719,7 +1770,11 @@ function applyCommerceReward(c, action, ctx, multiplier) {
       ? c.holderMultiplier : HolderBonus.BASE_MULTIPLIER;
     const builderMult = (typeof c.builderMultiplier === 'number' && c.builderMultiplier >= 1)
       ? c.builderMultiplier : BuilderBonus.BASE_MULTIPLIER;
-    const combinedMult = colonyMult * streakMult * holderMult * builderMult;
+    // Tithe yield: +10% while any standing order is active. Read live per action
+    // (a lapsed/cancelled tithe stops paying immediately) — one indexed row read.
+    let titheMult = 1;
+    try { if (c.key && titheSettlers(c.key).length > 0) titheMult = Tithes.MULT; } catch (e) {}
+    const combinedMult = colonyMult * streakMult * holderMult * builderMult * titheMult;
 
     const gold = boostByMultiplier(baseGold, combinedMult);
     const token = boostByMultiplier(baseToken, combinedMult);
@@ -1900,7 +1955,8 @@ const INBOUND = new Set(['hello', 'move', 'view', 'set', 'release', 'harvest', '
   'shop-list', 'shop-buy', 'shop-cancel', 'trade-offer', 'trade-accept', 'trade-cancel', 'emote',
   'parcel-mint', 'parcel-list', 'parcel-buy', 'parcel-cancel', 'parcel-browse', 'parcel-mine',
   'wallet-link', 'wallet-challenge', 'claim', 'claim-gldx', 'convert', 'buy-vanity',
-  'refill-will', 'requisition', 'salvage']);
+  'refill-will', 'tithe-start', 'tithe-cancel', 'vault-deposit', 'vault-withdraw',
+  'requisition', 'salvage']);
 
 function onMessage(c, msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { c.bad++; return; }
@@ -2019,6 +2075,8 @@ function onMessage(c, msg) {
         gold: (c.inv.gold | 0),
         tokenPending: c.tokenPending | 0,
         tokenWallet: c.tokenWallet || null,
+        tithes: titheSettlers(key),
+        vault: vaultBalance(key),
         gldxMint: Gldx.GLDX_MINT,
         gldxPending: c.gldxPending | 0,
         gldxPayable: c.gldxPayable | 0,
@@ -2643,6 +2701,86 @@ function onMessage(c, msg) {
         burned: qSplit.burned, treasury: qSplit.treasury,
         tokenPending: qNewPending, colonyQuota: burnedTotal()
       });
+      break;
+    }
+
+    // Settler tithes: a standing order for +10% reward yield. Entry is a flat
+    // 50,000 pending STRATUM, 100% to the treasury (collector, not burn — the
+    // recurring weekly upkeep is the burn side). Cancel is free; lapse on
+    // unaffordable upkeep weeks is silent-ish (a notice, never a seizure).
+    case 'tithe-start': {
+      if (!c.ready || !c.key) return;
+      const settler = cleanText(msg.settler, 16);
+      const led = ledgerOf(c.key);
+      const pending = led.pending | 0;
+      const v = Tithes.validateStart(settler, pending, titheSettlers(c.key));
+      if (!v.ok) {
+        return c.send({ t: 'tithe-started', ok: false, err: v.error, settler: settler,
+          price: v.price, tokenPending: pending, tithes: titheSettlers(c.key) });
+      }
+      ledgerSave(c.key, pending - v.price, led.claimed, led.wallet);
+      c.tokenPending = pending - v.price;
+      const now = Date.now();
+      qTitheIns.run(c.key, settler, now, now);
+      treasuryCredit('STRATUM', v.price);
+      stateSave(c);
+      c.send({ t: 'tithe-started', ok: true, settler: settler, price: v.price,
+        tokenPending: c.tokenPending | 0, tithes: titheSettlers(c.key) });
+      break;
+    }
+
+    case 'tithe-cancel': {
+      if (!c.ready || !c.key) return;
+      const settler = cleanText(msg.settler, 16);
+      qTitheDel.run(c.key, settler);
+      c.send({ t: 'tithe-cancelled', ok: true, settler: settler, tithes: titheSettlers(c.key) });
+      break;
+    }
+
+    // Vault deposit: move pending STRATUM into the stake. 1% entry fee straight
+    // to treasury. Omit amount to stake everything pending.
+    case 'vault-deposit': {
+      if (!c.ready || !c.key) return;
+      const led = ledgerOf(c.key);
+      const pending = led.pending | 0;
+      const amount = (msg.amount === undefined) ? pending
+        : (isFin(msg.amount) ? Math.trunc(msg.amount) : -1);
+      const v = Vault.validateDeposit(amount, pending);
+      if (!v.ok) {
+        return c.send({ t: 'vault-deposited', ok: false, err: v.error,
+          vault: vaultBalance(c.key), tokenPending: pending });
+      }
+      ledgerSave(c.key, pending - v.gross, led.claimed, led.wallet);
+      c.tokenPending = pending - v.gross;
+      const now = Date.now();
+      qVaultSet.run(c.key, vaultBalance(c.key) + v.net, now);
+      if (v.fee > 0) treasuryCredit('STRATUM', v.fee);
+      stateSave(c);
+      c.send({ t: 'vault-deposited', ok: true, gross: v.gross, fee: v.fee, net: v.net,
+        vault: vaultBalance(c.key), tokenPending: c.tokenPending | 0 });
+      break;
+    }
+
+    // Vault withdraw: stake back to pending minus the 2.5% exit fee to treasury.
+    // Omit amount to withdraw everything.
+    case 'vault-withdraw': {
+      if (!c.ready || !c.key) return;
+      const bal = vaultBalance(c.key);
+      const amount = (msg.amount === undefined) ? bal
+        : (isFin(msg.amount) ? Math.trunc(msg.amount) : -1);
+      const v = Vault.validateWithdraw(amount, bal);
+      if (!v.ok) {
+        return c.send({ t: 'vault-withdrawn', ok: false, err: v.error,
+          vault: bal, tokenPending: ledgerOf(c.key).pending | 0 });
+      }
+      const led = ledgerOf(c.key);
+      qVaultSet.run(c.key, bal - v.gross, Date.now());
+      ledgerSave(c.key, (led.pending | 0) + v.net, led.claimed, led.wallet);
+      c.tokenPending = (led.pending | 0) + v.net;
+      if (v.fee > 0) treasuryCredit('STRATUM', v.fee);
+      stateSave(c);
+      c.send({ t: 'vault-withdrawn', ok: true, gross: v.gross, fee: v.fee, net: v.net,
+        vault: vaultBalance(c.key), tokenPending: c.tokenPending | 0 });
       break;
     }
 
@@ -3353,6 +3491,113 @@ every(5000, 'trade sweep', () => {
   }
 });
 
+// tithe upkeep sweep (hourly cadence, weekly dues): each due tithe takes its week
+// from pending via the standard burn-split (+GLDX earmark like every sink), or
+// lapses silently when unaffordable. Lapse, never seizure — the entry fee bought
+// the option, not an obligation.
+const qTitheUpkeep = db.prepare('UPDATE tithes SET lastUpkeepAt=? WHERE k=? AND settler=?');
+// Land upkeep + quota dividends, weekly. Upkeep burns 2/tile (capped) from
+// pending — a baseline drain scaling with land, not sessions. Dividends recycle
+// treasury fee income to landholders pro-rata (capped by the vault, 2.5% fee
+// stays in the vault). NEVER seizes land: short upkeep just burns what exists.
+const UPKEEP_PER_TILE = Number(process.env.STRATUM_UPKEEP_PER_TILE) > 0
+  ? Number(process.env.STRATUM_UPKEEP_PER_TILE) | 0 : 2;
+const UPKEEP_WEEKLY_CAP = Number(process.env.STRATUM_UPKEEP_WEEKLY_CAP) > 0
+  ? Number(process.env.STRATUM_UPKEEP_WEEKLY_CAP) | 0 : 2000;
+const DIV_PER_TILE = Number(process.env.STRATUM_DIV_PER_TILE) > 0
+  ? Number(process.env.STRATUM_DIV_PER_TILE) | 0 : 1;
+const qTreasurySet = db.prepare('UPDATE treasury SET qty=?, updated=? WHERE item=?');
+// Hourly in production; STRATUM_TITHE_SWEEP_MS shortens it for tests (min 1s).
+const TITHE_SWEEP_MS = Math.max(1000, Number(process.env.STRATUM_TITHE_SWEEP_MS) > 0
+  ? Number(process.env.STRATUM_TITHE_SWEEP_MS) | 0 : 3600000);
+every(TITHE_SWEEP_MS, 'tithe upkeep', () => {
+  const now = Date.now();
+  let rows;
+  try { rows = qTitheDue.all(); } catch (e) { return; }
+  for (const r of rows) {
+    if (!Tithes.upkeepDue(r, now).due) continue;
+    const led = ledgerOf(r.k);
+    const s = Tithes.settleUpkeep(led.pending | 0, TITHE_WEEKLY);
+    if (!s.ok) {
+      qTitheDel.run(r.k, r.settler);
+      notifyPlayer(r.k, { t: 'tithe-lapsed', settler: r.settler });
+      continue;
+    }
+    ledgerSave(r.k, (led.pending | 0) - s.paid, led.claimed, led.wallet);
+    const split = applyBurnSplit(s.paid);
+    scheduleOnChainSink(split.burned, Gldx.earmarkOf(split.treasury));
+    qTitheUpkeep.run(now, r.k, r.settler);
+    notifyPlayer(r.k, { t: 'tithe-kept', settler: r.settler, paid: s.paid,
+      burned: split.burned, treasury: split.treasury, tokenPending: ledgerOf(r.k).pending | 0 });
+  }
+  // Vault emission: once per week, split the fixed GLDX pool pro-rata across
+  // depositors into their gldxPending (fundGldxClaims moves it payable when the
+  // on-chain treasury can actually cover it — same cap as play earnings).
+  try {
+    const week = Math.floor(now / Vault.WEEK_MS);
+    if (counterOf('vault_kitty_week') !== week) {
+      counterSet('vault_kitty_week', week);
+      const depRows = qVaultAll.all().map(x => ({ key: x.k, balance: x.balance | 0 }));
+      const shares = Vault.emissionShares(depRows, VAULT_WEEKLY_GLDX);
+      for (const sh of shares) {
+        if (sh.share > 0) creditGldx(sh.key, sh.share);
+      }
+      if (shares.length) console.log(`[vault] weekly emission: ${VAULT_WEEKLY_GLDX} GLDX raw across ${shares.length} depositor(s)`);
+    }
+  } catch (e) { console.log('[vault] emission skipped:', e && e.message); }
+  // Land upkeep + dividends: once per week, on the same cadence. Upkeep burns
+  // from pending (capped, never seizes); dividends pay landholders from the
+  // treasury vault pro-rata (capped by balance, fee stays in the vault).
+  try {
+    const week = Math.floor(now / Vault.WEEK_MS);
+    if (counterOf('upkeep_week') !== week) {
+      counterSet('upkeep_week', week);
+      let burnedW = 0, paidW = 0;
+      for (const [key, tiles] of ownerCounts) {
+        if (!(tiles > 0)) continue;
+        const owed = Math.min(UPKEEP_PER_TILE * tiles, UPKEEP_WEEKLY_CAP);
+        if (owed <= 0) continue;
+        const led = ledgerOf(key);
+        const take = Math.min(owed, led.pending | 0);
+        if (take > 0) {
+          ledgerSave(key, (led.pending | 0) - take, led.claimed, led.wallet);
+          qBurnUpsert.run('global', burnedTotal() + take, now);
+          burnedW += take;
+        }
+      }
+      const vaultBal = (treasuryTotals().STRATUM | 0);
+      let totalTiles = 0;
+      for (const [, tiles] of ownerCounts) totalTiles += tiles;
+      if (vaultBal > 0 && totalTiles > 0) {
+        const grossEach = DIV_PER_TILE;
+        // scale down if the vault cannot cover every tile at full rate
+        const scale = Math.min(1, vaultBal / (grossEach * totalTiles));
+        let paid = 0;
+        for (const [key, tiles] of ownerCounts) {
+          if (!(tiles > 0)) continue;
+          const gross = Math.floor(grossEach * tiles * scale);
+          if (gross <= 0) continue;
+          const fee = Math.floor((gross * CONVERT_FEE_BPS) / Payout.FEE_DENOM);
+          const net = gross - fee;
+          if (net <= 0) continue;
+          const led = ledgerOf(key);
+          ledgerSave(key, (led.pending | 0) + net, led.claimed, led.wallet);
+          paid += net;
+          notifyPlayer(key, { t: 'dividend', net: net, tokenPending: (led.pending | 0) + net });
+        }
+        if (paid > 0) {
+          const cur = treasuryTotals().STRATUM | 0;
+          qTreasurySet.run(Math.max(0, cur - paid), now, 'STRATUM');
+          paidW = paid;
+        }
+      }
+      counterSet('upkeep_week_burned', burnedW);
+      counterSet('upkeep_week_divs', paidW);
+      if (burnedW > 0 || paidW > 0) console.log(`[upkeep] week: burned ${burnedW}, dividends ${paidW}`);
+    }
+  } catch (e) { console.log('[upkeep] week skipped:', e && e.message); }
+});
+
 every(5000, 'stats tick', () => {
   const n = live();
   if (!n) return;
@@ -3362,7 +3607,7 @@ every(5000, 'stats tick', () => {
     if (!c.ready) continue;
     c.send({
       t: 'stats', claimed: countClaims(c.map), total: W * H, online: n, volatile: world.stats(),
-      colonyQuota: quota, colonyMultiplier
+      colonyQuota: quota, colonyMultiplier, vaultTvl: vaultStats().tvl
     });
   }
 });

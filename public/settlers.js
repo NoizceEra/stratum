@@ -78,7 +78,7 @@
   });
 
   /** Action keys the client may map to panel toggles. Anything else is ignored. */
-  var ACTIONS = deepFreeze(['guide', 'craft', 'idle', 'wallet', 'travel', 'map', 'close']);
+  var ACTIONS = deepFreeze(['guide', 'craft', 'idle', 'wallet', 'travel', 'map', 'tithe', 'close']);
 
   // ======================================================================
   // lookups
@@ -175,6 +175,7 @@
         line = sableLine(q, done, total);
         actions = [
           { label: 'SHOW ME (' + (q ? q.toUpperCase() : 'START') + ')', do: questAction(q) },
+          { label: 'TITHE — 50000 STRATUM', do: 'tithe' },
           { label: 'READ THE GUIDE', do: 'guide' },
           { label: 'FAREWELL', do: 'close' }
         ];
@@ -183,12 +184,14 @@
         actions = [
           { label: 'OPEN FABRICATOR', do: 'craft' },
           { label: 'OPEN STRUCTURES', do: 'idle' },
+          { label: 'TITHE — 50000 STRATUM', do: 'tithe' },
           { label: 'FAREWELL', do: 'close' }
         ];
       } else {
         line = iloLine(q, pending, done, total);
         actions = [
           { label: 'CONNECT WALLET', do: 'wallet' },
+          { label: 'TITHE — 50000 STRATUM', do: 'tithe' },
           { label: 'READ THE GUIDE', do: 'guide' },
           { label: 'FAREWELL', do: 'close' }
         ];

@@ -879,6 +879,7 @@
     claimed: 0, total: W * H, online: 0, volatile: null,
     commerce: null, tokenPending: 0, tokenOnChain: null, walletAddress: null, colonyQuota: 0,
     gldxPending: 0, gldxPayable: 0, gldxText: '0', gldxReadyText: '0',
+    vault: 0, vaultTvl: 0,
     sel: 0, zoom: 1, ready: false,
     cam: { x: 0, y: 0 }, mouse: { x: 0, y: 0 },
     edits: new Map(), baseCache: new Map(), lamps: new Set(),
@@ -1016,6 +1017,7 @@
         S.customization = m.customization || null;
         if (m.commerce) applyCommerceConfig(m.commerce);
         if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.vault === 'number') S.vault = m.vault;
         if (typeof m.gldxPending === 'number') S.gldxPending = m.gldxPending;
         if (typeof m.gldxPayable === 'number') S.gldxPayable = m.gldxPayable;
         if (m.gldxText) S.gldxText = m.gldxText;
@@ -1529,6 +1531,69 @@
           ' ' + ((S.commerce && S.commerce.symbol) || 'STRATUM') + ' TO EARTH');
         break;
       }
+      case 'tithe-started': {
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (m.ok) {
+          toast('TITHE BEGUN — +10% YIELD WHILE IT HOLDS', true);
+          sfx('levelup');
+        } else {
+          toast(String(m.err || 'CANNOT TITHE').toUpperCase());
+          sfx('deny');
+        }
+        // re-render in place so the button state matches (owned vs price)
+        if (S.npcOpen && S.npcId) openDialogue(S.npcId);
+        updateWalletHud();
+        break;
+      }
+      case 'tithe-cancelled': {
+        toast('TITHE ENDED', true);
+        if (S.npcOpen && S.npcId) openDialogue(S.npcId);
+        break;
+      }
+      case 'tithe-kept': {
+        if (typeof m.paid === 'number') toast('TITHE KEPT — ' + m.paid + ' BURNED INTO UPKEEP', true);
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        updateWalletHud();
+        break;
+      }
+      case 'tithe-lapsed': {
+        toast('TITHE LAPSED — UPKEEP UNPAID', false);
+        if (S.npcOpen && S.npcId) openDialogue(S.npcId);
+        break;
+      }
+      case 'vault-deposited': {
+        if (!m.ok) {
+          toast(String(m.err || 'CANNOT STAKE').toUpperCase());
+          sfx('deny');
+          break;
+        }
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.vault === 'number') S.vault = m.vault;
+        toast('STAKED ' + m.net + ' STRATUM (FEE ' + m.fee + ') — EARNING GLDX', true);
+        sfx('levelup');
+        updateWalletHud();
+        break;
+      }
+      case 'vault-withdrawn': {
+        if (!m.ok) {
+          toast(String(m.err || 'CANNOT UNSTAKE').toUpperCase());
+          sfx('deny');
+          break;
+        }
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        if (typeof m.vault === 'number') S.vault = m.vault;
+        toast('UNSTAKED ' + m.net + ' STRATUM (FEE ' + m.fee + ')', true);
+        sfx('ui');
+        updateWalletHud();
+        break;
+      }
+      case 'dividend': {
+        if (typeof m.tokenPending === 'number') S.tokenPending = m.tokenPending;
+        toast('LAND DIVIDEND +' + (m.net | 0) + ' STRATUM', true);
+        sfx('levelup');
+        updateWalletHud();
+        break;
+      }
       case 'vanity-bought': {
         if (!m.ok) {
           toast(String(m.err || 'CANNOT BUY').toUpperCase());
@@ -1618,6 +1683,7 @@
       case 'stats':
         S.claimed = m.claimed; S.total = m.total; S.online = m.online; S.volatile = m.volatile;
         if (typeof m.colonyQuota === 'number') S.colonyQuota = m.colonyQuota;
+        if (typeof m.vaultTvl === 'number') { S.vaultTvl = m.vaultTvl; updateWalletHud(); }
         break;
       case 'players': {
         if (!m.list) break;
@@ -2302,6 +2368,10 @@
       willBtn2.textContent = 'REFILL WILL · ' + wc + ' STRATUM';
       willBtn2.classList.toggle('dim', (S.energy | 0) >= (S.energyMax | 0) || (S.tokenPending | 0) < wc);
     }
+    var vaultTvlEl = document.getElementById('h-vault-tvl');
+    if (vaultTvlEl) vaultTvlEl.textContent = String(S.vaultTvl | 0);
+    var vaultEl = document.getElementById('h-vault');
+    if (vaultEl) vaultEl.textContent = String(S.vault | 0);
   }
   function signSinkTx(m, onSig, onErr) {
     if (!window.StratumWallet || typeof window.StratumWallet.signAndSendTx !== 'function') {
@@ -2496,6 +2566,7 @@
     if (!window.Settlers) return;
     var t = window.Settlers.talk(npcId, dialogueCtx());
     if (!t) return;
+    S.npcId = npcId;
     document.getElementById('npc-name').textContent = t.name;
     document.getElementById('npc-role').textContent = t.role;
     document.getElementById('npc-line').textContent = t.line;
@@ -2516,10 +2587,19 @@
     var el = document.getElementById('npc');
     if (el) el.classList.remove('on');
     S.npcOpen = false;
+    S.npcId = null;
   }
   function dialogueAction(do_) {
     if (!window.Settlers || !window.Settlers.isAction(do_)) { closeDialogue(); return; }
     if (do_ === 'close') { closeDialogue(); sfx('ui'); return; }
+    // Tithes stay in-dialogue: the server answers tithe-started and the panel
+    // re-renders with the new state (or an error) instead of closing.
+    if (do_ === 'tithe') {
+      if (!S.ready) return;
+      send({ t: 'tithe-start', settler: S.npcId });
+      sfx('ui');
+      return;
+    }
     closeDialogue();
     if (do_ === 'craft') toggleCraft();
     else if (do_ === 'idle') toggleIdle();
@@ -4034,6 +4114,22 @@
       send({ t: 'refill-will' });
       var willStatus = document.getElementById('h-will-status');
       if (willStatus) willStatus.textContent = 'REFILLING…';
+    });
+    var vaultInBtn = document.getElementById('vault-in-btn');
+    if (vaultInBtn) vaultInBtn.addEventListener('click', function () {
+      if (!S.ready) return;
+      if (!(S.tokenPending | 0)) { toast('NOTHING PENDING'); return; }
+      send({ t: 'vault-deposit' });
+      var vs = document.getElementById('h-vault-status');
+      if (vs) vs.textContent = 'STAKING…';
+    });
+    var vaultOutBtn = document.getElementById('vault-out-btn');
+    if (vaultOutBtn) vaultOutBtn.addEventListener('click', function () {
+      if (!S.ready) return;
+      if (!(S.vault | 0)) { toast('NOTHING STAKED'); return; }
+      send({ t: 'vault-withdraw' });
+      var vs = document.getElementById('h-vault-status');
+      if (vs) vs.textContent = 'UNSTAKING…';
     });
     try {
       var savedW = localStorage.getItem('stratum_wallet');
